@@ -47,6 +47,19 @@ ADDENDA = {
         'on_data(self, data: MarketDataBundle) -> List[TradingSignal]',
         'get_target_positions(self) -> Dict[str, PositionTarget]',
     ],
+    # 契约文档同样由 .docx 派生，所以 I1 的裁决也只能追加。追加块丢了 = 裁决没了，
+    # 机器可读的那一份（tools/contract-signature-manifest.json）就变成孤儿，所以这里断言存在。
+    '智能量化交易平台-核心模块接口契约文档.md': [
+        'E. I1 规范性与偏差登记',
+        'tools/contract-signature-manifest.json',
+        'MA_Cross_Strategy(short_window: int, long_window: int)',
+        # E5~E8：追加块丢了 = 裁决没了。这几个编号本身也是锚（下面每一条都写在自己的
+        # 段落里），删掉一段就等于删掉一个「已登记的偏差」。
+        'E5. Strategy.on_data 的纯度偏差：MA_Cross_Strategy 持有有界状态',
+        'E6. SimulatedBroker 与 BacktestEngine 的三个附加成员',
+        'E7. volume_impact_factor 按成交额比例近似',
+        'E8. BacktestResult 不生成 ATR 报告与基准对比报告',
+    ],
 }
 
 

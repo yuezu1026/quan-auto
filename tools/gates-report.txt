@@ -1,4 +1,4 @@
-SCOPE: FULL -- all 6 registered gate(s) ran.
+SCOPE: FULL -- all 8 registered gate(s) ran.
 
 ==============================================================================
 GATE md-fidelity (tier A) selftest=PASS verdict=PASS 0 finding(s)
@@ -34,8 +34,8 @@ GATE iteration-plan (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 迭代计划里每个标「已交付」的迭代都引用了一条真实存在的证据路径
 argv: tools/verify_iteration_plan.py
 ------------------------------------------------------------------------------
-CRLF-normalised: plan=17569 bytes (迭代计划.md)
-extracted: iterations=5 delivered=1 dod_sections=5
+CRLF-normalised: plan=18963 bytes (迭代计划.md)
+extracted: iterations=5 delivered=2 dod_sections=5
 verdict: PASS (0 issue(s))
 NOTE: this gate checks the plan is internally well-formed and that no completion claim dangles. It cannot judge whether an iteration was actually delivered -- someone still has to open the cited evidence file.
 
@@ -45,8 +45,70 @@ what: I0 骨架还在：pyproject / 包 / 测试 / CI 接线（不跑 pytest）
 argv: tools/verify_skeleton.py
 ------------------------------------------------------------------------------
 root: D:\project-quan\quan-auto
-denominator: 6 detector(s) ran: PYPROJECT, VERSION, PACKAGE, TESTS, CI, CI-SWALLOW
+denominator: 8 detector(s) ran: PYPROJECT, VERSION, PACKAGE, TESTS, CI, CI-SWALLOW, GATE-COUNT, IMPL-STATUS
 verdict: PASS (0 issue(s))
+
+==============================================================================
+GATE backtest-reproducibility (tier A) selftest=PASS verdict=PASS 0 finding(s)
+what: 同种子两次回测的报告 deterministic 段逐字节相同，换种子必须真的变
+argv: tools/verify_backtest_reproducibility.py
+------------------------------------------------------------------------------
+repo: D:\project-quan\quan-auto
+detectors=4
+  - R1-SAME-SEED-IDENTICAL: 同种子两次跑，deterministic 段逐字节相同
+  - R2-SEED-CHANGES-RESULT: 换种子必须真的改变 deterministic 段
+  - R3-NON-VACUOUS: 样本非空：有成交、净值非常数（防空转假绿）
+  - R4-DETERMINISTIC-KEYS: 段结构/键集/种子位置符合约定
+[selftest] 触发测试：每个样本都要看见它该报的 FINDING
+  OK   CLEAN-runtime-differs-not-compared codes=[]
+  OK   CLEAN-different-seeds              codes=[]
+  OK   MUT-same-seed-differs              codes=['R1-SAME-SEED-IDENTICAL']
+  OK   MUT-diff-seed-same-result          codes=['R2-SEED-CHANGES-RESULT']
+  OK   MUT-zero-trades-flat-curve         codes=['R3-NON-VACUOUS']
+  OK   MUT-seed-inside-deterministic      codes=['R4-DETERMINISTIC-KEYS']
+  OK   MUT-missing-key                    codes=['R4-DETERMINISTIC-KEYS']
+  OK   MUT-extra-key                      codes=['R4-DETERMINISTIC-KEYS']
+  OK   MUT-seed-mismatch                  codes=['R4-DETERMINISTIC-KEYS']
+  OK   MUT-cli-fails-on-missing-csv       codes=['R1-SAME-SEED-IDENTICAL']
+  OK   CLEAN-real-cli-passes-shape        codes=[]
+samples=11
+[real] 在真实仓库上跑（自测通过不代表真实产物没问题）
+issues=0
+verdict: PASS
+
+==============================================================================
+GATE contract-signature (tier A) selftest=PASS verdict=PASS 0 finding(s)
+what: 契约侧与实现侧的签名/字段一致，多出来的公有成员必须在清单里登记
+argv: tools/verify_contract_signature.py
+------------------------------------------------------------------------------
+repo: D:\project-quan\quan-auto
+detectors=7
+  - S1-CONTRACT-TRANSCRIPT: 清单里的契约侧签名能在契约文档里逐字找到
+  - S2-IMPL-MATCHES: 契约侧方法在实现里存在，且参数列表一致（除已登记的差异）
+  - S3-FIELDS-MATCH: 数据类字段名列表 契约=实现
+  - S4-EXTRAS-REGISTERED: 契约类里多出来的公有成员必须在 extras 里登记
+  - S5-DIVERGENCE-REGISTRY: divergences 里登记的差异必须真的存在（不许留过期条目）
+  - S6-NON-VACUOUS: 提取结果非空：清单有类、契约有签名、实现有类（防空转假绿）
+  - S7-NON-NORMATIVE-REGISTRY: 非规范块的登记必须仍能逐字命中契约原文（附录 E1 的裁决不许腐化）
+[selftest] 触发测试：每个样本都要看见它该报的 FINDING
+  OK   CLEAN-real-artifacts               codes=[]
+  OK   MUT-manifest-contract-param        codes=['S1-CONTRACT-TRANSCRIPT', 'S2-IMPL-MATCHES']
+  OK   MUT-contract-doc-param             codes=['S1-CONTRACT-TRANSCRIPT']
+  OK   MUT-impl-param                     codes=['S2-IMPL-MATCHES']
+  OK   MUT-impl-method-renamed            codes=['S2-IMPL-MATCHES']
+  OK   MUT-impl-field-renamed             codes=['S3-FIELDS-MATCH']
+  OK   MUT-unregistered-extra             codes=['S4-EXTRAS-REGISTERED']
+  OK   MUT-impl-only-member-gone          codes=['S4-EXTRAS-REGISTERED']
+  OK   MUT-stale-divergence               codes=['S5-DIVERGENCE-REGISTRY']
+  OK   MUT-empty-classes                  codes=['S6-NON-VACUOUS']
+  OK   MUT-class-contract-side-empty      codes=['S6-NON-VACUOUS']
+  OK   MUT-non-normative-text-gone        codes=['S7-NON-NORMATIVE-REGISTRY']
+  OK   MUT-non-normative-empty            codes=['S7-NON-NORMATIVE-REGISTRY']
+  OK   MUT-missing-manifest               codes=['S6-NON-VACUOUS']
+samples=14
+[real] 在真实仓库上跑（自测通过不代表真实产物没问题）
+contract=docs/智能量化交易平台-核心模块接口契约文档.md issues=0
+verdict: PASS
 
 ==============================================================================
 GATE core-contract-refs (tier B) selftest=PASS verdict=RATCHET 39/39

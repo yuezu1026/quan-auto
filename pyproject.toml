@@ -6,8 +6,8 @@ build-backend = "setuptools.build_meta"
 name = "quan-auto"
 # ⚠️ 这个版本号与 quanauto/__init__.py 的 __version__ 必须一致 ——
 #    tests/test_skeleton.py 会核对两处，改一处不改另一处会红（两个版本来源 = 已知漂移源）。
-version = "0.0.0"
-description = "智能量化交易平台 —— Python 研究/回测线（当前处于 I0 骨架阶段，尚无可运行实现）"
+version = "0.1.0"
+description = "智能量化交易平台 —— Python 研究/回测线（I1 已打通 CSV→双均线→撔合→绩效→报告 的最窄竖切）"
 requires-python = ">=3.11"
 
 # 依赖**必须**是实现推着走：现在一行实现都没有，所以这里是空的。

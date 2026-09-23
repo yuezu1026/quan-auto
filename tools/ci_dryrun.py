@@ -60,10 +60,10 @@ ROUNDTRIPS = [
         # 1) 改包版本 -> tests/test_skeleton.py 的版本一致断言必须红
         'tag': 'pkg-version-drift',
         'path': os.path.join('quanauto', '__init__.py'),
-        'frm': '__version__ = "0.0.0"',
-        'to': '__version__ = "0.0.1"',
+        'frm': '__version__ = "0.1.0"',
+        'to': '__version__ = "0.1.1"',
         'cmd': 'pytest',
-        'what': '把包版本改成 0.0.1（与 pyproject 不一致）',
+        'what': '把包版本改成 0.1.1（与 pyproject 不一致）',
     },
     {
         # 2) 把 CI 里的门禁命令换成别的 -> skeleton 门禁必须红
@@ -234,8 +234,9 @@ def main(argv):
     dirty = len([ln for ln in out.split('\n') if ln.strip()])
     say('dirty:     %d 项未提交改动%s' % (dirty, '（快照与产物不同步）' if dirty else ''))
     # 必须在第 1 步之前就清：上一次运行（或往返的变异）留下的 .pyc 可能比磁盘上的
-    # 源码更新，让**还没跑过任何变异**的这一次也拿到旧版本号。实测过：第 1 步
-    # pytest 报 quanauto.__version__='0.0.1'，而磁盘上写的是 0.0.0。
+    # 源码更新，让**还没跑过任何变异**的这一次也拿到旧版本号（实测过：pytest 报出的
+    # 版本号与磁盘上写的不同）。这里刻意不写具体版本号 —— 它每轮会 bump，
+    # 写死等于给自己留一个必然过期的陈述。
     killed = purge_pycache(ROOT)
     say('pycache:   启动时清掉 %d 个 __pycache__（陈旧字节码会让结论与磁盘源码无关）' % killed)
     say()

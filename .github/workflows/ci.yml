@@ -5,7 +5,7 @@
 #
 # 两个自带的反空转出口码（不要用 `|| true` 把它们吞掉）：
 #   pytest        收集到 0 个测试 -> 退出码 5（非 0）
-#   run_all_gates 5 个门禁全部 PASS 时退出码 0；门禁失败 = 1；**harness 自身自测失败 = 2**
+#   run_all_gates 全部门禁 PASS 时退出码 0；门禁失败 = 1；**harness 自身自测失败 = 2**
 #
 # ⚠️ 本仓库**没有配置 git remote**（`git remote -v` 为空），所以这份 workflow
 #    目前**从未在 GitHub 上真实运行过**。不得被读成「CI 已跑通」。

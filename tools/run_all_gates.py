@@ -143,6 +143,30 @@ GATES = [
         'selftest': ['tools/verify_skeleton.py', '--selftest'],
     },
     {
+        'name': 'backtest-reproducibility',
+        'tier': 'A',
+        # 本门禁守的是「同种子 ⇒ 同结果」这句话。手跑两次看一眼只是「碰巧成立」的
+        # 观察；把它变成判据之后，滑点里多抽一次随机数、字典遍历顺序变了、或者有人
+        # 往 deterministic 段塞进一个时戳，都会立刻变红。tier A：它守的是我们自己写的
+        # 产物。注意它只证明**本机**可复现，不证明跨机器/跨版本可复现。
+        'what': '同种子两次回测的报告 deterministic 段逐字节相同，换种子必须真的变',
+        'runner': ['tools/verify_backtest_reproducibility.py'],
+        'selftest': ['tools/verify_backtest_reproducibility.py', '--selftest'],
+    },
+    {
+        'name': 'contract-signature',
+        'tier': 'A',
+        # 本门禁守的是「契约怎么写、代码就怎么长」。I1 里三处契约与实现的偏差全是靠
+        # 人眼发现「回测最大回撤 49.9% 不可能」才顺出来 —— 人工读契约会漏，机器比参数
+        # 列表不会。清单里的契约侧签名必须能在契约文档里逐字找到，所以它管的是
+        # 「有人单边改了签名」，不是「三方都对」。
+        # 边界：**不比返回类型**（契约引用了大量本项目不存在的类型），只比参数列表、
+        # 数据类字段名、以及契约类里未登记的公有成员；impl_only 类只反向查成员消失。
+        'what': '契约侧与实现侧的签名/字段一致，多出来的公有成员必须在清单里登记',
+        'runner': ['tools/verify_contract_signature.py'],
+        'selftest': ['tools/verify_contract_signature.py', '--selftest'],
+    },
+    {
         'name': 'core-contract-refs',
         'tier': 'B',
         # The two supplements contribute definitions only. DataFeed/MarketStatus/

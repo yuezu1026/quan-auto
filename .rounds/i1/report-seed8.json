@@ -1,0 +1,1116 @@
+{
+  "deterministic": {
+    "account_history": [
+      {
+        "account_id": "sim-account",
+        "available_capital": 100000.0,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-01-02T00:00:00",
+        "total_capital": 100000.0,
+        "total_pnl": 0.0
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 100000.0,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-01-03T00:00:00",
+        "total_capital": 100000.0,
+        "total_pnl": 0.0
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 100000.0,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-01-04T00:00:00",
+        "total_capital": 100000.0,
+        "total_pnl": 0.0
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 100000.0,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-01-05T00:00:00",
+        "total_capital": 100000.0,
+        "total_pnl": 0.0
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 100000.0,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-01-08T00:00:00",
+        "total_capital": 100000.0,
+        "total_pnl": 0.0
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 100000.0,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-01-09T00:00:00",
+        "total_capital": 100000.0,
+        "total_pnl": 0.0
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 100000.0,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-01-10T00:00:00",
+        "total_capital": 100000.0,
+        "total_pnl": 0.0
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 100000.0,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-01-11T00:00:00",
+        "total_capital": 100000.0,
+        "total_pnl": 0.0
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 100000.0,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-01-12T00:00:00",
+        "total_capital": 100000.0,
+        "total_pnl": 0.0
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 100000.0,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-01-15T00:00:00",
+        "total_capital": 100000.0,
+        "total_pnl": 0.0
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 100000.0,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-01-16T00:00:00",
+        "total_capital": 100000.0,
+        "total_pnl": 0.0
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 100000.0,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-01-17T00:00:00",
+        "total_capital": 100000.0,
+        "total_pnl": 0.0
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 100000.0,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-01-18T00:00:00",
+        "total_capital": 100000.0,
+        "total_pnl": 0.0
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 100000.0,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-01-19T00:00:00",
+        "total_capital": 100000.0,
+        "total_pnl": 0.0
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 100000.0,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-01-22T00:00:00",
+        "total_capital": 100000.0,
+        "total_pnl": 0.0
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 100000.0,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-01-23T00:00:00",
+        "total_capital": 100000.0,
+        "total_pnl": 0.0
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 100000.0,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-01-24T00:00:00",
+        "total_capital": 100000.0,
+        "total_pnl": 0.0
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 100000.0,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-01-25T00:00:00",
+        "total_capital": 100000.0,
+        "total_pnl": 0.0
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 100000.0,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-01-26T00:00:00",
+        "total_capital": 100000.0,
+        "total_pnl": 0.0
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 100000.0,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-01-29T00:00:00",
+        "total_capital": 100000.0,
+        "total_pnl": 0.0
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 100000.0,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-01-30T00:00:00",
+        "total_capital": 100000.0,
+        "total_pnl": 0.0
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 100000.0,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-01-31T00:00:00",
+        "total_capital": 100000.0,
+        "total_pnl": 0.0
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 100000.0,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-02-01T00:00:00",
+        "total_capital": 100000.0,
+        "total_pnl": 0.0
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 10242.815642500005,
+        "frozen_capital": 89757.1843575,
+        "market_value": 0,
+        "timestamp": "2024-02-02T00:00:00",
+        "total_capital": 100000.0,
+        "total_pnl": 0.0
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 10161.450909568142,
+        "frozen_capital": 0.0,
+        "market_value": 89725.0,
+        "timestamp": "2024-02-05T00:00:00",
+        "total_capital": 99886.45090956814,
+        "total_pnl": -113.54909043185762
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 10161.450909568142,
+        "frozen_capital": 0.0,
+        "market_value": 87106.0,
+        "timestamp": "2024-02-06T00:00:00",
+        "total_capital": 97267.45090956814,
+        "total_pnl": -2732.5490904318576
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 96813.81330180258,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-02-07T00:00:00",
+        "total_capital": 96813.81330180258,
+        "total_pnl": -3186.1866981974163
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 96813.81330180258,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-02-08T00:00:00",
+        "total_capital": 96813.81330180258,
+        "total_pnl": -3186.1866981974163
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 96813.81330180258,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-02-09T00:00:00",
+        "total_capital": 96813.81330180258,
+        "total_pnl": -3186.1866981974163
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 96813.81330180258,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-02-12T00:00:00",
+        "total_capital": 96813.81330180258,
+        "total_pnl": -3186.1866981974163
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 96813.81330180258,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-02-13T00:00:00",
+        "total_capital": 96813.81330180258,
+        "total_pnl": -3186.1866981974163
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 96813.81330180258,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-02-14T00:00:00",
+        "total_capital": 96813.81330180258,
+        "total_pnl": -3186.1866981974163
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 96813.81330180258,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-02-15T00:00:00",
+        "total_capital": 96813.81330180258,
+        "total_pnl": -3186.1866981974163
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 96813.81330180258,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-02-16T00:00:00",
+        "total_capital": 96813.81330180258,
+        "total_pnl": -3186.1866981974163
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 96813.81330180258,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-02-19T00:00:00",
+        "total_capital": 96813.81330180258,
+        "total_pnl": -3186.1866981974163
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 96813.81330180258,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-02-20T00:00:00",
+        "total_capital": 96813.81330180258,
+        "total_pnl": -3186.1866981974163
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 96813.81330180258,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-02-21T00:00:00",
+        "total_capital": 96813.81330180258,
+        "total_pnl": -3186.1866981974163
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 96813.81330180258,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-02-22T00:00:00",
+        "total_capital": 96813.81330180258,
+        "total_pnl": -3186.1866981974163
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 96813.81330180258,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-02-23T00:00:00",
+        "total_capital": 96813.81330180258,
+        "total_pnl": -3186.1866981974163
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 96813.81330180258,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-02-26T00:00:00",
+        "total_capital": 96813.81330180258,
+        "total_pnl": -3186.1866981974163
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 96813.81330180258,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-02-27T00:00:00",
+        "total_capital": 96813.81330180258,
+        "total_pnl": -3186.1866981974163
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 96813.81330180258,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-02-28T00:00:00",
+        "total_capital": 96813.81330180258,
+        "total_pnl": -3186.1866981974163
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 96813.81330180258,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-02-29T00:00:00",
+        "total_capital": 96813.81330180258,
+        "total_pnl": -3186.1866981974163
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 96813.81330180258,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-03-01T00:00:00",
+        "total_capital": 96813.81330180258,
+        "total_pnl": -3186.1866981974163
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 96813.81330180258,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-03-04T00:00:00",
+        "total_capital": 96813.81330180258,
+        "total_pnl": -3186.1866981974163
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 96813.81330180258,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-03-05T00:00:00",
+        "total_capital": 96813.81330180258,
+        "total_pnl": -3186.1866981974163
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 96813.81330180258,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-03-06T00:00:00",
+        "total_capital": 96813.81330180258,
+        "total_pnl": -3186.1866981974163
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 96813.81330180258,
+        "frozen_capital": 0.0,
+        "market_value": 0,
+        "timestamp": "2024-03-07T00:00:00",
+        "total_capital": 96813.81330180258,
+        "total_pnl": -3186.1866981974163
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 6981.602041802587,
+        "frozen_capital": 89832.21126,
+        "market_value": 0,
+        "timestamp": "2024-03-08T00:00:00",
+        "total_capital": 96813.81330180258,
+        "total_pnl": -3186.1866981974163
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 6936.223983007192,
+        "frozen_capital": 0.0,
+        "market_value": 89800.0,
+        "timestamp": "2024-03-11T00:00:00",
+        "total_capital": 96736.22398300719,
+        "total_pnl": -3263.776016992808
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 6936.223983007192,
+        "frozen_capital": 0.0,
+        "market_value": 91000.0,
+        "timestamp": "2024-03-12T00:00:00",
+        "total_capital": 97936.22398300719,
+        "total_pnl": -2063.776016992808
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 6936.223983007192,
+        "frozen_capital": 0.0,
+        "market_value": 89600.00000000001,
+        "timestamp": "2024-03-13T00:00:00",
+        "total_capital": 96536.2239830072,
+        "total_pnl": -3463.7760169927933
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 6936.223983007192,
+        "frozen_capital": 0.0,
+        "market_value": 89400.0,
+        "timestamp": "2024-03-14T00:00:00",
+        "total_capital": 96336.22398300719,
+        "total_pnl": -3663.776016992808
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 6936.223983007192,
+        "frozen_capital": 0.0,
+        "market_value": 90500.0,
+        "timestamp": "2024-03-15T00:00:00",
+        "total_capital": 97436.22398300719,
+        "total_pnl": -2563.776016992808
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 6936.223983007192,
+        "frozen_capital": 0.0,
+        "market_value": 89200.0,
+        "timestamp": "2024-03-18T00:00:00",
+        "total_capital": 96136.22398300719,
+        "total_pnl": -3863.776016992808
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 6936.223983007192,
+        "frozen_capital": 0.0,
+        "market_value": 89300.0,
+        "timestamp": "2024-03-19T00:00:00",
+        "total_capital": 96236.22398300719,
+        "total_pnl": -3763.776016992808
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 6936.223983007192,
+        "frozen_capital": 0.0,
+        "market_value": 87600.0,
+        "timestamp": "2024-03-20T00:00:00",
+        "total_capital": 94536.22398300719,
+        "total_pnl": -5463.776016992808
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 6936.223983007192,
+        "frozen_capital": 0.0,
+        "market_value": 88300.0,
+        "timestamp": "2024-03-21T00:00:00",
+        "total_capital": 95236.22398300719,
+        "total_pnl": -4763.776016992808
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 6936.223983007192,
+        "frozen_capital": 0.0,
+        "market_value": 89400.0,
+        "timestamp": "2024-03-22T00:00:00",
+        "total_capital": 96336.22398300719,
+        "total_pnl": -3663.776016992808
+      },
+      {
+        "account_id": "sim-account",
+        "available_capital": 6936.223983007192,
+        "frozen_capital": 0.0,
+        "market_value": 89800.0,
+        "timestamp": "2024-03-25T00:00:00",
+        "total_capital": 96736.22398300719,
+        "total_pnl": -3263.776016992808
+      }
+    ],
+    "data_version": "000001.SZ:sample_prices.csv:60",
+    "equity_curve": [
+      {
+        "cash": 100000.0,
+        "drawdown": 0.0,
+        "equity": 100000.0,
+        "market_value": 0,
+        "timestamp": "2024-01-02T00:00:00"
+      },
+      {
+        "cash": 100000.0,
+        "drawdown": 0.0,
+        "equity": 100000.0,
+        "market_value": 0,
+        "timestamp": "2024-01-03T00:00:00"
+      },
+      {
+        "cash": 100000.0,
+        "drawdown": 0.0,
+        "equity": 100000.0,
+        "market_value": 0,
+        "timestamp": "2024-01-04T00:00:00"
+      },
+      {
+        "cash": 100000.0,
+        "drawdown": 0.0,
+        "equity": 100000.0,
+        "market_value": 0,
+        "timestamp": "2024-01-05T00:00:00"
+      },
+      {
+        "cash": 100000.0,
+        "drawdown": 0.0,
+        "equity": 100000.0,
+        "market_value": 0,
+        "timestamp": "2024-01-08T00:00:00"
+      },
+      {
+        "cash": 100000.0,
+        "drawdown": 0.0,
+        "equity": 100000.0,
+        "market_value": 0,
+        "timestamp": "2024-01-09T00:00:00"
+      },
+      {
+        "cash": 100000.0,
+        "drawdown": 0.0,
+        "equity": 100000.0,
+        "market_value": 0,
+        "timestamp": "2024-01-10T00:00:00"
+      },
+      {
+        "cash": 100000.0,
+        "drawdown": 0.0,
+        "equity": 100000.0,
+        "market_value": 0,
+        "timestamp": "2024-01-11T00:00:00"
+      },
+      {
+        "cash": 100000.0,
+        "drawdown": 0.0,
+        "equity": 100000.0,
+        "market_value": 0,
+        "timestamp": "2024-01-12T00:00:00"
+      },
+      {
+        "cash": 100000.0,
+        "drawdown": 0.0,
+        "equity": 100000.0,
+        "market_value": 0,
+        "timestamp": "2024-01-15T00:00:00"
+      },
+      {
+        "cash": 100000.0,
+        "drawdown": 0.0,
+        "equity": 100000.0,
+        "market_value": 0,
+        "timestamp": "2024-01-16T00:00:00"
+      },
+      {
+        "cash": 100000.0,
+        "drawdown": 0.0,
+        "equity": 100000.0,
+        "market_value": 0,
+        "timestamp": "2024-01-17T00:00:00"
+      },
+      {
+        "cash": 100000.0,
+        "drawdown": 0.0,
+        "equity": 100000.0,
+        "market_value": 0,
+        "timestamp": "2024-01-18T00:00:00"
+      },
+      {
+        "cash": 100000.0,
+        "drawdown": 0.0,
+        "equity": 100000.0,
+        "market_value": 0,
+        "timestamp": "2024-01-19T00:00:00"
+      },
+      {
+        "cash": 100000.0,
+        "drawdown": 0.0,
+        "equity": 100000.0,
+        "market_value": 0,
+        "timestamp": "2024-01-22T00:00:00"
+      },
+      {
+        "cash": 100000.0,
+        "drawdown": 0.0,
+        "equity": 100000.0,
+        "market_value": 0,
+        "timestamp": "2024-01-23T00:00:00"
+      },
+      {
+        "cash": 100000.0,
+        "drawdown": 0.0,
+        "equity": 100000.0,
+        "market_value": 0,
+        "timestamp": "2024-01-24T00:00:00"
+      },
+      {
+        "cash": 100000.0,
+        "drawdown": 0.0,
+        "equity": 100000.0,
+        "market_value": 0,
+        "timestamp": "2024-01-25T00:00:00"
+      },
+      {
+        "cash": 100000.0,
+        "drawdown": 0.0,
+        "equity": 100000.0,
+        "market_value": 0,
+        "timestamp": "2024-01-26T00:00:00"
+      },
+      {
+        "cash": 100000.0,
+        "drawdown": 0.0,
+        "equity": 100000.0,
+        "market_value": 0,
+        "timestamp": "2024-01-29T00:00:00"
+      },
+      {
+        "cash": 100000.0,
+        "drawdown": 0.0,
+        "equity": 100000.0,
+        "market_value": 0,
+        "timestamp": "2024-01-30T00:00:00"
+      },
+      {
+        "cash": 100000.0,
+        "drawdown": 0.0,
+        "equity": 100000.0,
+        "market_value": 0,
+        "timestamp": "2024-01-31T00:00:00"
+      },
+      {
+        "cash": 100000.0,
+        "drawdown": 0.0,
+        "equity": 100000.0,
+        "market_value": 0,
+        "timestamp": "2024-02-01T00:00:00"
+      },
+      {
+        "cash": 10242.815642500005,
+        "drawdown": 0.0,
+        "equity": 100000.0,
+        "market_value": 0,
+        "timestamp": "2024-02-02T00:00:00"
+      },
+      {
+        "cash": 10161.450909568142,
+        "drawdown": 0.0011354909043185763,
+        "equity": 99886.45090956814,
+        "market_value": 89725.0,
+        "timestamp": "2024-02-05T00:00:00"
+      },
+      {
+        "cash": 10161.450909568142,
+        "drawdown": 0.027325490904318576,
+        "equity": 97267.45090956814,
+        "market_value": 87106.0,
+        "timestamp": "2024-02-06T00:00:00"
+      },
+      {
+        "cash": 96813.81330180258,
+        "drawdown": 0.031861866981974164,
+        "equity": 96813.81330180258,
+        "market_value": 0,
+        "timestamp": "2024-02-07T00:00:00"
+      },
+      {
+        "cash": 96813.81330180258,
+        "drawdown": 0.031861866981974164,
+        "equity": 96813.81330180258,
+        "market_value": 0,
+        "timestamp": "2024-02-08T00:00:00"
+      },
+      {
+        "cash": 96813.81330180258,
+        "drawdown": 0.031861866981974164,
+        "equity": 96813.81330180258,
+        "market_value": 0,
+        "timestamp": "2024-02-09T00:00:00"
+      },
+      {
+        "cash": 96813.81330180258,
+        "drawdown": 0.031861866981974164,
+        "equity": 96813.81330180258,
+        "market_value": 0,
+        "timestamp": "2024-02-12T00:00:00"
+      },
+      {
+        "cash": 96813.81330180258,
+        "drawdown": 0.031861866981974164,
+        "equity": 96813.81330180258,
+        "market_value": 0,
+        "timestamp": "2024-02-13T00:00:00"
+      },
+      {
+        "cash": 96813.81330180258,
+        "drawdown": 0.031861866981974164,
+        "equity": 96813.81330180258,
+        "market_value": 0,
+        "timestamp": "2024-02-14T00:00:00"
+      },
+      {
+        "cash": 96813.81330180258,
+        "drawdown": 0.031861866981974164,
+        "equity": 96813.81330180258,
+        "market_value": 0,
+        "timestamp": "2024-02-15T00:00:00"
+      },
+      {
+        "cash": 96813.81330180258,
+        "drawdown": 0.031861866981974164,
+        "equity": 96813.81330180258,
+        "market_value": 0,
+        "timestamp": "2024-02-16T00:00:00"
+      },
+      {
+        "cash": 96813.81330180258,
+        "drawdown": 0.031861866981974164,
+        "equity": 96813.81330180258,
+        "market_value": 0,
+        "timestamp": "2024-02-19T00:00:00"
+      },
+      {
+        "cash": 96813.81330180258,
+        "drawdown": 0.031861866981974164,
+        "equity": 96813.81330180258,
+        "market_value": 0,
+        "timestamp": "2024-02-20T00:00:00"
+      },
+      {
+        "cash": 96813.81330180258,
+        "drawdown": 0.031861866981974164,
+        "equity": 96813.81330180258,
+        "market_value": 0,
+        "timestamp": "2024-02-21T00:00:00"
+      },
+      {
+        "cash": 96813.81330180258,
+        "drawdown": 0.031861866981974164,
+        "equity": 96813.81330180258,
+        "market_value": 0,
+        "timestamp": "2024-02-22T00:00:00"
+      },
+      {
+        "cash": 96813.81330180258,
+        "drawdown": 0.031861866981974164,
+        "equity": 96813.81330180258,
+        "market_value": 0,
+        "timestamp": "2024-02-23T00:00:00"
+      },
+      {
+        "cash": 96813.81330180258,
+        "drawdown": 0.031861866981974164,
+        "equity": 96813.81330180258,
+        "market_value": 0,
+        "timestamp": "2024-02-26T00:00:00"
+      },
+      {
+        "cash": 96813.81330180258,
+        "drawdown": 0.031861866981974164,
+        "equity": 96813.81330180258,
+        "market_value": 0,
+        "timestamp": "2024-02-27T00:00:00"
+      },
+      {
+        "cash": 96813.81330180258,
+        "drawdown": 0.031861866981974164,
+        "equity": 96813.81330180258,
+        "market_value": 0,
+        "timestamp": "2024-02-28T00:00:00"
+      },
+      {
+        "cash": 96813.81330180258,
+        "drawdown": 0.031861866981974164,
+        "equity": 96813.81330180258,
+        "market_value": 0,
+        "timestamp": "2024-02-29T00:00:00"
+      },
+      {
+        "cash": 96813.81330180258,
+        "drawdown": 0.031861866981974164,
+        "equity": 96813.81330180258,
+        "market_value": 0,
+        "timestamp": "2024-03-01T00:00:00"
+      },
+      {
+        "cash": 96813.81330180258,
+        "drawdown": 0.031861866981974164,
+        "equity": 96813.81330180258,
+        "market_value": 0,
+        "timestamp": "2024-03-04T00:00:00"
+      },
+      {
+        "cash": 96813.81330180258,
+        "drawdown": 0.031861866981974164,
+        "equity": 96813.81330180258,
+        "market_value": 0,
+        "timestamp": "2024-03-05T00:00:00"
+      },
+      {
+        "cash": 96813.81330180258,
+        "drawdown": 0.031861866981974164,
+        "equity": 96813.81330180258,
+        "market_value": 0,
+        "timestamp": "2024-03-06T00:00:00"
+      },
+      {
+        "cash": 96813.81330180258,
+        "drawdown": 0.031861866981974164,
+        "equity": 96813.81330180258,
+        "market_value": 0,
+        "timestamp": "2024-03-07T00:00:00"
+      },
+      {
+        "cash": 6981.602041802587,
+        "drawdown": 0.031861866981974164,
+        "equity": 96813.81330180258,
+        "market_value": 0,
+        "timestamp": "2024-03-08T00:00:00"
+      },
+      {
+        "cash": 6936.223983007192,
+        "drawdown": 0.03263776016992808,
+        "equity": 96736.22398300719,
+        "market_value": 89800.0,
+        "timestamp": "2024-03-11T00:00:00"
+      },
+      {
+        "cash": 6936.223983007192,
+        "drawdown": 0.02063776016992808,
+        "equity": 97936.22398300719,
+        "market_value": 91000.0,
+        "timestamp": "2024-03-12T00:00:00"
+      },
+      {
+        "cash": 6936.223983007192,
+        "drawdown": 0.034637760169927936,
+        "equity": 96536.2239830072,
+        "market_value": 89600.00000000001,
+        "timestamp": "2024-03-13T00:00:00"
+      },
+      {
+        "cash": 6936.223983007192,
+        "drawdown": 0.03663776016992808,
+        "equity": 96336.22398300719,
+        "market_value": 89400.0,
+        "timestamp": "2024-03-14T00:00:00"
+      },
+      {
+        "cash": 6936.223983007192,
+        "drawdown": 0.025637760169928078,
+        "equity": 97436.22398300719,
+        "market_value": 90500.0,
+        "timestamp": "2024-03-15T00:00:00"
+      },
+      {
+        "cash": 6936.223983007192,
+        "drawdown": 0.03863776016992808,
+        "equity": 96136.22398300719,
+        "market_value": 89200.0,
+        "timestamp": "2024-03-18T00:00:00"
+      },
+      {
+        "cash": 6936.223983007192,
+        "drawdown": 0.03763776016992808,
+        "equity": 96236.22398300719,
+        "market_value": 89300.0,
+        "timestamp": "2024-03-19T00:00:00"
+      },
+      {
+        "cash": 6936.223983007192,
+        "drawdown": 0.05463776016992808,
+        "equity": 94536.22398300719,
+        "market_value": 87600.0,
+        "timestamp": "2024-03-20T00:00:00"
+      },
+      {
+        "cash": 6936.223983007192,
+        "drawdown": 0.04763776016992808,
+        "equity": 95236.22398300719,
+        "market_value": 88300.0,
+        "timestamp": "2024-03-21T00:00:00"
+      },
+      {
+        "cash": 6936.223983007192,
+        "drawdown": 0.03663776016992808,
+        "equity": 96336.22398300719,
+        "market_value": 89400.0,
+        "timestamp": "2024-03-22T00:00:00"
+      },
+      {
+        "cash": 6936.223983007192,
+        "drawdown": 0.03263776016992808,
+        "equity": 96736.22398300719,
+        "market_value": 89800.0,
+        "timestamp": "2024-03-25T00:00:00"
+      }
+    ],
+    "orders": [
+      {
+        "commission": 32.1843575,
+        "direction": "BUY",
+        "error_message": null,
+        "filled_price": 9.25,
+        "filled_quantity": 9700,
+        "last_update_time": "2024-02-05T00:00:00",
+        "order_id": "ord-000001",
+        "order_type": "MARKET",
+        "price": null,
+        "quantity": 9700,
+        "slippage": 81.36473293185841,
+        "status": "FILLED",
+        "stop_price": null,
+        "strategy_id": "ma-cross",
+        "submit_time": "2024-02-02T00:00:00",
+        "symbol": "000001.SZ"
+      },
+      {
+        "commission": 118.35092220000001,
+        "direction": "SELL",
+        "error_message": null,
+        "filled_price": 8.98,
+        "filled_quantity": 9700,
+        "last_update_time": "2024-02-07T00:00:00",
+        "order_id": "ord-000002",
+        "order_type": "MARKET",
+        "price": null,
+        "quantity": 9700,
+        "slippage": 335.286685565559,
+        "status": "FILLED",
+        "stop_price": null,
+        "strategy_id": "ma-cross",
+        "submit_time": "2024-02-06T00:00:00",
+        "symbol": "000001.SZ"
+      },
+      {
+        "commission": 32.211259999999996,
+        "direction": "BUY",
+        "error_message": null,
+        "filled_price": 8.98,
+        "filled_quantity": 10000,
+        "last_update_time": "2024-03-11T00:00:00",
+        "order_id": "ord-000003",
+        "order_type": "MARKET",
+        "price": null,
+        "quantity": 10000,
+        "slippage": 45.37805879538876,
+        "status": "FILLED",
+        "stop_price": null,
+        "strategy_id": "ma-cross",
+        "submit_time": "2024-03-08T00:00:00",
+        "symbol": "000001.SZ"
+      }
+    ],
+    "params_used": {
+      "ma-cross": {
+        "capital": 90000.0,
+        "long_window": 20,
+        "short_window": 5,
+        "symbol": "000001.SZ"
+      }
+    },
+    "performance": {
+      "annual_return": -0.13214235807033625,
+      "avg_hold_period": 2.0,
+      "calmar_ratio": -2.4185171145259585,
+      "final_equity": 96736.22398300719,
+      "max_consecutive_losses": 1,
+      "max_drawdown": 0.05463776016992808,
+      "profit_factor": 0.0,
+      "profit_loss_ratio": 0.0,
+      "sharpe_ratio": -1.534682532249286,
+      "sortino_ratio": -1.773636940478153,
+      "total_commission": 182.7465397,
+      "total_return": -0.03263776016992808,
+      "total_trades": 1,
+      "win_rate": 0.0
+    },
+    "status": "SUCCESS",
+    "strategy_id": "ma-cross",
+    "strategy_version": "ma-cross@1.0.0",
+    "trades": [
+      {
+        "commission": 32.1843575,
+        "direction": "BUY",
+        "order_id": "ord-000001",
+        "price": 9.25,
+        "quantity": 9700,
+        "slippage": 81.36473293185841,
+        "symbol": "000001.SZ",
+        "timestamp": "2024-02-05T00:00:00",
+        "trade_fee": 113.54909043185842,
+        "trade_id": "trd-000001"
+      },
+      {
+        "commission": 118.35092220000001,
+        "direction": "SELL",
+        "order_id": "ord-000002",
+        "price": 8.98,
+        "quantity": 9700,
+        "slippage": 335.286685565559,
+        "symbol": "000001.SZ",
+        "timestamp": "2024-02-07T00:00:00",
+        "trade_fee": 453.63760776555904,
+        "trade_id": "trd-000002"
+      },
+      {
+        "commission": 32.211259999999996,
+        "direction": "BUY",
+        "order_id": "ord-000003",
+        "price": 8.98,
+        "quantity": 10000,
+        "slippage": 45.37805879538876,
+        "symbol": "000001.SZ",
+        "timestamp": "2024-03-11T00:00:00",
+        "trade_fee": 77.58931879538875,
+        "trade_id": "trd-000003"
+      }
+    ],
+    "validation_report": {
+      "is_valid": true,
+      "issues": [],
+      "warnings": [
+        "尚未执行回测，未来函数检查没有任何样本可查"
+      ]
+    }
+  },
+  "inputs": {
+    "seed": 8
+  },
+  "runtime": {
+    "duration_ms": 0,
+    "end_time": "2024-03-25T00:00:00",
+    "start_time": "2024-01-02T00:00:00"
+  },
+  "schema": "quanauto.backtest-report/1",
+  "summary": {
+    "bars": 60,
+    "orders": 3,
+    "symbol": "000001.SZ",
+    "trades": 3,
+    "window": [
+      "2024-01-02T00:00:00",
+      "2024-03-25T00:00:00"
+    ]
+  }
+}

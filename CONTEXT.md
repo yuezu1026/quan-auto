@@ -11,11 +11,9 @@
 
 ## 1. 这是什么
 
-智能量化交易平台的**开工前准备阶段**。到现在为止交付物只有三类：
-契约、DDL、门禁 —— **真正的实现一行都还没写**（`quanauto/` 是只有版本号的空包）。
-2026-09-23 I0 把工程骨架搭起来了：`pyproject.toml` + `quanauto/` 包 + `tests/`（pytest 可跑）
-+ `.github/workflows/ci.yml` + `skeleton` 门禁，但**没有任何业务模块**，依赖清单也仍是空的
-（`dependencies = []`，不做投机性预置）。
+智能量化交易平台的**开发进行中**。契约、DDL、门禁三件套已齐，I0 建了工程骨架，
+I1 交付了第一条端到端竖切（CSV → MA 双均线 → 撔合 → 绩效 → 回测报告）。
+依赖清单仍然是空的（`dependencies = []`，不做投机性预置）—— I1 的竖切只用标准库。
 
 ## 2. 硬约束（违反任何一条都会造成不可逆损失）
 
@@ -52,8 +50,11 @@
 | 文件 | 作用 |
 |---|---|
 | `pyproject.toml` | 包元数据 / pytest 配置。**`dependencies = []` 是故意的**：依赖由真正用它的模块带进来 |
-| `quanauto/__init__.py` | 包入口，**只有 `__version__`，没有任何实现**（刻意不放 `NotImplementedError` 桩，否则「已实现」与「可 import」长得一样） |
+| `quanauto/__init__.py` | 包入口，只有 `__version__` 与 `__all__`（其它模块下的实现不在此 re-export：否则「实现在那里」与「一 import 就全拉起来」长得一样） |
+| `quanauto/*.py`（9 个实现模块） | I1 的产物：`models` / `enums` / `errors` / `events` / `datafeed` / `strategies` / `broker` / `engine` / `performance` / `cli`。守门门禁 = `contract-signature`（签名不许偏离契约） |
 | `tests/test_skeleton.py` | 骨架自检 3 条：版本与 `pyproject.toml` 一致 / import 不把重依赖拉进来 / 测试数不为 0 |
+| `tests/test_backtest_slice.py` | I1 的回归测试 22 条：竖切的不变量（同种子可复现、成交价取下一根 K 线开盘价、拒单不抛异常…）。它**没有**红→绿的 git 证据（实现先于测试），替代证据是 `tools/pytest_mutation_check.py` |
+| `tests/fixtures/sample_prices.csv` | 回归测试与可复现性门禁共用的小样本行情 |
 | `.github/workflows/ci.yml` | 只两条 `run:`（`pytest -q` 与 `run_all_gates.py`），**禁止 `|| true` 吞退出码**；因无 git remote，**从未在 GitHub 上跑过** |
 | `.venv/` | 仓库内虚拟环境（只装了 pytest）；**不入库**（`.gitignore`） |
 
@@ -84,7 +85,13 @@
 | `tools/verify_contract_refs.py` | 契约引用的类型/异常是否有定义（B7 欠账所在） |
 | `tools/verify_data_center.py` | 数据中心契约 §3.6.1 与 DDL 约束清单双向一致（C1~C7）+ 对 `db/data_center.smoke.sql` 的触发测试覆盖核对（C7） |
 | `tools/verify_iteration_plan.py` | 迭代计划里每个标「已交付」的迭代是否引用了一条**真实存在**的证据路径（防幽灵 ✅）+ DoD 四件套形状 |
-| `tools/verify_skeleton.py` | I0 骨架是否还在（pyproject / 包 / 测试文件 / CI 的 `run:` 接线），**不跑 pytest** |
+| `tools/verify_skeleton.py` | I0 骨架是否还在（pyproject / 包 / 测试 / CI 的 `run:` 接线），**不跑 pytest**；另守 `CONTEXT.md` 的状态陈述不许过期（`GATE-COUNT` / `IMPL-STATUS`） |
+| `tools/verify_backtest_reproducibility.py` | 回测可复现性：同种子两次跑 `deterministic` 段逐字节一致、换种子必须真的改变、样本非空、段结构合规（R1~R4） |
+| `tools/verify_contract_signature.py` | 契约签名与实现**双向**一致（S1~S7）+ 未登记成员 / 未实现缺口清单；机器可读投影是 `tools/contract-signature-manifest.json` |
+| `tools/contract-signature-manifest.json` | 契约签名的机器可读投影（`classes` / `non_normative_blocks` / `not_implemented` / `extras`） |
+| `tools/pytest_mutation_check.py` | 把实现逐处改坏，验证 `tests/test_backtest_slice.py` 真的会红（**不是门禁**：它验证的是测试，且慢） |
+| `tools/pytest-mutation-report.txt` | 上一条的逐变异证据 —— **快照**，改实现或改测试后作废 |
+| `.rounds/i1/` | I1 可复现性门禁的样本（同种子两份 + 换种子一份 + 自测一份） |
 | `tools/ci_dryrun.py` | 在本地把 CI 的两条命令真跑一遍 + 两次红→绿往返（含清 `__pycache__`），写 `tools/ci-dryrun-report.txt`。**不是门禁**（需 .venv） |
 | `tools/ci-dryrun-report.txt` | CI 的**本地等价**证据 —— **快照**，只对报告内的解释器与 commit 成立 |
 | `tools/docx2md.py` | docx→md 转换器（**重跑会覆盖产物 A**） |
@@ -160,12 +167,14 @@ python tools/falsify_smoke.py            # 证伪那两份绿（逐条放宽约�
 提交粒度是**整轮提交**（没有细粒度还原点）：基线 `053f620` → 契约/门禁若干 → **I0 骨架 `fe9e060`**，
 其后仍是每个迭代一个提交；**当前提交数与 HEAD 一律现取 `git log --oneline`，不要在上面写死数字**
 （写死的数字每次提交都会过期，本项目已经在「过时计数」上踩过两次）。
-**I0 的「可回滚」与「可运行」两半都已交付**：`.venv` + pytest（3 passed）、`pyproject.toml`、
-`quanauto/` 包、`tests/test_skeleton.py`、`.github/workflows/ci.yml`。
+**I0 的「可回滚」与「可运行」两半都已交付，I1 又在其上打了第一条竖切**：`.venv` + pytest（`25 passed`）、
+`pyproject.toml`（`dependencies = []` 仍是空的，而且是故意的）、`quanauto/` 包（9 个实现模块，入口 `quanauto.cli`）、
+`tests/`（骨架自检 3 条 + 竖切回归 22 条）、`.github/workflows/ci.yml`。
 但 CI **从未在 GitHub 上跑过**（仓库没有配置 git remote），本地等价证据是
 `tools/ci-dryrun-report.txt`（含两次红→绿往返）；它是快照，改完代码要 `python tools/ci_dryrun.py` 重跑。
 
-6 个门禁：5 个 tier-A 全绿；`core-contract-refs` 是 tier-B 欠账，基线 **39**（T1=2 / T2=19 / T3=18）。
+门禁数量一律**现取**（`python tools/run_all_gates.py --list`），不在这里写死：
+tier-A 全绿；`core-contract-refs` 是 tier-B 欠账，基线 **39**（T1=2 / T2=19 / T3=18）。
 最大阻塞是 **B7**：主契约引用了 19 个类型和 18 个异常却从未定义，还有 2 个 python 块无法解析。
 **数据库侧已不再是「运行时未证实」**：2026-09-23 两份触发测试在容器 `postgres:17`（17.11）上
 分别是 **23/0** 与 **42/0** PASS，且这两份绿的**每一条命名 CHECK 都已被

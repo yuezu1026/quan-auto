@@ -9,7 +9,7 @@
   "tasks": [
     {
       "label": "gates: all",
-      "detail": "跑全部 6 个门禁并打印一个有界总表；退出码 0 表示全绿",
+      "detail": "跑全部门禁并打印一个有界总表（门禁数现取 --list，不写死）；退出码 0 表示全绿",
       "type": "shell",
       "command": "python tools/run_all_gates.py",
       "group": { "kind": "build", "isDefault": true },

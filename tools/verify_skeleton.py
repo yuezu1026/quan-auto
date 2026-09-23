@@ -21,7 +21,7 @@ Boundary -- what this gate does NOT prove
 Usage
 -----
     python tools/verify_skeleton.py             # 检查仓库根
-    python tools/verify_skeleton.py --selftest  # 自证：6 个探测器各自都能红
+    python tools/verify_skeleton.py --selftest  # 自证：每个探测器各自都能红
     python tools/verify_skeleton.py <root>      # 检查别的目录（用于触发测试）
 
 Exit codes: 0 = PASS, 1 = FAIL, 2 = selftest 自身的断言失败（说明这个门禁坏了，不是产物坏了）
@@ -52,7 +52,41 @@ RUN_RE = re.compile(r'^[ \t]*(?:-[ \t]*)?run:[ \t]*(.*?)[ \t]*$', re.M)
 SWALLOW_RE = re.compile(r'continue-on-error:[ \t]*true|\|\|[ \t]*true\b')
 
 # 本门禁一共几个探测器。用来在报告里打出分母 —— 分母为 0 的报告不许被读成通过。
-DETECTORS = ('PYPROJECT', 'VERSION', 'PACKAGE', 'TESTS', 'CI', 'CI-SWALLOW')
+DETECTORS = ('PYPROJECT', 'VERSION', 'PACKAGE', 'TESTS', 'CI', 'CI-SWALLOW',
+             'GATE-COUNT', 'IMPL-STATUS')
+
+# ── 状态陈述探测器（为什么需要它们） ────────────────────────────────────────
+#
+# `CONTEXT.md` 是 L0 地图、是全仓库的导航入口，而在 2026-09-23 I1 落地之前，
+# **没有任何门禁读它**。后果实测到了：I1 把 9 个实现模块和 2 个新门禁写完之后，
+# CONTEXT.md 里三处状态陈述同时过期（「真正的实现一行都还没写」「只有 __version__,
+# 没有任何实现」「6 个门禁」），而当时 8 个门禁**全绿** —— 因为没有任何判据看过那份文件。
+# 规范 §6 的清单第 10 项「新增产物后回填 CONTEXT.md」一直是纯自觉项，
+# 而纯自觉项一定会漂。这两个探测器就是把它变成判据。
+#
+# 判据的选择：**禁掉会过期的写法**，而不是「核对数字对不对」。理由三条：
+#   1. 「核对数字」要求本门禁去解析 `run_all_gates.py` 的注册表 —— 让门禁互相解析
+#      等于把另一个门禁的输出也变成契约（规范 §3.6 记过这个漂移源）。
+#   2. 在文档里写死计数本来就是要禁的写法：CONTEXT.md §6 早已对「提交数」立了同样的
+#      规矩（「一律现取 git log --oneline，不要写死数字」），只是那条一直没有判据。
+#   3. 带日期的写法是**证据快照**（「2026-09-23 实测 8 个门禁」），它过期是正常的，
+#      故予豁免。要禁的是不带日期的「当前状态」断言。
+STATE_FILES = ('CONTEXT.md',)
+
+# 实现状态陈述要同时管三个地方：地图、包元数据、包入口。三处都写过同一句错话。
+IMPL_STATUS_TARGETS = ('CONTEXT.md', PYPROJECT, os.path.join(PKG_NAME, '__init__.py'))
+
+# 这些句子描述「现在有没有实现」。实现一旦存在，它们就从「当时正确」变成永久错误。
+OBSOLETE_STATUS_PHRASES = (
+    '没有任何实现',
+    '尚无可运行实现',
+    '一行都还没写',
+    '一行未写',
+    '只有版本号的空包',
+)
+
+GATE_COUNT_RE = re.compile(r'\d+\s*个门禁')
+DATE_RE = re.compile(r'\d{4}-\d{2}-\d{2}')
 
 
 def read_text(path):
@@ -241,6 +275,62 @@ def check_ci_swallow(root):
     return findings
 
 
+def _impl_modules(root):
+    """包目录里除 `__init__.py` 之外的 `.py` —— 它们是「已经有实现」的凭证。"""
+    pkg_dir = os.path.join(root, PKG_NAME)
+    if not os.path.isdir(pkg_dir):
+        return []
+    try:
+        entries = os.listdir(pkg_dir)
+    except OSError:
+        return []
+    return sorted(f for f in entries if f.endswith('.py') and f != '__init__.py')
+
+
+def check_gate_count(root):
+    """文档里不许写死**不带日期**的门禁数量 —— 那个数字每轮都会过期。"""
+    findings = []
+    for name in STATE_FILES:
+        text = read_text(os.path.join(root, name))
+        if text is None:
+            # 文件不存在不是这个探测器的职责（CONTEXT.md 缺失自有别的判据去管），
+            # 但静默跳过要看得见：下面 main() 会打出探测器分母。
+            continue
+        for i, line in enumerate(text.split('\n'), 1):
+            m = GATE_COUNT_RE.search(line)
+            if m and not DATE_RE.search(line):
+                findings.append(
+                    ('GATE-COUNT',
+                     '%s:%d 写死了门禁数量（%r）—— 门禁数每轮都会变，这个数字必然过期，'
+                     '而且没人会在加门禁时想起它。正确写法是「门禁数现取 '
+                     'python tools/run_all_gates.py --list」；若要记一次实测结果，必须带上日期。'
+                     % (name, i, m.group(0))))
+    return findings
+
+
+def check_impl_status(root):
+    """实现已经存在时，状态陈述里不许再说「没有任何实现」。"""
+    findings = []
+    impl = _impl_modules(root)
+    if not impl:
+        return findings  # 此刻说「还没有实现」是**对的**，报红反而是假阳性
+    for name in IMPL_STATUS_TARGETS:
+        text = read_text(os.path.join(root, name))
+        if text is None:
+            continue
+        for i, line in enumerate(text.split('\n'), 1):
+            # 一行只报第一个命中的短语：同一行里「一行都还没写」与「只有版本号的空包」
+            # 常常连写，逐短语报会得到两条同源 FINDING，看着像两个问题。
+            hit = next((p for p in OBSOLETE_STATUS_PHRASES if p in line), None)
+            if hit is not None:
+                findings.append(
+                    ('IMPL-STATUS',
+                     '%s:%d 写着「%s」，但 %s/ 下已有 %d 个实现模块（%s）—— '
+                     '状态陈述已过期，属于文档漂移'
+                     % (name, i, hit, PKG_NAME, len(impl), ', '.join(impl[:4]))))
+    return findings
+
+
 DETECTOR_FUNCS = {
     'PYPROJECT': check_pyproject,
     'VERSION': check_version,
@@ -248,6 +338,8 @@ DETECTOR_FUNCS = {
     'TESTS': check_tests,
     'CI': check_ci,
     'CI-SWALLOW': check_ci_swallow,
+    'GATE-COUNT': check_gate_count,
+    'IMPL-STATUS': check_impl_status,
 }
 
 
@@ -298,7 +390,8 @@ jobs:
 
 
 def _sandbox(tmp, *, pyproject=CLEAN_PYPROJECT, version='"1.2.3"', ci=CLEAN_CI,
-             packages='"quanauto"', make_pkg=True, make_tests=True):
+             packages='"quanauto"', make_pkg=True, make_tests=True,
+             context_md=None, impl_modules=()):
     """造一个最小仓库。每个样本只动一处，其余保持干净 —— 这样报出来的必定是那一处。"""
     root = tempfile.mkdtemp(dir=tmp)
     with open(os.path.join(root, PYPROJECT), 'w', encoding='utf-8', newline='\n') as fp:
@@ -308,6 +401,13 @@ def _sandbox(tmp, *, pyproject=CLEAN_PYPROJECT, version='"1.2.3"', ci=CLEAN_CI,
         with open(os.path.join(root, PKG_NAME, '__init__.py'), 'w',
                   encoding='utf-8', newline='\n') as fp:
             fp.write('"""fake package."""\n\n__version__ = %s\n' % version)
+        for mod in impl_modules:
+            with open(os.path.join(root, PKG_NAME, mod), 'w',
+                      encoding='utf-8', newline='\n') as fp:
+                fp.write('"""fake impl."""\n')
+    if context_md is not None:
+        with open(os.path.join(root, 'CONTEXT.md'), 'w', encoding='utf-8', newline='\n') as fp:
+            fp.write(context_md)
     if make_tests:
         os.makedirs(os.path.join(root, 'tests'))
         with open(os.path.join(root, 'tests', 'test_x.py'), 'w',
@@ -392,6 +492,30 @@ def selftest():
         # 12) 输入目录根本不存在时也必须判红（而不是「没找到问题」）
         expect('MUT-nonexistent-root', os.path.join(tmp, 'no-such-root'),
                ('CI', 'PACKAGE', 'PYPROJECT', 'TESTS', 'VERSION'))
+        # 13) 实现已存在，CONTEXT.md 还写着「一行都还没写」-> IMPL-STATUS
+        expect('MUT-impl-status-stale',
+               _sandbox(tmp, impl_modules=('broker.py',),
+                        context_md='契约、DDL、门禁 —— 真正的实现一行都还没写。\n'),
+               ('IMPL-STATUS',))
+        # 13b) 同一句话，但**还没有实现模块** -> 此刻它是对的，必须保持安静（防误报）
+        expect('CLEAN-impl-status-accurate',
+               _sandbox(tmp, context_md='契约、DDL、门禁 —— 真正的实现一行都还没写。\n'),
+               ())
+        # 13c) 同一个过期陈述写在 pyproject description 里 -> 同样被抓（三处都要管）
+        expect('MUT-impl-status-in-description',
+               _sandbox(tmp, impl_modules=('broker.py',),
+                        pyproject=CLEAN_PYPROJECT.replace(
+                            'version = "1.2.3"',
+                            'version = "1.2.3"\ndescription = "骨架阶段，尚无可运行实现"')),
+               ('IMPL-STATUS',))
+        # 14) CONTEXT.md 写死门禁数量 -> GATE-COUNT
+        expect('MUT-gate-count-hardcoded',
+               _sandbox(tmp, context_md='现在有 6 个门禁，5 个 tier-A 全绿。\n'),
+               ('GATE-COUNT',))
+        # 14b) 带日期的实测快照 -> 豁免（它是证据不是状态断言，过期属正常）
+        expect('CLEAN-gate-count-dated',
+               _sandbox(tmp, context_md='2026-09-23 实测 6 个门禁。\n'),
+               ())
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
