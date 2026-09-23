@@ -4,17 +4,17 @@
 本仓库没有配置 git remote，因此 `.github/workflows/ci.yml` **从未在 GitHub 上真实运行过**；
 下面跑的是与它**相同的两条命令**。
 
-generated: 2026-09-23 20:13:11
+generated: 2026-09-23 20:18:05
 python:    D:\project-quan\quan-auto\.venv\Scripts\python.exe  (.venv/Scripts/python.exe)
 version:   Python 3.13.9
-commit:    7fdaa3fb86e068011749349b3d4603b5cf4a5705
-dirty:     11 项未提交改动（快照与产物不同步）
-pycache:   启动时清掉 3 个 __pycache__（陈旧字节码会让结论与磁盘源码无关）
+commit:    14dd83e8dd0575ca6e89d301c3e0a6a257408a22
+dirty:     0 项未提交改动
+pycache:   启动时清掉 0 个 __pycache__（陈旧字节码会让结论与磁盘源码无关）
 
 ## 1. python -m pytest -q
 exit: 0
   | ...........................................                              [100%]
-  | 43 passed in 0.24s
+  | 43 passed in 0.22s
 
 ## 2. 红→绿往返（I0 触发测试的证据：两个关键的东西各红一次）
 
@@ -29,7 +29,7 @@ exit: 0
   还原: 字节与原始内容一致
   绿: pytest exit=0
     | ...........................................                              [100%]
-    | 43 passed in 0.24s
+    | 43 passed in 0.25s
 
 ### ci-drops-gates -- 把 CI 里那一行门禁命令换成单跑一个子门禁
   靶子: .github/workflows/ci.yml  'python tools/run_all_gates.py' -> 'python tools/verify_risk_config.py'
