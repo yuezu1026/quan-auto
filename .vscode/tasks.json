@@ -9,7 +9,7 @@
   "tasks": [
     {
       "label": "gates: all",
-      "detail": "跑全部 5 个门禁并打印一个有界总表；退出码 0 表示全绿",
+      "detail": "跑全部 6 个门禁并打印一个有界总表；退出码 0 表示全绿",
       "type": "shell",
       "command": "python tools/run_all_gates.py",
       "group": { "kind": "build", "isDefault": true },
@@ -53,6 +53,15 @@
       "problemMatcher": []
     },
     {
+      "label": "gates: skeleton",
+      "detail": "I0 骨架还在：pyproject / 包 / 测试 / CI 接线（注意它不跑 pytest）",
+      "type": "shell",
+      "command": "python tools/run_all_gates.py --gate=skeleton",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": []
+    },
+    {
       "label": "gates: core-contract-refs",
       "detail": "tier-B 棘轮：契约引用的类型/异常是否有定义（欠账基线 39）",
       "type": "shell",
@@ -79,9 +88,9 @@
     },
     {
       "label": "gates: report",
-      "detail": "读上一次的完整输出 ---- 不要为了看结果重跑门禁",
+      "detail": "读上一次的完整输出 ---- 不要为了看结果重跑门禁。必须 -Encoding utf8：裸 Get-Content 会按 GBK 解码，中文显示成乱码（是读法问题不是文件坏了）",
       "type": "shell",
-      "command": "Get-Content tools\\gates-report.txt",
+      "command": "Get-Content tools\\gates-report.txt -Encoding utf8",
       "presentation": { "reveal": "always", "panel": "shared", "clear": true },
       "problemMatcher": []
     }
