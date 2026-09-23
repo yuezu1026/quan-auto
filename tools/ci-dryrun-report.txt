@@ -4,10 +4,10 @@
 本仓库没有配置 git remote，因此 `.github/workflows/ci.yml` **从未在 GitHub 上真实运行过**；
 下面跑的是与它**相同的两条命令**。
 
-generated: 2026-09-23 17:12:57
+generated: 2026-09-23 17:13:34
 python:    D:\project-quan\quan-auto\.venv\Scripts\python.exe  (.venv/Scripts/python.exe)
 version:   Python 3.13.9
-commit:    20ed34af96aad1ba3279e82d282b1c5725f5a642
+commit:    fe9e060872b0003e35f7ddec7a716c74c6b85ad5
 dirty:     0 项未提交改动
 pycache:   启动时清掉 0 个 __pycache__（陈旧字节码会让结论与磁盘源码无关）
 
@@ -25,7 +25,7 @@ exit: 0
   红: pytest exit=1
     | =========================== short test summary info ===========================
     | FAILED tests/test_skeleton.py::test_version_matches_pyproject - AssertionErro...
-    | 1 failed, 2 passed in 0.12s
+    | 1 failed, 2 passed in 0.14s
   还原: 字节与原始内容一致
   绿: pytest exit=0
     | ...                                                                      [100%]
