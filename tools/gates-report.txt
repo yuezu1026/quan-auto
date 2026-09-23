@@ -45,7 +45,7 @@ what: I0 骨架还在：pyproject / 包 / 测试 / CI 接线（不跑 pytest）
 argv: tools/verify_skeleton.py
 ------------------------------------------------------------------------------
 root: D:\project-quan\quan-auto
-denominator: 8 detector(s) ran: PYPROJECT, VERSION, PACKAGE, TESTS, CI, CI-SWALLOW, GATE-COUNT, IMPL-STATUS
+denominator: 9 detector(s) ran: PYPROJECT, VERSION, PACKAGE, TESTS, CI, CI-SWALLOW, GATE-COUNT, IMPL-STATUS, MAP-PATHS
 verdict: PASS (0 issue(s))
 
 ==============================================================================

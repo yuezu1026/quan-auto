@@ -30,6 +30,7 @@ Exit codes: 0 = PASS, 1 = FAIL, 2 = selftest 自身的断言失败（说明这�
 from __future__ import annotations
 
 import ast
+import glob
 import os
 import re
 import shutil
@@ -53,7 +54,7 @@ SWALLOW_RE = re.compile(r'continue-on-error:[ \t]*true|\|\|[ \t]*true\b')
 
 # 本门禁一共几个探测器。用来在报告里打出分母 —— 分母为 0 的报告不许被读成通过。
 DETECTORS = ('PYPROJECT', 'VERSION', 'PACKAGE', 'TESTS', 'CI', 'CI-SWALLOW',
-             'GATE-COUNT', 'IMPL-STATUS')
+             'GATE-COUNT', 'IMPL-STATUS', 'MAP-PATHS')
 
 # ── 状态陈述探测器（为什么需要它们） ────────────────────────────────────────
 #
@@ -71,6 +72,7 @@ DETECTORS = ('PYPROJECT', 'VERSION', 'PACKAGE', 'TESTS', 'CI', 'CI-SWALLOW',
 #      规矩（「一律现取 git log --oneline，不要写死数字」），只是那条一直没有判据。
 #   3. 带日期的写法是**证据快照**（「2026-09-23 实测 8 个门禁」），它过期是正常的，
 #      故予豁免。要禁的是不带日期的「当前状态」断言。
+# 两个探测器共用这份清单：`GATE-COUNT`（不许写死计数）与 `MAP-PATHS`（引用必须存在）。
 STATE_FILES = ('CONTEXT.md',)
 
 # 实现状态陈述要同时管三个地方：地图、包元数据、包入口。三处都写过同一句错话。
@@ -82,11 +84,29 @@ OBSOLETE_STATUS_PHRASES = (
     '尚无可运行实现',
     '一行都还没写',
     '一行未写',
+    '一行实现都没有',
     '只有版本号的空包',
 )
 
 GATE_COUNT_RE = re.compile(r'\d+\s*个门禁')
 DATE_RE = re.compile(r'\d{4}-\d{2}-\d{2}')
+
+# ── 地图幽灵路径探测器 ─────────────────────────────────────────────────────
+#
+# `CONTEXT.md` 的职责是导航：它写下的每个文件路径都是一句「去这里看」。路径一旦
+# 改名或被删，这句话就把人送到空地址，而**其它八个探测器全都看不见**（它们不读
+# CONTEXT.md 里的路径）。这与 `verify_iteration_plan.py` 的 C4（证据路径必须存在）
+# 是同一类判据 —— 那边守「已交付的证据」，这边守「地图的指路」。
+#
+# 覆盖面**只有 `CONTEXT.md`**，这是实测出来的边界而不是偷懒：把同一套判定扫到
+# `docs/*.md` 上，132 个含 `/` 的 token 里就有 `Asia/Shanghai`（IANA 时区）、
+# `effective_from/effective_to`（字段对）这种假阳性，裸 token 更是有 50 多个
+# （`DataCenter.as_of()`、`pd.read_csv`、`0.10`、`common.proto`…）。一个会把正确
+# 文档判红十几次的探测器，最后一定会被人用「放宽」的方式关掉。
+KNOWN_EXTS = ('.py', '.md', '.json', '.toml', '.yml', '.yaml', '.sql', '.txt',
+              '.csv', '.docx', '.cfg', '.ini', '.proto', '.html')
+SKIP_WALK_DIRS = frozenset(('.git', '.venv', '__pycache__', '.pytest_cache', 'node_modules'))
+BACKTICK_RE = re.compile(r'`([^`\n]+)`')
 
 
 def read_text(path):
@@ -331,6 +351,75 @@ def check_impl_status(root):
     return findings
 
 
+def _repo_basenames(root):
+    """仓库里所有**文件名**（不含目录），用来解析散文里那种裸文件名。
+
+    跳过大目录（`.git` / `.venv` / `__pycache__` 等）：它们既慢，又会让「同名文件恰好
+    存在」变成廉价的巧合。判定要落在人写的文件上。
+    """
+    found = set()
+    for base, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if d not in SKIP_WALK_DIRS]
+        found.update(files)
+    return found
+
+
+def _classify_ref(tok):
+    """把一个反引号 token 判成 glob / slash / bare / skip。
+
+    判据必须在**文件系统之外**就能定下来：如果「像不像路径」取决于「它存不存在」，
+    坏掉的输入就会自己决定检查范围（存在 ⇒ 不是路径 ⇒ 不用查），这是循环论证。
+
+    这里用 `os.path.splitext` 而不是 `str.endswith`：`splitext('.md') == ('.md', '')` ——
+    前导点被当作隐藏文件名，于是**纯扩展名**（`| .md（产物，勿原地改） | .docx（源） |`
+    这种表头）自动落进 skip。用 `endswith` 会把两个表头当成两条幽灵路径（实测踩到）。
+    代价是隐藏文件（`.gitignore`）也不在覆盖内，这是明知的选择。
+    """
+    if not tok or ' ' in tok or '\t' in tok or tok.startswith('-'):
+        return 'skip'
+    if any(c in tok for c in '*<{'):
+        return 'glob'
+    if '/' in tok:
+        return 'slash'
+    return 'bare' if os.path.splitext(tok)[1].lower() in KNOWN_EXTS else 'skip'
+
+
+def check_map_paths(root):
+    """L0 地图里的每个文件引用都必须真的存在 —— 防「地图把人送到空地址」。"""
+    findings = []
+    for name in STATE_FILES:
+        text = read_text(os.path.join(root, name))
+        if text is None:
+            continue  # 文件不存在不是这个探测器的职责（同 GATE-COUNT）
+        toks = BACKTICK_RE.findall(text)
+        refs = sorted({t for t in toks if _classify_ref(t) != 'skip'})
+        if not refs:
+            # 空转守卫：一个文件引用都提取不到时，下面所有判定都会落空而报告仍然干净。
+            # 推论：**每个样本的 CONTEXT.md 都得带至少一个真引用**，否则别的探测器
+            # 的样本会连带报两条码，看不出到底是谁命中。
+            findings.append(('MAP-PATHS',
+                             '%s 里没提取到任何文件引用（反引号 %d 个）—— '
+                             '路径检查形同虚设，拒绝通过' % (name, len(toks))))
+            continue
+        basenames = _repo_basenames(root)
+        for tok in refs:
+            kind = _classify_ref(tok)
+            if kind == 'slash':
+                if not os.path.exists(os.path.join(root, *tok.split('/'))):
+                    findings.append(('MAP-PATHS',
+                                     '%s 指向 `%s`，但仓库里没有这个路径' % (name, tok)))
+            elif kind == 'bare':
+                if tok not in basenames:
+                    findings.append(('MAP-PATHS',
+                                     '%s 指向 `%s`，但仓库里没有任何同名文件' % (name, tok)))
+            else:  # glob
+                if not (glob.glob(os.path.join(root, tok))
+                        or glob.glob(os.path.join(root, '**', tok), recursive=True)):
+                    findings.append(('MAP-PATHS',
+                                     '%s 里的通配 `%s` 匹配不到任何文件' % (name, tok)))
+    return findings
+
+
 DETECTOR_FUNCS = {
     'PYPROJECT': check_pyproject,
     'VERSION': check_version,
@@ -340,6 +429,7 @@ DETECTOR_FUNCS = {
     'CI-SWALLOW': check_ci_swallow,
     'GATE-COUNT': check_gate_count,
     'IMPL-STATUS': check_impl_status,
+    'MAP-PATHS': check_map_paths,
 }
 
 
@@ -493,13 +583,16 @@ def selftest():
         expect('MUT-nonexistent-root', os.path.join(tmp, 'no-such-root'),
                ('CI', 'PACKAGE', 'PYPROJECT', 'TESTS', 'VERSION'))
         # 13) 实现已存在，CONTEXT.md 还写着「一行都还没写」-> IMPL-STATUS
+        #     ⚠️ 每个样本的 CONTEXT.md 都必须带**至少一个能解析的文件引用**，否则
+        #     MAP-PATHS 的空转守卫会一起开火；那样报出来是两个码，就看不出 IMPL-STATUS
+        #     到底有没有真的命中（「变异没打到分支」与「探测器不存在」长得一样）。
         expect('MUT-impl-status-stale',
                _sandbox(tmp, impl_modules=('broker.py',),
-                        context_md='契约、DDL、门禁 —— 真正的实现一行都还没写。\n'),
+                        context_md='契约、DDL、门禁 —— 真正的实现一行都还没写。见 `pyproject.toml`。\n'),
                ('IMPL-STATUS',))
         # 13b) 同一句话，但**还没有实现模块** -> 此刻它是对的，必须保持安静（防误报）
         expect('CLEAN-impl-status-accurate',
-               _sandbox(tmp, context_md='契约、DDL、门禁 —— 真正的实现一行都还没写。\n'),
+               _sandbox(tmp, context_md='契约、DDL、门禁 —— 真正的实现一行都还没写。见 `pyproject.toml`。\n'),
                ())
         # 13c) 同一个过期陈述写在 pyproject description 里 -> 同样被抓（三处都要管）
         expect('MUT-impl-status-in-description',
@@ -510,12 +603,40 @@ def selftest():
                ('IMPL-STATUS',))
         # 14) CONTEXT.md 写死门禁数量 -> GATE-COUNT
         expect('MUT-gate-count-hardcoded',
-               _sandbox(tmp, context_md='现在有 6 个门禁，5 个 tier-A 全绿。\n'),
+               _sandbox(tmp, context_md='现在有 6 个门禁，5 个 tier-A 全绿。见 `pyproject.toml`。\n'),
                ('GATE-COUNT',))
         # 14b) 带日期的实测快照 -> 豁免（它是证据不是状态断言，过期属正常）
         expect('CLEAN-gate-count-dated',
-               _sandbox(tmp, context_md='2026-09-23 实测 6 个门禁。\n'),
+               _sandbox(tmp, context_md='2026-09-23 实测 6 个门禁。见 `pyproject.toml`。\n'),
                ())
+        # 15) 地图指向不存在的路径 -> MAP-PATHS（先验「根相对路径」这一支）
+        expect('MUT-map-ghost-slash',
+               _sandbox(tmp, context_md='细节见 `tools/verify_nonexistent.py`。\n'),
+               ('MAP-PATHS',))
+        # 15b) 同一个幽灵写成**裸文件名**（散文里的 `xxx.py`）-> 走「仓库里有同名文件」那一支
+        expect('MUT-map-ghost-bare',
+               _sandbox(tmp, context_md='细节见 `verify_nonexistent.py`。\n'),
+               ('MAP-PATHS',))
+        # 15c) 通配符什么都匹配不到 -> MAP-PATHS（第三支）
+        expect('MUT-map-glob-empty',
+               _sandbox(tmp, context_md='实现都在 `quanauto/*.zig` 里。\n'),
+               ('MAP-PATHS',))
+        # 15d) 空转守卫：有反引号但**一个文件引用都没有** -> MAP-PATHS 拒绝通过
+        expect('GATE-map-no-refs',
+               _sandbox(tmp, context_md='跑 `--list` 看注册表，或读 `git log --oneline`。\n'),
+               ('MAP-PATHS',))
+        # 15e) 干净样本：真引用能解析、纯扩展名表头（`.md` / `.docx`）不算路径
+        #      —— 后半个断言是实测踩过的假阳性：`str.endswith` 会把两个表头
+        #      当成两条幽灵路径，所以改用 `os.path.splitext`。
+        expect('CLEAN-map-paths-ok',
+               _sandbox(tmp, context_md='表头 `.md` / `.docx` 不是路径；见 `pyproject.toml`、'
+                                        '`quanauto/*.py` 与 `quanauto/__init__.py`。\n'),
+               ())
+        # 16) 「一行实现都没有」是同族里第 6 种写法 -> 措辞表要收得住变体
+        expect('MUT-impl-status-no-line-impl',
+               _sandbox(tmp, impl_modules=('broker.py',),
+                        context_md='依赖清单是空的：现在一行实现都没有。见 `pyproject.toml`。\n'),
+               ('IMPL-STATUS',))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
