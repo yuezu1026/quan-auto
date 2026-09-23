@@ -5,9 +5,9 @@ GATE md-fidelity (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 三份 .docx 的每一段（含表格单元）都出现在对应 .md 中
 argv: tools/verify_md_coverage.py docs
 ------------------------------------------------------------------------------
-[智能量化交易平台-数据中心数据源选型与接入规范.docx] paragraphs=268  missing=0  relocated-fields-ok=0  superseded-ok=1
-[智能量化交易平台-核心模块接口契约文档.docx] paragraphs=254  missing=0  relocated-fields-ok=21  superseded-ok=0
-[智能量化交易平台.docx] paragraphs=340  missing=0  relocated-fields-ok=0  superseded-ok=1
+[智能量化交易平台-数据中心数据源选型与接入规范.docx] paragraphs=268  missing=0  relocated-fields-ok=0  superseded-ok=1  addenda-missing=0
+[智能量化交易平台-核心模块接口契约文档.docx] paragraphs=254  missing=0  relocated-fields-ok=21  superseded-ok=0  addenda-missing=0
+[智能量化交易平台.docx] paragraphs=340  missing=0  relocated-fields-ok=0  superseded-ok=1  addenda-missing=0
 verdict: PASS (total missing=0)
 
 ==============================================================================
@@ -34,7 +34,7 @@ GATE iteration-plan (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 迭代计划里每个标「已交付」的迭代都引用了一条真实存在的证据路径
 argv: tools/verify_iteration_plan.py
 ------------------------------------------------------------------------------
-CRLF-normalised: plan=15339 bytes (迭代计划.md)
+CRLF-normalised: plan=15701 bytes (迭代计划.md)
 extracted: iterations=5 delivered=0 dod_sections=5
 verdict: PASS (0 issue(s))
 NOTE: no iteration is marked 已交付 yet, so C3/C4 found nothing to check on this run -- that is an empty result, NOT a verification. Their failing branch is exercised by --selftest samples C3-delivered-no-evidence / C4-ghost-path / C4-unverifiable-evidence.

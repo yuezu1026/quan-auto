@@ -19,7 +19,7 @@
 | # | 约束 | 后果 |
 |---|---|---|
 | C1 | 本机**没有本地 PostgreSQL 实例**：`psql` 不在 PATH、无服务、无安装目录。容器通道**可用**（Docker Desktop 已跑起来） | 不要再说「从未执行」—— 2026-09-23 起 `db/*.sql` 已在容器 `postgres:17` 上执行过（触测 23/0 与 42/0 PASS）。但也**不能反过来说「约束已验证」**：只覆盖那一个镜像，「PostgreSQL 14+」仍未证实，改过 SQL 后结论即作废 |
-| C2 | `docs/` 下 3 个 `.md` 由 `.docx` 转换生成，**重新转换会覆盖** | 只能在其**之后追加**，禁止原地改已有段落。原地改 = 内容丢失 + md-fidelity 门禁失败 |
+| C2 | `docs/` 下 3 个 `.md` 由 `.docx` 转换生成，**重新转换会覆盖** | 只能在其**之后追加**，禁止原地改已有段落。原地改 = 内容丢失 + md-fidelity 门禁失败。**追加的内容同样会被重新转换抹掉**，所以每个追加块（模块4 的「以契约为准」注、附录A）都登记在 `verify_md_coverage.py` 的 `ADDENDA` 清单里，被抹掉即 FAIL |
 | C3 | 控制台是 **cp936(GBK)** | stdout 出现 GBK 之外的字符（如 `↔`）会让 Python 抛 `UnicodeEncodeError` 并丢掉整段输出；PowerShell `>` 写的是 **UTF-16LE** 不是 UTF-8；含中文的 argv 会被破坏 |
 | C4 | `tools/` 下**只用标准库** | 不要引入任何第三方依赖 |
 | C5 | ~~本仓库不是 git 仓库~~ **已修一半（2026-09-23）**：已是 git 仓库（`main`，基线提交 `053f620`） | 但**只有基线一个提交** ⇒ 只能整体退回基线，没有细粒度还原点。改文件前仍要想清楚 |
@@ -66,7 +66,7 @@
 | `tools/run_all_gates.py` | ★ **统一入口**，一条命令跑全部门禁并给出一个总判据 |
 | `tools/gates-report.txt` | 上一次运行的完整输出 —— **看结果读它，不要重跑** |
 | `tools/gates-baseline.json` | tier-B 棘轮基线，**手工维护**，禁止自动写入 |
-| `tools/verify_md_coverage.py` | docx 的每一段（含表格单元）是否都出现在对应 md 中 |
+| `tools/verify_md_coverage.py` | docx 的每一段（含表格单元）是否都出现在对应 md 中；另断言声明的追加段落（`ADDENDA`）未被重新转换抹掉 |
 | `tools/verify_risk_config.py` | 风控契约 §3.6 与 DDL 与 smoke.sql 三方一致 |
 | `tools/verify_contract_refs.py` | 契约引用的类型/异常是否有定义（B7 欠账所在） |
 | `tools/verify_data_center.py` | 数据中心契约 §3.6.1 与 DDL 约束清单双向一致（C1~C7）+ 对 `db/data_center.smoke.sql` 的触发测试覆盖核对（C7） |

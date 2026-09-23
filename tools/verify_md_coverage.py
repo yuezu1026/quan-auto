@@ -34,6 +34,21 @@ SUPERSEDED = [
 ]
 SUPERSEDED_OK = []
 
+# Declared, intentional POST-CONVERSION ADDITIONS: text that exists ONLY in the .md and
+# never in the .docx (e.g. the "以契约为准" note under 模块4, and 附录A that spells the
+# Strategy signatures out).  A re-conversion regenerates the .md from scratch, so these
+# vanish -- and the docx-side paragraph diff CANNOT see it, because every docx paragraph
+# is still present.  The report then looks *cleaner* than a real pass (missing=0), which
+# is the exact shape of a silent content loss.  So they are asserted PRESENT, per md file.
+ADDENDA = {
+    '智能量化交易平台.md': [
+        # 附录A 里写的规范签名（上文示意代码写的是 MarketData/List[Signal] 与 Dict[str, float]）
+        'class Strategy(ABC)',
+        'on_data(self, data: MarketDataBundle) -> List[TradingSignal]',
+        'get_target_positions(self) -> Dict[str, PositionTarget]',
+    ],
+}
+
 
 def norm(s):
     s = s.replace('\u201c', '"').replace('\u201d', '"').replace('\u2018', "'").replace('\u2019', "'")
@@ -96,11 +111,17 @@ def verify(docx, md_path, label):
     missing = [p for p in paras if p not in hay
                and not fields_kept(p, hay)
                and not superseded(p, hay)]
-    print('[%s] paragraphs=%d  missing=%d  relocated-fields-ok=%d  superseded-ok=%d'
-          % (label, len(paras), len(missing), len(RELOCATED), len(SUPERSEDED_OK)))
+    # post-conversion additions: asserted PRESENT (see ADDENDA). Keyed by file name, so
+    # a copy under a different name gets no addenda checks at all -- the negative control
+    # must therefore write its sample into a temp dir that preserves the basename.
+    miss_add = [s for s in ADDENDA.get(os.path.basename(md_path), []) if norm(s) not in hay]
+    print('[%s] paragraphs=%d  missing=%d  relocated-fields-ok=%d  superseded-ok=%d  addenda-missing=%d'
+          % (label, len(paras), len(missing), len(RELOCATED), len(SUPERSEDED_OK), len(miss_add)))
     for p in missing[:10]:
         print('    MISSING: %s' % p[:110])
-    return len(missing)
+    for s in miss_add:
+        print('    MISSING-ADDENDUM: %s' % s[:110])
+    return len(missing) + len(miss_add)
 
 
 def gate(ok, msg):
@@ -180,6 +201,31 @@ if sys.argv[1] == '--selftest':
     gate(n3 > 0, 'a superseded paragraph whose replacement vanished was NOT reported -> '
                  'the supersession rule is a content hole')
 
+    # fourth control: a declared post-conversion ADDENDUM whose text vanished must be
+    # reported. Deleting it leaves every docx paragraph in place, so the paragraph diff
+    # stays silent by construction -- without this control a re-conversion would wipe the
+    # appended corrections and the gate would print a CLEANER report than a real pass.
+    # The sample must keep the basename (ADDENDA is keyed by file name).
+    add = ADDENDA.get(os.path.basename(prd_md))
+    gate(add, 'ADDENDA control needs a declared entry for %s' % os.path.basename(prd_md))
+    t2 = open(prd_md, encoding='utf-8').read()
+    t2b = t2.replace(add[0], '')
+    gate(t2b != t2, 'ADDENDA marker %r not found in %s -> the guard has drifted away '
+                    'from the file it claims to describe' % (add[0], prd_md))
+    ctrl_dir = os.path.join(os.environ.get('TEMP', '.'), 'md-addenda-ctrl')
+    os.makedirs(ctrl_dir, exist_ok=True)
+    lost2 = os.path.join(ctrl_dir, os.path.basename(prd_md))
+    with open(lost2, 'w', encoding='utf-8', newline='\n') as f:
+        f.write(t2b)
+    n4 = verify(prd_docx, lost2, 'ADDENDA-CONTROL')
+    gate(n4 > 0, 'a missing post-conversion addendum was NOT reported -> re-conversion '
+                 'would silently delete it')
+    # clean sample for the SAME detector: the shipped file must report 0 (otherwise the
+    # addenda check fires on a correct file and the negative control proves nothing)
+    n5 = verify(prd_docx, prd_md, 'PRD-REAL-ADDENDA')
+    gate(n5 == 0, 'the shipped %s reported %d issue(s) -> ADDENDA drifted away from the file'
+                  % (os.path.basename(prd_md), n5))
+
     # struct_check must actually fire: one INDEPENDENT sample per detector, ordered
     # so that no detector shadows another (an earlier unbalanced fence would swallow
     # the bad info string and make that detector silently never run).
@@ -194,8 +240,9 @@ if sys.argv[1] == '--selftest':
                  'unclosed code fence', 'heading without space'):
         gate(any(want in g for g in got), 'struct_check missed detector: ' + want)
     print('SELFTEST OK: detects removed content (missing=%d), no false alarm on intact md, '
-          'lost replacement caught (missing=%d), struct_check fires on all %d detectors'
-          % (n, n3, len(got)))
+          'lost replacement caught (missing=%d), lost addendum caught (missing=%d), '
+          'clean addenda sample (missing=%d), struct_check fires on all %d detectors'
+          % (n, n3, n4, n5, len(got)))
     sys.exit(0)
 
 d = sys.argv[1]
