@@ -207,7 +207,7 @@ def test_no_leakage_passes_on_a_real_run() -> None:
     engine, _, _ = make_engine()
     engine.run()
     report = engine.validate_no_leakage()
-    assert report.is_valid and not report.issues
+    assert report.is_valid and not report.errors
 
 
 def test_no_leakage_before_run_reports_warning_instead_of_silent_pass() -> None:
@@ -215,6 +215,7 @@ def test_no_leakage_before_run_reports_warning_instead_of_silent_pass() -> None:
     engine, _, _ = make_engine()
     report = engine.validate_no_leakage()
     assert report.warnings, "没跑过回测却报了一个没有任何说明的通过"
+    assert report.row_count == 0, "没跑过回测却报了一个非零的已校验行数"
 
 
 def test_no_leakage_can_actually_fail() -> None:
@@ -229,7 +230,7 @@ def test_no_leakage_can_actually_fail() -> None:
     assert result.trades, "没有成交，构造不出未来函数样本"
     result.trades[0].timestamp = result.start_time - timedelta(days=1)
     report = engine.validate_no_leakage()
-    assert not report.is_valid and report.issues
+    assert not report.is_valid and report.errors
 
 
 def test_get_result_before_run_raises() -> None:

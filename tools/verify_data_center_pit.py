@@ -63,6 +63,12 @@ Detectors (each fires independently; `--selftest` has one MUT sample per detecto
       comes back empty (a rename, a moved file) would otherwise turn the whole gate into
       a no-op that still prints "0 issue(s) PASS". Zero targets is a FAILURE, not a pass.
 
+Coverage is exactly the files named by SOURCE_RELS -- not "the repository". A new module
+that can instantiate a DataFeed has to be registered there. This is deliberate rather than
+lazy: a gate that globs the tree cannot tell a reviewer *which* files it looked at, and the
+failure mode this constant exists to prevent is precisely "the next module was invisible
+while every gate stayed green".
+
 Usage:
     python tools/verify_data_center_pit.py             # check the repository
     python tools/verify_data_center_pit.py --selftest  # prove every detector can go red
@@ -81,14 +87,22 @@ import sys
 FEED_REL = os.path.join('quanauto', 'datafeed.py')
 CENTER_REL = os.path.join('quanauto', 'datacenter.py')
 
+# Modules that must ALSO be parsed even though they are neither the feed nor the centre.
+# Why this exists: P2 ("DataCenter.as_of() is the sole legal producer of a DataFeed") is
+# only enforced over the files this gate parses, so a brand-new module that instantiates
+# DbDataFeed used to be invisible -- every gate stayed green while D3 was bypassed.
+# Anything that can reach the feed/store classes belongs in this tuple.
+EXTRA_RELS = (os.path.join('quanauto', 'datasources.py'),)
+SOURCE_RELS = (FEED_REL, CENTER_REL) + EXTRA_RELS
+
 # `datetime` shadows the type of the same name inside the method body -- that is the
 # contract's own spelling (verified character by character by the contract-signature
 # gate), so these three names are matched literally, warts and all.
 DATE_PARAMS = ('datetime', 'start', 'end')
 STORE_READERS = ('select_bars', 'select_symbols')
 
-STAT_KEYS = ('feed_classes', 'pit_feeds', 'unbounded_feeds', 'feed_methods',
-             'feed_instantiations', 'store_touchers', 'date_takers',
+STAT_KEYS = ('scanned_modules', 'feed_classes', 'pit_feeds', 'unbounded_feeds',
+             'feed_methods', 'feed_instantiations', 'store_touchers', 'date_takers',
              'as_of_impls', 'guard_raises')
 
 
@@ -282,21 +296,34 @@ class _InstantiationFinder(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-def run_checks(feed_text, center_text):
-    """feed_text and center_text are REQUIRED, never defaulted.
+def run_checks(feed_text, center_text, extra_texts):
+    """feed_text, center_text and extra_texts are REQUIRED, never defaulted.
 
     A defaulted argument would silently turn this into a check that only runs in main():
     every mutation sample would then be diffing the real file against itself and "clean"
     would mean nothing.
+
+    `extra_texts` carries SOURCE_RELS[2:] one-for-one. Defaulting it to () would make
+    "which files are scanned" depend on the caller, and a forgotten file is a rule that
+    silently stops being enforced -- so the count is compared against SOURCE_RELS and a
+    mismatch is a P0 finding, not a shrug.
     """
     issues, stats = [], {}
+    texts = [feed_text, center_text] + list(extra_texts)
+    if len(texts) != len(SOURCE_RELS):
+        issues.append(('P0', 'SOURCE_RELS declares %d file(s) (%s) but %d text(s) were '
+                             'supplied -- an unparsed file is a silently unchecked file, '
+                             'and this gate would still print "0 issue(s) PASS" over it'
+                             % (len(SOURCE_RELS), ', '.join(SOURCE_RELS), len(texts))))
+        return issues, stats
     trees = []
-    for text, where in ((feed_text, FEED_REL), (center_text, CENTER_REL)):
+    for text, where in zip(texts, SOURCE_RELS):
         tree = parse_module(text, where, issues)
         if tree is not None:
             trees.append(tree)
-    if len(trees) != 2:
+    if len(trees) != len(SOURCE_RELS):
         return issues, stats
+    stats['scanned_modules'] = len(trees)
 
     model = class_model(trees)
     feed_classes = sorted(c for c in model if _derives(model, c, 'DataFeed'))
@@ -434,6 +461,7 @@ def run_checks(feed_text, center_text):
 
     # ── P9: zero targets is a failure, not a pass ────────────────────────────
     required = (
+        ('scanned_modules', 'source modules actually parsed (must equal SOURCE_RELS)'),
         ('feed_classes', 'DataFeed subclasses'),
         ('pit_feeds', 'PIT-bounded DataFeed subclasses (P3/P4 only cover these)'),
         ('feed_methods', 'DataFeed query methods'),
@@ -533,22 +561,29 @@ class RecordingPITGuard(PITGuard):
             raise FutureDataAccessError("leak")
 """
 
+# A synthetic stand-in for SOURCE_RELS[2:]: real enough to have a class and a method, and
+# -- being outside the PIT pair -- it must instantiate no DataFeed. Written with explicit
+# \n escapes rather than a multi-line literal because the mutation anchor below has to be
+# byte-exact: a physical newline in a literal depends on how the lexer translates CRLF,
+# and an anchor that is off by one byte fails silently as "ANCHOR NOT FOUND".
+CLEAN_EXTRA = "class SomeAdapter:\n    def fetch(self):\n        return None\n"
+
 
 def selftest():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    fpath = os.path.join(root, FEED_REL)
-    cpath = os.path.join(root, CENTER_REL)
-    missing = [p for p in (fpath, cpath) if not os.path.exists(p)]
+    paths = [os.path.join(root, rel) for rel in SOURCE_RELS]
+    missing = [p for p in paths if not os.path.exists(p)]
     if missing:
         print('SELFTEST FAIL: missing input(s) %s' % ', '.join(missing))
         return 1
-    feed, center = read_text(fpath), read_text(cpath)
+    texts = [read_text(p) for p in paths]
+    feed, center, extras = texts[0], texts[1], tuple(texts[2:])
 
     ok = True
 
-    def scenario(tag, feed_text, center_text, code, want_clean=False):
+    def scenario(tag, feed_text, center_text, code, extras, want_clean=False):
         nonlocal ok
-        issues, _ = run_checks(feed_text, center_text)
+        issues, _ = run_checks(feed_text, center_text, extras)
         codes = sorted(set(k for k, _ in issues))
         hit = (not issues) if want_clean else (code in codes)
         print('  [%s] issues=%d codes=%s %s'
@@ -560,7 +595,7 @@ def selftest():
 
     # CONTROL: the real artifacts -- reported, never asserted clean. The gate is allowed
     # to be red on them; that is the entire point of being able to run it.
-    issues, stats = run_checks(feed, center)
+    issues, stats = run_checks(feed, center, extras)
     print('  [control-real-artifacts] issues=%d codes=%s %s'
           % (len(issues), sorted(set(k for k, _ in issues)),
              ' '.join('%s=%d' % (k, stats.get(k, -1)) for k in STAT_KEYS)))
@@ -580,7 +615,7 @@ def selftest():
     if bad is None:
         ok = False
     else:
-        scenario('NEG1-as-of-on-query', feed, bad, 'P1')
+        scenario('NEG1-as-of-on-query', feed, bad, 'P1', extras)
 
     # P2: a DataFeed built outside DataCenter.as_of().
     bad = _mutate(center,
@@ -591,7 +626,7 @@ def selftest():
     if bad is None:
         ok = False
     else:
-        scenario('NEG2-bypass-entry', feed, bad, 'P2')
+        scenario('NEG2-bypass-entry', feed, bad, 'P2', extras)
 
     # P3: layer 2 unwired -- the store is read without a single record_access.
     bad = _mutate(center,
@@ -602,7 +637,7 @@ def selftest():
     if bad is None:
         ok = False
     else:
-        scenario('NEG3-guard-unwired', feed, bad, 'P3')
+        scenario('NEG3-guard-unwired', feed, bad, 'P3', extras)
 
     # P4: layer 1 unwired on one public method.
     bad = _mutate(center,
@@ -612,7 +647,7 @@ def selftest():
     if bad is None:
         ok = False
     else:
-        scenario('NEG4-window-unwired', feed, bad, 'P4')
+        scenario('NEG4-window-unwired', feed, bad, 'P4', extras)
 
     # P5: D6 refusal turns into "just use HFQ".
     bad = _mutate(center,
@@ -622,7 +657,7 @@ def selftest():
     if bad is None:
         ok = False
     else:
-        scenario('NEG5-qfq-accepted', feed, bad, 'P5')
+        scenario('NEG5-qfq-accepted', feed, bad, 'P5', extras)
 
     # P6: D7 refusal turns into the default.
     bad = _mutate(center,
@@ -632,7 +667,7 @@ def selftest():
     if bad is None:
         ok = False
     else:
-        scenario('NEG6-bfill-accepted', feed, bad, 'P6')
+        scenario('NEG6-bfill-accepted', feed, bad, 'P6', extras)
 
     # P7: both raises survive, but the branch no longer names the backtest session. This
     # is the "delete the branch to make a test pass" degeneration -- P5/P6 stay quiet
@@ -644,7 +679,7 @@ def selftest():
     if bad is None:
         ok = False
     else:
-        scenario('NEG7-session-ungated', feed, bad, 'P7')
+        scenario('NEG7-session-ungated', feed, bad, 'P7', extras)
 
     # P8: the guard records the leak and returns, so the backtest finishes "normally".
     bad = _mutate(center,
@@ -654,15 +689,34 @@ def selftest():
     if bad is None:
         ok = False
     else:
-        scenario('NEG8-guard-silent', feed, bad, 'P8')
+        scenario('NEG8-guard-silent', feed, bad, 'P8', extras)
 
     # P9: the extraction itself comes back empty. Both files must still PARSE (a syntax
     # error would be P0 and would prove nothing about the vacuity guard).
-    scenario('NEG9-extraction-empty', 'X = 1\n', 'Y = 2\n', 'P9')
+    scenario('NEG9-extraction-empty', 'X = 1\n', 'Y = 2\n', 'P9', ('Z = 3\n',))
 
-    # POSITIVE: a synthetic pair that satisfies all nine detectors. Without this sample a
+    # P2 ACROSS SOURCE_RELS[2:]: a new module instantiating a DataFeed. This sample is the
+    # entire reason EXTRA_RELS exists -- without it, "the new module is scanned" would be
+    # an assumption, and an unverified assumption is how the hole opened in the first
+    # place. The anchor self-asserts: a no-op mutation would make this sample prove
+    # nothing while still printing OK.
+    bad_extra = _mutate(CLEAN_EXTRA,
+                        '        return None\n',
+                        '        return None, DbDataFeed(None, None, "v2026.09.23")\n',
+                        'NEG10-feed-in-extra-module')
+    if bad_extra is None:
+        ok = False
+    else:
+        scenario('NEG10-feed-in-extra-module', feed, center, 'P2', (bad_extra,))
+
+    # P0: the caller forgets a file. This is the guard that keeps EXTRA_RELS honest -- a
+    # future refactor that stops passing the extra texts must go red here instead of
+    # quietly shrinking the gate back to its pre-fix coverage.
+    scenario('NEG11-file-count-mismatch', feed, center, 'P0', ())
+
+    # POSITIVE: a synthetic triple that satisfies all detectors. Without this sample a
     # detector that simply always fires would look perfect in every NEG above.
-    scenario('POSITIVE-clean-synthetic', CLEAN_FEED, CLEAN_CENTER, None,
+    scenario('POSITIVE-clean-synthetic', CLEAN_FEED, CLEAN_CENTER, None, (CLEAN_EXTRA,),
              want_clean=True)
 
     print('SELFTEST %s' % ('OK: every detector fires on its own sample, one vacuity guard, '
@@ -675,19 +729,18 @@ def main():
     if '--selftest' in sys.argv:
         return selftest()
 
-    fpath = os.path.join(root, FEED_REL)
-    cpath = os.path.join(root, CENTER_REL)
-    for p in (fpath, cpath):
+    paths = [os.path.join(root, rel) for rel in SOURCE_RELS]
+    for p in paths:
         if not os.path.exists(p):
             print('GATE FAIL: missing input %s' % p)
             return 1
 
-    feed, center = read_text(fpath), read_text(cpath)
-    print('CRLF-normalised: %s=%d bytes, %s=%d bytes'
-          % (FEED_REL, len(feed.encode('utf-8')),
-             CENTER_REL, len(center.encode('utf-8'))))
+    texts = [read_text(p) for p in paths]
+    feed, center, extras = texts[0], texts[1], tuple(texts[2:])
+    print('CRLF-normalised: ' + ', '.join('%s=%d bytes' % (rel, len(text.encode('utf-8')))
+                                          for rel, text in zip(SOURCE_RELS, texts)))
 
-    issues, stats = run_checks(feed, center)
+    issues, stats = run_checks(feed, center, extras)
     print('extracted: ' + ' '.join('%s=%d' % (k, stats.get(k, -1)) for k in STAT_KEYS))
     for code, msg in issues:
         print('ISSUE [%s] %s' % (code, msg))

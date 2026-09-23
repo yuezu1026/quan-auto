@@ -407,15 +407,25 @@ class PerformanceMetrics:
 
 @dataclass
 class ValidationReport:
-    """数据校验报告 —— `BacktestResult.validation_report` 的类型。
+    """数据校验报告 —— 字段形状取自**数据中心契约 §3.9**（`ValidationReport` 类块）。
 
-    I1 不做数据完整性校验（进「本迭代不做」），但 `BacktestResult` 有这个字段，
-    所以类型得存在，默认填 `None`。
+    主契约只**引用**这个类型、从不定义它（`BacktestEngine.validate_no_leakage(self)
+    -> ValidationReport`、`BacktestResult.validation_report: Optional[ValidationReport]`）。
+    定义它的是数据中心契约，`开工前缺口清单.md` 的「被引用但从未定义的类型」清单里
+    也注明该类型由数据中心契约补齐 —— 所以字段名与顺序以那份类块为准。
+
+    I2 S2 之前这里是 3 字段的占位版（`is_valid` / `warnings` / `issues`）。
+    升格的直接后果：`errors` 取代了 `issues`（契约对它俩的分工有明确说法 ——
+    `errors` 是"导致失败的硬错误，任一非空即 is_valid=False"，`warnings`
+    是"不阻断入库的告警"）。`missing_ratio` 按列名给缺失率，不适用的场景留空 `{}`，
+    **不**伪造比值。
     """
 
     is_valid: bool = True
+    row_count: int = 0
+    errors: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
-    issues: List[str] = field(default_factory=list)
+    missing_ratio: Dict[str, float] = field(default_factory=dict)
 
 
 @dataclass

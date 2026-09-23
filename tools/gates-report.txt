@@ -34,8 +34,8 @@ GATE data-center-pit (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: DataFeed 取数路径的 as_of 两层防线（_require_visible + record_access）与回测会话的 QFQ/BFILL 拒绝都还在，且只由 DataCenter.as_of() 产出
 argv: tools/verify_data_center_pit.py
 ------------------------------------------------------------------------------
-CRLF-normalised: quanauto\datafeed.py=12304 bytes, quanauto\datacenter.py=23760 bytes
-extracted: feed_classes=3 pit_feeds=1 unbounded_feeds=2 feed_methods=22 feed_instantiations=1 store_touchers=4 date_takers=7 as_of_impls=1 guard_raises=1
+CRLF-normalised: quanauto\datafeed.py=12304 bytes, quanauto\datacenter.py=23760 bytes, quanauto\datasources.py=48389 bytes
+extracted: scanned_modules=3 feed_classes=3 pit_feeds=1 unbounded_feeds=2 feed_methods=22 feed_instantiations=1 store_touchers=4 date_takers=7 as_of_impls=1 guard_raises=1
 verdict: PASS (0 issue(s))
 NOTE: this gate parses the source, it never executes it. Passing it does NOT mean the PIT guard rejects at runtime -- that is what tests/test_data_center_pit.py shows (18 cases, including the I2 trigger test where a store ignores the window and record_access must refuse). This gate proves the opposite direction: that the two layers cannot be dropped silently when a method is added later.
 

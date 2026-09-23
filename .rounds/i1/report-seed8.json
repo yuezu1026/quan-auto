@@ -1087,8 +1087,10 @@
       }
     ],
     "validation_report": {
+      "errors": [],
       "is_valid": true,
-      "issues": [],
+      "missing_ratio": {},
+      "row_count": 0,
       "warnings": [
         "尚未执行回测，未来函数检查没有任何样本可查"
       ]

@@ -316,8 +316,9 @@ class BacktestEngine:
         if self._result is None:
             return ValidationReport(
                 is_valid=True,
+                row_count=0,
                 warnings=["尚未执行回测，未来函数检查没有任何样本可查"],
-                issues=[],
+                errors=[],
             )
         issues: List[str] = []
         checked = 0
@@ -335,7 +336,15 @@ class BacktestEngine:
         warnings: List[str] = []
         if checked == 0:
             warnings.append("本次回测没有成交，未来函数检查没有实际样本")
-        return ValidationReport(is_valid=not issues, warnings=warnings, issues=issues)
+        # `row_count` 用**真的比过的笔数**（`checked`），不是 `len(trades)` ——
+        # 找不到下单记录的那几笔根本没进比对，算进去会让 "校验了多少行" 虚高。
+        # `missing_ratio` 留空字典：这个检查没有"列"的概念，编一个比值就是伪造。
+        return ValidationReport(
+            is_valid=not issues,
+            row_count=checked,
+            errors=issues,
+            warnings=warnings,
+        )
 
     # ── 内部 ─────────────────────────────────────────────────────────
     def _execute(self, start: datetime, end: datetime) -> BacktestResult:

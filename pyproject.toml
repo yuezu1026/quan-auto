@@ -10,13 +10,23 @@ version = "0.1.0"
 description = "智能量化交易平台 —— Python 研究/回测线（I1 已打通 CSV→双均线→撮合→绩效→报告 的最窄竖切）"
 requires-python = ">=3.11"
 
-# 依赖**必须**是实现推着走：I1 的竖切只用标准库，所以这里是空的。
-# 真实需要（pandas / akshare / baostock / pyarrow …）由 I2 起按需加入，
+# 依赖**必须**是实现推着走：I1 的竖切只用标准库；I2 起按需加入，
 # 并且每加一条都要说明是哪一个模块在用它。禁止预先堆一份「以后可能要用」的清单。
-dependencies = []
+dependencies = [
+    # 使用者：quanauto/datasources.py。
+    # 数据中心契约 §3.2 逐字规定 `fetch_daily_bar(...) -> pd.DataFrame`、
+    # `validate(self, frame: pd.DataFrame)` —— 归一化与校验都长在 DataFrame 上，
+    # 所以它是硬依赖，不是「以后可能要用」的占位。
+    "pandas>=2.0",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+# 使用者：quanauto/datasources.py 的 AKShareAdapter / BaostockAdapter。
+# 两者都只取日线/财报/成分股，属「取数出口」而非计算内核 —— 放进 extra 是为了让
+# 默认安装与 CI 不必拖进 akshare 的 16 条依赖；适配器对它们是**惰性 import**，
+# 缺失时报 SourceAdapterError（DATA_005），而不是让裸 ImportError 逃出去。
+datasources = ["akshare>=1.18", "baostock>=0.9.4"]
 
 [tool.setuptools]
 packages = ["quanauto"]
