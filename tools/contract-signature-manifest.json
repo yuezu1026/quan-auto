@@ -95,109 +95,33 @@
     "CsvDataFeed": {
       "contract_fields": null,
       "contract_params": {
-        "__init__": [
-          "self",
-          "csv_path"
-        ],
-        "_load_data": [
-          "self"
-        ],
-        "get_adjustment_factor": [
-          "self",
-          "symbol",
-          "datetime"
-        ],
-        "get_available_dates": [
-          "self",
-          "symbol"
-        ],
-        "get_available_symbols": [
-          "self"
-        ],
-        "get_bar": [
-          "self",
-          "symbol",
-          "datetime"
-        ],
-        "get_bars": [
-          "self",
-          "symbol",
-          "start",
-          "end"
-        ],
-        "get_dividend": [
-          "self",
-          "symbol",
-          "datetime"
-        ],
-        "get_market_status": [
-          "self",
-          "datetime"
-        ],
-        "get_trading_calendar": [
-          "self",
-          "start",
-          "end"
-        ],
-        "is_symbol_available": [
-          "self",
-          "symbol",
-          "datetime"
-        ]
+        "__init__": ["self", "csv_path"],
+        "_load_data": ["self"],
+        "get_adjustment_factor": ["self", "symbol", "datetime"],
+        "get_available_dates": ["self", "symbol"],
+        "get_available_symbols": ["self"],
+        "get_bar": ["self", "symbol", "datetime"],
+        "get_bars": ["self", "symbol", "start", "end"],
+        "get_dividend": ["self", "symbol", "datetime"],
+        "get_market_status": ["self", "datetime"],
+        "get_trading_calendar": ["self", "start", "end"],
+        "is_symbol_available": ["self", "symbol", "datetime"]
       },
       "divergences": {},
       "extras": [],
       "impl_fields": null,
       "impl_params": {
-        "__init__": [
-          "self",
-          "csv_path"
-        ],
-        "_load_data": [
-          "self"
-        ],
-        "get_adjustment_factor": [
-          "self",
-          "symbol",
-          "datetime"
-        ],
-        "get_available_dates": [
-          "self",
-          "symbol"
-        ],
-        "get_available_symbols": [
-          "self"
-        ],
-        "get_bar": [
-          "self",
-          "symbol",
-          "datetime"
-        ],
-        "get_bars": [
-          "self",
-          "symbol",
-          "start",
-          "end"
-        ],
-        "get_dividend": [
-          "self",
-          "symbol",
-          "datetime"
-        ],
-        "get_market_status": [
-          "self",
-          "datetime"
-        ],
-        "get_trading_calendar": [
-          "self",
-          "start",
-          "end"
-        ],
-        "is_symbol_available": [
-          "self",
-          "symbol",
-          "datetime"
-        ]
+        "__init__": ["self", "csv_path"],
+        "_load_data": ["self"],
+        "get_adjustment_factor": ["self", "symbol", "datetime"],
+        "get_available_dates": ["self", "symbol"],
+        "get_available_symbols": ["self"],
+        "get_bar": ["self", "symbol", "datetime"],
+        "get_bars": ["self", "symbol", "start", "end"],
+        "get_dividend": ["self", "symbol", "datetime"],
+        "get_market_status": ["self", "datetime"],
+        "get_trading_calendar": ["self", "start", "end"],
+        "is_symbol_available": ["self", "symbol", "datetime"]
       },
       "not_implemented": [],
       "not_implemented_why": null,
@@ -206,85 +130,31 @@
     "EventEngine": {
       "contract_fields": null,
       "contract_params": {
-        "clear": [
-          "self"
-        ],
-        "get_queue_size": [
-          "self"
-        ],
-        "publish": [
-          "self",
-          "event"
-        ],
-        "run": [
-          "self"
-        ],
-        "start": [
-          "self"
-        ],
-        "stop": [
-          "self"
-        ],
-        "subscribe": [
-          "self",
-          "event_type",
-          "handler"
-        ],
-        "unsubscribe": [
-          "self",
-          "subscription_id"
-        ]
+        "clear": ["self"],
+        "get_queue_size": ["self"],
+        "publish": ["self", "event"],
+        "run": ["self"],
+        "start": ["self"],
+        "stop": ["self"],
+        "subscribe": ["self", "event_type", "handler"],
+        "unsubscribe": ["self", "subscription_id"]
       },
       "divergences": {},
-      "extras": [
-        "dispatched",
-        "handler_ids",
-        "subscriber_count"
-      ],
+      "extras": ["dispatched", "handler_ids", "subscriber_count"],
       "impl_fields": null,
       "impl_params": {
-        "__init__": [
-          "self"
-        ],
-        "clear": [
-          "self"
-        ],
-        "dispatched": [
-          "self"
-        ],
-        "get_queue_size": [
-          "self"
-        ],
-        "handler_ids": [
-          "self",
-          "event_type"
-        ],
-        "publish": [
-          "self",
-          "event"
-        ],
-        "run": [
-          "self"
-        ],
-        "start": [
-          "self"
-        ],
-        "stop": [
-          "self"
-        ],
-        "subscribe": [
-          "self",
-          "event_type",
-          "handler"
-        ],
-        "subscriber_count": [
-          "self",
-          "event_type"
-        ],
-        "unsubscribe": [
-          "self",
-          "subscription_id"
-        ]
+        "__init__": ["self"],
+        "clear": ["self"],
+        "dispatched": ["self"],
+        "get_queue_size": ["self"],
+        "handler_ids": ["self", "event_type"],
+        "publish": ["self", "event"],
+        "run": ["self"],
+        "start": ["self"],
+        "stop": ["self"],
+        "subscribe": ["self", "event_type", "handler"],
+        "subscriber_count": ["self", "event_type"],
+        "unsubscribe": ["self", "subscription_id"]
       },
       "not_implemented": [],
       "not_implemented_why": null,
@@ -338,65 +208,19 @@
     "PerformanceAnalyzer": {
       "contract_fields": null,
       "contract_params": {
-        "analyze": [
-          "self",
-          "trades",
-          "orders",
-          "account_history"
-        ],
-        "calculate_avg_hold_period": [
-          "self",
-          "trades"
-        ],
-        "calculate_calmar": [
-          "self",
-          "annual_return",
-          "max_drawdown"
-        ],
-        "calculate_drawdown": [
-          "self",
-          "equity_curve"
-        ],
-        "calculate_max_consecutive_losses": [
-          "self",
-          "trades"
-        ],
-        "calculate_profit_factor": [
-          "self",
-          "gross_profit",
-          "gross_loss"
-        ],
-        "calculate_profit_loss_ratio": [
-          "self",
-          "trades"
-        ],
-        "calculate_returns": [
-          "self",
-          "equity_curve"
-        ],
-        "calculate_risk": [
-          "self",
-          "returns",
-          "risk_free_rate"
-        ],
-        "calculate_sharpe": [
-          "self",
-          "returns",
-          "risk_free_rate"
-        ],
-        "calculate_sortino": [
-          "self",
-          "returns",
-          "risk_free_rate"
-        ],
-        "calculate_win_rate": [
-          "self",
-          "trades"
-        ],
-        "generate_atr_report": [
-          "self",
-          "trades"
-        ],
+        "analyze": ["self", "trades", "orders", "account_history"],
+        "calculate_avg_hold_period": ["self", "trades"],
+        "calculate_calmar": ["self", "annual_return", "max_drawdown"],
+        "calculate_drawdown": ["self", "equity_curve"],
+        "calculate_max_consecutive_losses": ["self", "trades"],
+        "calculate_profit_factor": ["self", "gross_profit", "gross_loss"],
+        "calculate_profit_loss_ratio": ["self", "trades"],
+        "calculate_returns": ["self", "equity_curve"],
+        "calculate_risk": ["self", "returns", "risk_free_rate"],
+        "calculate_sharpe": ["self", "returns", "risk_free_rate"],
+        "calculate_sortino": ["self", "returns", "risk_free_rate"],
+        "calculate_win_rate": ["self", "trades"],
+        "generate_atr_report": ["self", "trades"],
         "generate_benchmark_comparison": [
           "self",
           "portfolio_returns",
@@ -407,61 +231,18 @@
       "extras": [],
       "impl_fields": null,
       "impl_params": {
-        "analyze": [
-          "self",
-          "trades",
-          "orders",
-          "account_history"
-        ],
-        "calculate_avg_hold_period": [
-          "self",
-          "trades"
-        ],
-        "calculate_calmar": [
-          "self",
-          "annual_return",
-          "max_drawdown"
-        ],
-        "calculate_drawdown": [
-          "self",
-          "equity_curve"
-        ],
-        "calculate_max_consecutive_losses": [
-          "self",
-          "trades"
-        ],
-        "calculate_profit_factor": [
-          "self",
-          "gross_profit",
-          "gross_loss"
-        ],
-        "calculate_profit_loss_ratio": [
-          "self",
-          "trades"
-        ],
-        "calculate_returns": [
-          "self",
-          "equity_curve"
-        ],
-        "calculate_risk": [
-          "self",
-          "returns",
-          "risk_free_rate"
-        ],
-        "calculate_sharpe": [
-          "self",
-          "returns",
-          "risk_free_rate"
-        ],
-        "calculate_sortino": [
-          "self",
-          "returns",
-          "risk_free_rate"
-        ],
-        "calculate_win_rate": [
-          "self",
-          "trades"
-        ]
+        "analyze": ["self", "trades", "orders", "account_history"],
+        "calculate_avg_hold_period": ["self", "trades"],
+        "calculate_calmar": ["self", "annual_return", "max_drawdown"],
+        "calculate_drawdown": ["self", "equity_curve"],
+        "calculate_max_consecutive_losses": ["self", "trades"],
+        "calculate_profit_factor": ["self", "gross_profit", "gross_loss"],
+        "calculate_profit_loss_ratio": ["self", "trades"],
+        "calculate_returns": ["self", "equity_curve"],
+        "calculate_risk": ["self", "returns", "risk_free_rate"],
+        "calculate_sharpe": ["self", "returns", "risk_free_rate"],
+        "calculate_sortino": ["self", "returns", "risk_free_rate"],
+        "calculate_win_rate": ["self", "trades"]
       },
       "not_implemented": [
         "generate_atr_report",
@@ -504,51 +285,20 @@
     "SimulatedBroker": {
       "contract_fields": null,
       "contract_params": {
-        "cancel_order": [
-          "self",
-          "order_id"
-        ],
-        "get_account": [
-          "self"
-        ],
-        "get_fills": [
-          "self"
-        ],
-        "get_orders": [
-          "self",
-          "strategy_id"
-        ],
-        "get_positions": [
-          "self"
-        ],
-        "get_trades": [
-          "self",
-          "strategy_id"
-        ],
-        "on_bar": [
-          "self",
-          "bar"
-        ],
-        "reset": [
-          "self"
-        ],
-        "set_commission": [
-          "self",
-          "commission"
-        ],
-        "set_slippage": [
-          "self",
-          "slippage"
-        ],
-        "submit_order": [
-          "self",
-          "order"
-        ]
+        "cancel_order": ["self", "order_id"],
+        "get_account": ["self"],
+        "get_fills": ["self"],
+        "get_orders": ["self", "strategy_id"],
+        "get_positions": ["self"],
+        "get_trades": ["self", "strategy_id"],
+        "on_bar": ["self", "bar"],
+        "reset": ["self"],
+        "set_commission": ["self", "commission"],
+        "set_slippage": ["self", "slippage"],
+        "submit_order": ["self", "order"]
       },
       "divergences": {},
-      "extras": [
-        "seed"
-      ],
+      "extras": ["seed"],
       "impl_fields": null,
       "impl_params": {
         "__init__": [
@@ -559,82 +309,24 @@
           "slippage",
           "event_engine"
         ],
-        "_apply_position": [
-          "self",
-          "order",
-          "price",
-          "fee",
-          "slip"
-        ],
-        "_can_sell": [
-          "self",
-          "order"
-        ],
-        "_emit": [
-          "self",
-          "event_type",
-          "data",
-          "stamp",
-          "source"
-        ],
-        "_held_quantity": [
-          "self",
-          "symbol"
-        ],
-        "_match": [
-          "self",
-          "order",
-          "bar"
-        ],
-        "_reject": [
-          "self",
-          "order",
-          "bar",
-          "reason"
-        ],
-        "cancel_order": [
-          "self",
-          "order_id"
-        ],
-        "get_account": [
-          "self"
-        ],
-        "get_fills": [
-          "self"
-        ],
-        "get_orders": [
-          "self",
-          "strategy_id"
-        ],
-        "get_positions": [
-          "self"
-        ],
-        "get_trades": [
-          "self",
-          "strategy_id"
-        ],
-        "on_bar": [
-          "self",
-          "bar"
-        ],
-        "reset": [
-          "self"
-        ],
-        "seed": [
-          "self"
-        ],
-        "set_commission": [
-          "self",
-          "commission"
-        ],
-        "set_slippage": [
-          "self",
-          "slippage"
-        ],
-        "submit_order": [
-          "self",
-          "order"
-        ]
+        "_apply_position": ["self", "order", "price", "fee", "slip"],
+        "_can_sell": ["self", "order"],
+        "_emit": ["self", "event_type", "data", "stamp", "source"],
+        "_held_quantity": ["self", "symbol"],
+        "_match": ["self", "order", "bar"],
+        "_reject": ["self", "order", "bar", "reason"],
+        "cancel_order": ["self", "order_id"],
+        "get_account": ["self"],
+        "get_fills": ["self"],
+        "get_orders": ["self", "strategy_id"],
+        "get_positions": ["self"],
+        "get_trades": ["self", "strategy_id"],
+        "on_bar": ["self", "bar"],
+        "reset": ["self"],
+        "seed": ["self"],
+        "set_commission": ["self", "commission"],
+        "set_slippage": ["self", "slippage"],
+        "submit_order": ["self", "order"]
       },
       "not_implemented": [],
       "not_implemented_why": null,
@@ -680,91 +372,141 @@
       "extras": [],
       "impl_fields": null,
       "impl_params": {
-        "__init__": [
-          "self",
-          "config"
-        ],
-        "_bar_handler": [
-          "self",
-          "event"
-        ],
-        "_data_version": [
-          "self"
-        ],
-        "_execute": [
-          "self",
-          "start",
-          "end"
-        ],
-        "_order_from_signal": [
-          "self",
-          "signal",
-          "bar"
-        ],
-        "_params_used": [
-          "self"
-        ],
-        "_prepare": [
-          "self",
-          "start",
-          "end"
-        ],
-        "_strategy_version": [
-          "self"
-        ],
-        "add_datafeed": [
-          "self",
-          "symbol",
-          "datafeed"
-        ],
-        "add_strategy": [
-          "self",
-          "strategy",
-          "capital",
-          "params"
-        ],
-        "export_report": [
-          "self",
-          "path"
-        ],
-        "get_result": [
-          "self"
-        ],
-        "run": [
-          "self"
-        ],
-        "run_partial": [
-          "self",
-          "start_date",
-          "end_date"
-        ],
-        "set_broker": [
-          "self",
-          "broker"
-        ],
-        "stop": [
-          "self"
-        ],
-        "validate_no_leakage": [
-          "self"
-        ]
+        "__init__": ["self", "config"],
+        "_bar_handler": ["self", "event"],
+        "_data_version": ["self"],
+        "_execute": ["self", "start", "end"],
+        "_order_from_signal": ["self", "signal", "bar"],
+        "_params_used": ["self"],
+        "_prepare": ["self", "start", "end"],
+        "_strategy_version": ["self"],
+        "add_datafeed": ["self", "symbol", "datafeed"],
+        "add_strategy": ["self", "strategy", "capital", "params"],
+        "export_report": ["self", "path"],
+        "get_result": ["self"],
+        "run": ["self"],
+        "run_partial": ["self", "start_date", "end_date"],
+        "set_broker": ["self", "broker"],
+        "stop": ["self"],
+        "validate_no_leakage": ["self"]
       },
       "reason": "契约用项目符号逐条列出它的方法，不是可解析的类块，所以只能按实现侧登记：只查「清单记的成员还在不在、参数还对不对」，新增公有方法不判红。",
       "source": "quanauto/engine.py"
     },
-    "MA_Cross_Strategy": {
+    "BarStore": {
+      "extras": [],
+      "impl_fields": null,
+      "impl_params": {
+        "select_bars": ["self", "symbol", "start", "end"],
+        "select_symbols": ["self"]
+      },
+      "reason": "dc_daily_bar（db/data_center.sql）的读接口在契约里没有类块，按实现侧登记它的两个方法，避免「换一个只认 symbol 的 store」时静默改变过滤口径。",
+      "source": "quanauto/datacenter.py"
+    },
+    "DailyBar": {
+      "extras": [],
+      "impl_fields": null,
+      "impl_params": {},
+      "reason": "dc_daily_bar 的行对象。@dataclass 的类体里没有 def，所以这条登记实际只等于一句「类还在」；列名集合与建表语句的一一对应由 verify_data_center.py 负责。本类刻意不含 ingested_at 的理由写在 datacenter.py 的模块文档字符串里。",
+      "source": "quanauto/datacenter.py"
+    },
+    "DataCenter": {
+      "extras": [],
+      "impl_fields": null,
+      "impl_params": {
+        "as_of": [
+          "self",
+          "as_of_date",
+          "adjust_type",
+          "fill_policy",
+          "data_version"
+        ],
+        "data_version": ["self"],
+        "live": ["self", "account_mode"],
+        "trading_calendar": ["self", "as_of_date"]
+      },
+      "reason": "契约 §3.3 里的 DataCenter 类块属于**另一份**契约（数据中心契约），而本清单的 classes 段只对主契约做逐字核对，所以它只能按实现侧登记：只查「记下来的成员还在、参数还没变」。",
+      "source": "quanauto/datacenter.py"
+    },
+    "DbDataFeed": {
       "extras": [],
       "impl_fields": null,
       "impl_params": {
         "__init__": [
           "self",
-          "strategy_id",
-          "config"
+          "store",
+          "as_of_date",
+          "data_version",
+          "session_mode",
+          "adjust_type",
+          "fill_policy",
+          "pit_guard"
         ],
-        "_apply_config": [
+        "_require_visible": ["self", "when", "where"],
+        "_row_to_bar": ["self", "row"],
+        "_select": ["self", "symbol", "start", "end"],
+        "get_adjustment_factor": ["self", "symbol", "datetime"],
+        "get_available_dates": ["self", "symbol"],
+        "get_available_symbols": ["self"],
+        "get_bar": ["self", "symbol", "datetime"],
+        "get_bars": ["self", "symbol", "start", "end"],
+        "get_dividend": ["self", "symbol", "datetime"],
+        "get_market_status": ["self", "datetime"],
+        "get_trading_calendar": ["self", "start", "end"],
+        "is_symbol_available": ["self", "symbol", "datetime"]
+      },
+      "reason": "契约里的 DataFeed 是抽象基类，本类是它唯一带 as_of 的实现体；契约文档用项目符号描述取数语义（§3.3/§3.4），没有可解析的类块，所以按实现侧登记。登记的价值是：I2 S1 定下的「显式日期参数 = 抛，列表方法 = 裁剪」这一组签名与语义，不会被后续迭代悄悄改成另一种形状。",
+      "source": "quanauto/datacenter.py"
+    },
+    "InMemoryBarStore": {
+      "extras": [],
+      "impl_fields": null,
+      "impl_params": {
+        "__init__": ["self", "rows"],
+        "select_bars": ["self", "symbol", "start", "end"],
+        "select_symbols": ["self"]
+      },
+      "reason": "同上：契约没有这个测试替身。登记它是为了让「窗过滤发生在 store 而不是 feed」这条设计决定（PIT 守卫要逐行看得到越界行）保持可见。",
+      "source": "quanauto/datacenter.py"
+    },
+    "InMemoryDataCenter": {
+      "extras": [],
+      "impl_fields": null,
+      "impl_params": {
+        "__init__": [
           "self",
-          "config"
+          "store",
+          "versions",
+          "active_version",
+          "session_mode"
         ],
+        "as_of": [
+          "self",
+          "as_of_date",
+          "adjust_type",
+          "fill_policy",
+          "data_version"
+        ],
+        "data_version": ["self"],
+        "live": ["self", "account_mode"],
+        "trading_calendar": ["self", "as_of_date"]
+      },
+      "reason": "契约没有 InMemoryDataCenter（测试替身，非契约类型）。按实现侧登记，保证 D3 的唯一合法入口 DataCenter.as_of() 与 D6/D7 的拒绝分支不会消失。",
+      "source": "quanauto/datacenter.py"
+    },
+    "LeakagePoint": {
+      "extras": [],
+      "impl_fields": null,
+      "impl_params": {},
+      "reason": "契约 §3.4 的 PITReport 单数语义、契约签名也只给了单个 report；LeakagePoint 是 S1 为「泄露点可能不止一处」补的本地类型，理由写在 datacenter.py 的模块文档字符串里。登记它只是让这个补丁本身可见。",
+      "source": "quanauto/datacenter.py"
+    },
+    "MA_Cross_Strategy": {
+      "extras": [],
+      "impl_fields": null,
+      "impl_params": {
+        "__init__": ["self", "strategy_id", "config"],
+        "_apply_config": ["self", "config"],
         "_make_signal": [
           "self",
           "symbol",
@@ -775,99 +517,75 @@
           "stamp",
           "reason"
         ],
-        "_target_quantity": [
-          "self",
-          "price"
-        ],
-        "get_strategy_info": [
-          "self"
-        ],
-        "get_strategy_params": [
-          "self"
-        ],
-        "get_target_positions": [
-          "self"
-        ],
-        "long_window": [
-          "self"
-        ],
-        "on_data": [
-          "self",
-          "data"
-        ],
-        "on_order": [
-          "self",
-          "order"
-        ],
-        "on_start": [
-          "self"
-        ],
-        "on_stop": [
-          "self"
-        ],
-        "on_trade": [
-          "self",
-          "trade"
-        ],
-        "short_window": [
-          "self"
-        ],
-        "update_params": [
-          "self",
-          "params"
-        ]
+        "_target_quantity": ["self", "price"],
+        "get_strategy_info": ["self"],
+        "get_strategy_params": ["self"],
+        "get_target_positions": ["self"],
+        "long_window": ["self"],
+        "on_data": ["self", "data"],
+        "on_order": ["self", "order"],
+        "on_start": ["self"],
+        "on_stop": ["self"],
+        "on_trade": ["self", "trade"],
+        "short_window": ["self"],
+        "update_params": ["self", "params"]
       },
       "reason": "契约来源 = §2.9（模块一未给出具体策略类的规范签名，全文唯一命名该策略的地方是 §2.9 的 MA_Cross_Strategy），且该节只有名字没有类块，所以按实现侧登记；契约附录 E2 已登记该裁决。",
       "source": "quanauto/strategies.py"
+    },
+    "PITGuard": {
+      "extras": [],
+      "impl_fields": null,
+      "impl_params": {
+        "leakage_points": ["self"],
+        "record_access": ["self", "symbol", "trade_date", "field"],
+        "report": ["self"]
+      },
+      "reason": "契约 §3.7 的 PITGuard 抽象基类；按实现侧登记其抽象方法形状。",
+      "source": "quanauto/datacenter.py"
+    },
+    "PITReport": {
+      "extras": [],
+      "impl_fields": null,
+      "impl_params": {},
+      "reason": "契约 §3.4 的 PITReport 字段顺序（symbol/as_of_date/field/...）是实现侧对齐的依据。@dataclass 没有 def，所以这条只是「类还在」的断言；字段顺序本身目前**没有机器判据**（已知缺口）。",
+      "source": "quanauto/datacenter.py"
+    },
+    "RecordingPITGuard": {
+      "extras": [],
+      "impl_fields": null,
+      "impl_params": {
+        "__init__": ["self", "as_of_date"],
+        "leakage_points": ["self"],
+        "record_access": ["self", "symbol", "trade_date", "field"],
+        "report": ["self"]
+      },
+      "reason": "契约 §3.7 把 PITGuard 写成类块，但没写 record_access 之外的成员；按实现侧登记，保证第二层防线（逐行记录 + 越界即抛）的入口签名不会漂移。",
+      "source": "quanauto/datacenter.py"
+    },
+    "SessionMode": {
+      "extras": [],
+      "impl_fields": null,
+      "impl_params": {},
+      "reason": "契约 §3.3 的 DataCenter.as_of(...) 没有会话参数，而 D6/D7 的判据是「回测会话 vs 实盘会话」—— S1 因此在实现侧引入这个本地类型（不在契约枚举表里）。登记它是为了在它被改名/删除时报警；「回测与实盘的分支判据」这件事本身由 verify_data_center_pit.py 的 P7 盯着。",
+      "source": "quanauto/datacenter.py"
     },
     "Strategy": {
       "extras": [],
       "impl_fields": null,
       "impl_params": {
-        "__init__": [
-          "self",
-          "strategy_id",
-          "config"
-        ],
-        "get_strategy_info": [
-          "self"
-        ],
-        "get_strategy_params": [
-          "self"
-        ],
-        "get_target_positions": [
-          "self"
-        ],
-        "on_bar": [
-          "self",
-          "bar"
-        ],
-        "on_data": [
-          "self",
-          "data"
-        ],
-        "on_error": [
-          "self",
-          "error"
-        ],
-        "on_order": [
-          "self",
-          "order"
-        ],
-        "on_start": [
-          "self"
-        ],
-        "on_stop": [
-          "self"
-        ],
-        "on_trade": [
-          "self",
-          "trade"
-        ],
-        "update_params": [
-          "self",
-          "params"
-        ]
+        "__init__": ["self", "strategy_id", "config"],
+        "get_strategy_info": ["self"],
+        "get_strategy_params": ["self"],
+        "get_target_positions": ["self"],
+        "on_bar": ["self", "bar"],
+        "on_data": ["self", "data"],
+        "on_error": ["self", "error"],
+        "on_order": ["self", "order"],
+        "on_start": ["self"],
+        "on_stop": ["self"],
+        "on_trade": ["self", "trade"],
+        "update_params": ["self", "params"]
       },
       "reason": "契约里的 Strategy 是 ABC，含 12 个抽象方法；I1 只复用了 on_data 的形状，按实现侧登记以免把「本迭代没实现的抽象方法」算成漂移。",
       "source": "quanauto/strategies.py"

@@ -4,17 +4,17 @@
 本仓库没有配置 git remote，因此 `.github/workflows/ci.yml` **从未在 GitHub 上真实运行过**；
 下面跑的是与它**相同的两条命令**。
 
-generated: 2026-09-23 19:11:58
+generated: 2026-09-23 20:13:11
 python:    D:\project-quan\quan-auto\.venv\Scripts\python.exe  (.venv/Scripts/python.exe)
 version:   Python 3.13.9
-commit:    ed60a70d84b05c5f9a62ecfc9b3a2d15ee21be4c
-dirty:     0 项未提交改动
-pycache:   启动时清掉 2 个 __pycache__（陈旧字节码会让结论与磁盘源码无关）
+commit:    7fdaa3fb86e068011749349b3d4603b5cf4a5705
+dirty:     11 项未提交改动（快照与产物不同步）
+pycache:   启动时清掉 3 个 __pycache__（陈旧字节码会让结论与磁盘源码无关）
 
 ## 1. python -m pytest -q
 exit: 0
-  | .........................                                                [100%]
-  | 25 passed in 0.19s
+  | ...........................................                              [100%]
+  | 43 passed in 0.24s
 
 ## 2. 红→绿往返（I0 触发测试的证据：两个关键的东西各红一次）
 
@@ -25,11 +25,11 @@ exit: 0
   红: pytest exit=1
     | =========================== short test summary info ===========================
     | FAILED tests/test_skeleton.py::test_version_matches_pyproject - AssertionErro...
-    | 1 failed, 24 passed in 0.26s
+    | 1 failed, 42 passed in 0.29s
   还原: 字节与原始内容一致
   绿: pytest exit=0
-    | .........................                                                [100%]
-    | 25 passed in 0.19s
+    | ...........................................                              [100%]
+    | 43 passed in 0.24s
 
 ### ci-drops-gates -- 把 CI 里那一行门禁命令换成单跑一个子门禁
   靶子: .github/workflows/ci.yml  'python tools/run_all_gates.py' -> 'python tools/verify_risk_config.py'
@@ -52,9 +52,9 @@ exit: 0
   | backtest-reproducibility A     PASS      PASS       0 finding(s)   同种子两次回测的报告 deterministic 段逐字节相同，换种子必须真的变
   | contract-signature   A     PASS      PASS       0 finding(s)   契约侧与实现侧的签名/字段一致，多出来的公有成员必须在清单里登记
   | core-contract-refs   B     PASS      RATCHET    39/39          主契约引用的类型/异常是否都有定义（B7 欠账，受棘轮约束）
-  | report: tools\gates-report.txt (58 lines) -- read this instead of re-running the gates
-  | verdict: PASS (8/8 gate(s) green)
-  | NOTE: these 8 gates execute no SQL -- they prove the constraints are still WRITTEN, not that they REJECT.
+  | report: tools\gates-report.txt (65 lines) -- read this instead of re-running the gates
+  | verdict: PASS (9/9 gate(s) green)
+  | NOTE: these 9 gates execute no SQL -- they prove the constraints are still WRITTEN, not that they REJECT.
   | NOTE: the runtime evidence lives in tools\sql-smoke-report.txt (produced by tools\run_sql_smoke.py).
   |       That file is a SNAPSHOT: read its verdict together with the image digest recorded inside it, and re-run it after any db/*.sql edit.
   | NOTE: proof that the runtime green has teeth lives in tools\falsify-report.txt (produced by tools\falsify_smoke.py).

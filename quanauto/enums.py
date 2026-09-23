@@ -136,3 +136,41 @@ class CapitalAllocation(Enum):
     EQUAL = "EQUAL"
     FIXED = "FIXED"
     WEIGHTED = "WEIGHTED"
+
+
+# ── I2 加入：数据中心契约（`智能量化交易平台-数据中心接口契约文档.md` §3.1）────
+# 这三个是**数据中心契约给出规范块**的枚举，成员由 `tools/verify_data_center_pit.py`
+# 逐条比对。取值的**顺序**照契约原样（NONE / QFQ / HFQ），不按字典序重排 ——
+# 契约里那一行注释（"前复权含未来信息，禁止用于回测"）就是 `adjust_type` 会被
+# 当作 PIT 判据的原因，重排会让 diff 读起来像改了语义。
+class AdjustType(Enum):
+    """复权类型 —— 数据中心契约 §3.1、D6。
+
+    `QFQ` 含未来信息（前复权要用到今天的最新股本），所以**回测会话里请求 QFQ
+    必须抛 `FutureDataAccessError`**；实盘展示才允许用。
+    """
+
+    NONE = "NONE"
+    QFQ = "QFQ"
+    HFQ = "HFQ"
+
+
+class FillPolicy(Enum):
+    """缺失值填充策略 —— 数据中心契约 §3.1、D7。
+
+    `BFILL`（后向填充）用未来值回填过去，是最直白的未来函数，**生产与回测一律禁止**，
+    只在离线清洗脚本里允许（且要写 `dc_quality_issue` 留痕）。所以它必须是一个
+    存在的取值 —— 存在才能被显式拒绝；删掉它只会让「有人传 BFILL」变成静默的
+    参数错误而不是一条能写测试的判据。
+    """
+
+    NONE = "NONE"
+    FFILL = "FFILL"
+    BFILL = "BFILL"
+
+
+class SourcePriority(Enum):
+    """数据源优先级 —— 数据中心契约 §3.1、D9（主源失败时降级到备源）。"""
+
+    PRIMARY = "PRIMARY"
+    FALLBACK = "FALLBACK"

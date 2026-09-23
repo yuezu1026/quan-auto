@@ -124,6 +124,87 @@ class DataFeedRegistrationError(DataFeedError):
     code = "BACKTEST_002"
 
 
+# ── 数据中心类（I2 加入，数据中心契约 §3.9）─────────────────────────────────
+# 错误码逐条照抄 §3.9 的表（DATA_001 ~ DATA_007）。严重级别也照抄：
+# `FutureDataAccessError` 是唯一的 CRITICAL —— 它不是"数据读不到"，是"读到了不该
+# 看到的东西"，回测必须立刻中断而不是降级。
+#
+# 🔴 一处**刻意的偏离**，记在 manifest 的 divergences 里而不是暗改：
+# 数据中心契约 §3.9 写的是 `class DataFeedError(DataCenterError)`，但 `DataFeedError`
+# 这个名字在本模块第 115 行已经被主契约 §2.2.1 的实现占用了（基类 `QuanAutoError`）。
+# 同一个模块里不能出现两个同名类，所以这里**不重新声明** `DataFeedError`，
+# 而是让两个 PIT 异常继承**既有的** `DataFeedError`：契约要的行为（`except
+# DataFeedError` 能捕获到 `FutureDataAccessError`）照样成立，且主契约那条既有断言
+# （`DataFeedError` 只有 9 个方法会抛）不用改。
+class DataCenterError(QuanAutoError):
+    """数据中心异常基类（对应数据中心契约 §3.9 的根，不含取数类）。"""
+
+    # §3.9 的表从 DATA_001 起，没有 DATA_000。这里是照 `QUAN_000` 的先例补的
+    # **根哨兵码**，不是契约里的一条。故意跟取数类分开：`DataCenterError` 表示
+    # "数据中心的账对不上"（版本/质量/适配器/日历/幂等），而 `DataFeedError`
+    # 一族表示"这次取数取不到"，两者调用方的处置动作不同（前者去修采集，
+    # 后者去改 as_of 或换源）。
+    code = "DATA_000"
+
+
+class DataNotAvailableError(DataFeedError):
+    """该 `as_of_date` 视角下数据不可见或不存在（DATA_001）。
+
+    **不得**退化为「用最新数据」—— 那会把未来函数藏进"正常返回"里。
+    """
+
+    code = "DATA_001"
+
+
+class FutureDataAccessError(DataFeedError):
+    """访问了 `as_of_date` 之后才可见的数据，即未来函数（DATA_002，CRITICAL）。
+
+    出现这个异常意味着**回测结果已经不可信**，调用方必须中断而不是重试。
+    """
+
+    code = "DATA_002"
+
+
+class DataQualityError(DataCenterError):
+    """数据质量校验未通过（DATA_003），见 `dc_quality_issue`。"""
+
+    code = "DATA_003"
+
+
+class DataVersionError(DataCenterError):
+    """数据版本缺失 / 未激活 / 与回测结果不匹配（DATA_004）。
+
+    回测结果必须绑定 `data_version`；绑不上就不许标记为可复现。
+    """
+
+    code = "DATA_004"
+
+
+class SourceAdapterError(DataCenterError):
+    """数据源拉取或解析失败（DATA_005）：网络、限流、源返回格式无法解析。
+
+    适配器**只**抛这一个异常类去表示"源这一侧的问题"；源字段名归一化失败也用
+    它，因为那同样意味着"这个源的这份数据不能用"，而不是"上层代码写错了"。
+    """
+
+    code = "DATA_005"
+
+
+class CalendarError(DataCenterError):
+    """交易日历覆盖范围不足（DATA_006）。**禁止**外推。"""
+
+    code = "DATA_006"
+
+
+class IngestConflictError(DataCenterError):
+    """采集幂等冲突：同版本同主键出现不同值（DATA_007）。
+
+    说明并发跑了两份采集，按 D10 重跑；**不要**用 upsert 把冲突悄悄盖掉。
+    """
+
+    code = "DATA_007"
+
+
 # ── 回测类 ────────────────────────────────────────────────────────────────
 class BacktestError(QuanAutoError):
     """回测相关异常的共同根。"""

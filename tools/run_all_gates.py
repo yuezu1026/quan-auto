@@ -120,6 +120,23 @@ GATES = [
         'selftest': ['tools/verify_data_center.py', '--selftest'],
     },
     {
+        'name': 'data-center-pit',
+        'tier': 'A',
+        # 上一个门禁守的是建表语句，这个守的是**取数路径**：数据中心契约的 D3/D4/D6/D7
+        # 都是「不许发生」的约束（不许绕过 as_of、不许按调用方给的日期取数、回测里不许
+        # 用 QFQ/BFILL），而「不许发生」在源码里表现为**两层防线**——入口层的
+        # `_require_visible` 和逐行层的 `record_access`。人眼审代码看不出哪天新加的
+        # `get_xxx()` 忘了接上其中一层（漏接的后果是静默多读数据、回测结果偏乐观，
+        # 不是报错），所以由它来喊。
+        # 边界：它只解析源码、**从不执行**，也**不跑 pytest**（那会把第三方依赖拖进
+        # tools/）。它证明的是「结构不可能被悄悄拆掉」，不是「守卫运行时真的会拒绝」；
+        # 后者由 tests/test_data_center_pit.py 的 18 个用例负责。
+        'what': 'DataFeed 取数路径的 as_of 两层防线（_require_visible + record_access）'
+                '与回测会话的 QFQ/BFILL 拒绝都还在，且只由 DataCenter.as_of() 产出',
+        'runner': ['tools/verify_data_center_pit.py'],
+        'selftest': ['tools/verify_data_center_pit.py', '--selftest'],
+    },
+    {
         'name': 'iteration-plan',
         'tier': 'A',
         # The plan is a product too. Without this gate, '已交付' in docs/迭代计划.md is
