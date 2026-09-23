@@ -34,7 +34,7 @@ GATE iteration-plan (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 迭代计划里每个标「已交付」的迭代都引用了一条真实存在的证据路径
 argv: tools/verify_iteration_plan.py
 ------------------------------------------------------------------------------
-CRLF-normalised: plan=15701 bytes (迭代计划.md)
+CRLF-normalised: plan=15763 bytes (迭代计划.md)
 extracted: iterations=5 delivered=0 dod_sections=5
 verdict: PASS (0 issue(s))
 NOTE: no iteration is marked 已交付 yet, so C3/C4 found nothing to check on this run -- that is an empty result, NOT a verification. Their failing branch is exercised by --selftest samples C3-delivered-no-evidence / C4-ghost-path / C4-unverifiable-evidence.
