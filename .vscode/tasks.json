@@ -1,0 +1,89 @@
+{
+  // 一键门禁任务。设计要点：
+  //  1) core-contract-refs 走 harness 的 --gate= 而不是直接调脚本：它的 --extra= 参数是
+  //     中文路径，直接出现在 shell 命令里会被 PowerShell 5.1 按 GBK 破坏。
+  //     harness 把中文路径写成 Python 字面量，所以 `python tools/run_all_gates.py` 是纯 ASCII。
+  //  2) 所有任务的 cwd 是工作区根目录，脚本里的相对路径按此解析。
+  //  3) harness 会先跑每个门禁的 --selftest 再跑真的；自测失败一律判 FAIL。
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "gates: all",
+      "detail": "跑全部 5 个门禁并打印一个有界总表；退出码 0 表示全绿",
+      "type": "shell",
+      "command": "python tools/run_all_gates.py",
+      "group": { "kind": "build", "isDefault": true },
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "gates: md-fidelity",
+      "detail": "docx 的每一段（含表格单元）是否都出现在对应 md 中",
+      "type": "shell",
+      "command": "python tools/run_all_gates.py --gate=md-fidelity",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "gates: risk-config",
+      "detail": "风控契约 §3.6 与 db/risk_control.sql 与 smoke.sql 三方一致",
+      "type": "shell",
+      "command": "python tools/run_all_gates.py --gate=risk-config",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "gates: data-center-ddl",
+      "detail": "数据中心契约 §3.6.1 与 db/data_center.sql 约束清单双向一致",
+      "type": "shell",
+      "command": "python tools/run_all_gates.py --gate=data-center-ddl",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "gates: iteration-plan",
+      "detail": "迭代计划里每个标「已交付」的迭代都引用了一条真实存在的证据路径",
+      "type": "shell",
+      "command": "python tools/run_all_gates.py --gate=iteration-plan",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "gates: core-contract-refs",
+      "detail": "tier-B 棘轮：契约引用的类型/异常是否有定义（欠账基线 39）",
+      "type": "shell",
+      "command": "python tools/run_all_gates.py --gate=core-contract-refs",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "gates: selftest",
+      "detail": "证明 harness 自己会报 FAIL（每次新增门禁后都要跑）",
+      "type": "shell",
+      "command": "python tools/run_all_gates.py --selftest",
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "gates: list",
+      "detail": "列出注册表：每个门禁的 tier、命令行、自测命令行",
+      "type": "shell",
+      "command": "python tools/run_all_gates.py --list",
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "gates: report",
+      "detail": "读上一次的完整输出 ---- 不要为了看结果重跑门禁",
+      "type": "shell",
+      "command": "Get-Content tools\\gates-report.txt",
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": []
+    }
+  ]
+}

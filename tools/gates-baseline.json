@@ -1,0 +1,32 @@
+{
+  "_readme": [
+    "Ratchet baselines for tier-B gates (see tools/run_all_gates.py).",
+    "A tier-B gate tracks debt that cannot be paid down yet, so it is allowed to fail;",
+    "what it may NOT do is move silently. actual == total and the per-code detail must",
+    "match exactly, otherwise the run fails in one of three directions:",
+    "  DRIFT+  debt grew    -> someone introduced new defects",
+    "  DRIFT-  debt shrank  -> an improvement was absorbed; lower 'total' BY HAND and",
+    "                         write down why, or the number stops tracking anything",
+    "  DRIFT~  same total, different mix -> one defect kind was traded for another",
+    "This file is edited by hand on purpose. There is no --write-baseline flag: an",
+    "auto-update would let any regression be absorbed by re-running the harness once,",
+    "which is precisely the fake gate this project keeps running into.",
+    "Values must come from a real run, never from an estimate."
+  ],
+  "core-contract-refs": {
+    "total": 39,
+    "detail": {
+      "T1": 2,
+      "T2": 19,
+      "T3": 18
+    },
+    "measured": "2026-09-23",
+    "measured_by": "python tools/run_all_gates.py (then counted the FINDING lines in tools/gates-report.txt)",
+    "measured_with": [
+      "tools/verify_contract_refs.py",
+      "--extra=docs/智能量化交易平台-数据中心接口契约文档.md",
+      "--extra=docs/智能量化交易平台-风控层接口契约文档.md"
+    ],
+    "note": "B7 欠账：主契约引用的类型/异常未定义 + 2 个不可解析代码块。T1=2 个不可解析的 python 块，T2=19 个只出现在签名里、文档内无定义的类型，T3=18 个被点名但无定义的异常。两个补充契约（数据中心/风控）贡献了 9 个已定义异常，所以 T3 低于主契约单独统计时的 19。这三类都必须补齐补充契约才能下降；下降后必须手工改小 total。"
+  }
+}

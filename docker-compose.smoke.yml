@@ -1,0 +1,55 @@
+# 本地验证用 PostgreSQL —— 只为一件事：让 db/*.sql 里的 CHECK 约束在真实库上被证明
+# 会拒绝非法值。它**不是**平台运行环境（Java + PG + Redis + Kafka 的那套将来另立一份
+# compose 文件）。故意用 .smoke 后缀把范围写在文件名里，避免有人误以为「环境已就绪」。
+#
+# 由 tools/run_sql_smoke.py 驱动，不要手工 up 之后就以为验证过了 —— 空库守卫和
+# 编码断言都在脚本里。
+#
+# 设计约束（每条都对应一次真实踩坑，不要「简化」掉）：
+#
+# 1. 不声明卷、不发布端口。
+#    不声明卷 ⇒ `docker compose down` 之后 PGDATA 随容器一起消失，每次运行都是空库。
+#    为什么必须这样：两份 DDL 全用 `CREATE TABLE IF NOT EXISTS`，在**旧的持久卷**上重跑
+#    会**静默什么都不做**，于是你可能拿旧 schema 跑出「全绿」—— 改过 DDL 却没迁移这类
+#    事故在静态检查里看不出来，在持久卷上跑同样看不出来。run_sql_smoke.py 另有一道
+#    「public schema 里表数必须为 0」的守卫，两道一起才敢信。
+#
+# 2. 不发布端口：psql 全部用 `docker compose exec db psql` 在容器内跑，走 unix socket
+#    （官方镜像 pg_hba 对 local 是 trust，故 exec 不需要密码），host 上不暴露 5432，
+#    也就不会和将来真实的 PG 实例或部署环境抢端口。
+#
+# 3. 显式 UTF8。db/data_center.sql 与 db/risk_control.sql 都含中文注释，靠镜像默认编码
+#    是在赌；编码不对时未必报错，可能只是把中文写坏或报 invalid byte sequence。
+#    脚本会实测 `SHOW server_encoding` 与 `SHOW client_encoding` 都必须是 UTF8。
+#
+# 4. 镜像 tag 可覆盖（PG_IMAGE），默认 major 17；而 DDL 声称支持「PostgreSQL 14+」。
+#    **只在一个版本上通过，不等于 14+ 全都通过** —— 报告里会写清本次实测的版本与 digest，
+#    缺口清单里也只允许声称「已在 X 上通过」。
+services:
+  db:
+    image: ${PG_IMAGE:-postgres:17}
+    environment:
+      POSTGRES_DB: quan
+      POSTGRES_USER: postgres
+      # 仅本机、仅容器内 socket 可达（未发布端口），故此处用一次性字面量。
+      # 若将来要发布端口，必须改成真密码 + 只绑 127.0.0.1。
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-quan_local_smoke_only}
+      # 中文注释要求 UTF8。locale 用 C.UTF-8（Debian 系镜像自带）；若某个镜像里没有该
+      # locale，initdb 会**直接报错**而不是静默降级 —— 报错是我们要的结果，静默降级才是灾难。
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C.UTF-8"
+      # psql 按 UTF8 收发，避免 GBK 往返把中文注释写坏。
+      PGCLIENTENCODING: UTF8
+    volumes:
+      # SQL 文件只读挂进容器；psql -f 读得到即可，不需要写权限。
+      - ./:/work:ro
+    healthcheck:
+      # -h 127.0.0.1 是关键：官方镜像在 initdb 期间会跑一个临时服务，那个临时服务的
+      # listen_addresses 为空（不监听 TCP），而 unix socket 可能已被 pg_isready 探到 ⇒
+      # 用 socket 探会**提前报健康**，于是 --wait 在 initdb 还没结束时就返回。
+      # 走 TCP 则只有真正的服务起来后才通过。pg_isready 不做认证，不需要密码。
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d quan"]
+      interval: 1s
+      timeout: 3s
+      retries: 90
+      start_period: 5s
+    restart: "no"

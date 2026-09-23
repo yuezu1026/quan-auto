@@ -1,0 +1,393 @@
+# falsify-report.txt —— 触发测试的证伪记录
+# 生成: 2026-09-23 16:25:22
+# 工具: tools/falsify_smoke.py（每次运行把 db/*.sql 逐条放宽后重跑 smoke，
+#       每个案例都必须正好 1 条样本变红）
+# 判定: OK (exit=0)
+#
+
+
+=== dc-version-format-anchor ===
+  约束: ck_dc_version_format   （变异后定义里必须出现 '^v?'）
+  放宽[1] db/data_center.sql:46
+          data_version ~ '^v[0-9]{4}\.[0-9]{2}\.[0-9]{2}$'
+       -> data_version ~ '^v?[0-9]{4}\.[0-9]{2}\.[0-9]{2}$'
+  变异已落盘: tools/_falsify_tmp/dc-version-format-anchor.sql  (delta=+1 bytes)
+  变异已入库: CHECK ((data_version ~ '^v?[0-9]{4}\.[0-9]{2}\.[0-9]{2}$'::text))
+  触发测试输出: 41 passed, 1 failed  (psql exit=3)
+     | psql:/work/db/data_center.smoke.sql:860: NOTICE:  B1 FAIL  a version with no leading v was accepted
+  RESULT: 抓到，且正好 1 条变红 —— 与期望签名一致。
+
+=== dc-symbol-delist-after-list ===
+  约束: ck_dc_symbol_delist_after_list   （变异后定义里必须出现 'delist_date >= list_date'）
+  放宽[1] db/data_center.sql:95
+          delist_date > list_date
+       -> delist_date >= list_date
+  变异已落盘: tools/_falsify_tmp/dc-symbol-delist-after-list.sql  (delta=+1 bytes)
+  变异已入库: CHECK (((delist_date IS NULL) OR (list_date IS NULL) OR (delist_date >= list_date)))
+  触发测试输出: 41 passed, 1 failed  (psql exit=3)
+     | psql:/work/db/data_center.smoke.sql:860: NOTICE:  B2 FAIL  delist_date = list_date was accepted (bound must be strict)
+  RESULT: 抓到，且正好 1 条变红 —— 与期望签名一致。
+
+=== dc-bar-price-positive ===
+  约束: ck_dc_bar_price_positive   （变异后定义里必须出现 'open >= 0'）
+  放宽[1] db/data_center.sql:123
+          open > 0 AND high > 0 AND low > 0 AND close > 0
+       -> open >= 0 AND high >= 0 AND low >= 0 AND close >= 0
+  变异已落盘: tools/_falsify_tmp/dc-bar-price-positive.sql  (delta=+4 bytes)
+  变异已入库: CHECK (((open >= (0)::numeric) AND (high >= (0)::numeric) AND (low >= (0)::numeric) AND (close >= (0)::numeric)))
+  触发测试输出: 41 passed, 1 failed  (psql exit=3)
+     | psql:/work/db/data_center.smoke.sql:860: NOTICE:  B3 FAIL  a zero price was accepted (prices must be > 0)
+  RESULT: 抓到，且正好 1 条变红 —— 与期望签名一致。
+
+=== dc-bar-ohlc-order ===
+  约束: ck_dc_bar_ohlc_order   （变异后定义里必须出现 'low - 1'）
+  放宽[1] db/data_center.sql:125
+          high >= low AND high >= open AND high >= close
+       -> high >= low - 1 AND high >= open - 1 AND high >= close - 1
+  放宽[2] db/data_center.sql:126
+          AND low <= open AND low <= close
+       -> AND low <= open + 1 AND low <= close + 1
+  变异已落盘: tools/_falsify_tmp/dc-bar-ohlc-order.sql  (delta=+20 bytes)
+  变异已入库: CHECK (((high >= (low - (1)::numeric)) AND (high >= (open - (1)::numeric)) AND (high >= (close - (1)::numeric)) AND (low <= (open + (1)::numeric)) AND (low <= (close + (1)::numeric))))
+  触发测试输出: 41 passed, 1 failed  (psql exit=3)
+     | psql:/work/db/data_center.smoke.sql:860: NOTICE:  B4 FAIL  high < low was accepted (OHLC ordering not enforced)
+  RESULT: 抓到，且正好 1 条变红 —— 与期望签名一致。
+
+=== dc-bar-volume-nonneg ===
+  约束: ck_dc_bar_volume_nonneg   （变异后定义里必须出现 'volume >= -1'）
+  放宽[1] db/data_center.sql:128
+          volume >= 0 AND amount >= 0
+       -> volume >= -1 AND amount >= -1
+  变异已落盘: tools/_falsify_tmp/dc-bar-volume-nonneg.sql  (delta=+2 bytes)
+  变异已入库: CHECK (((volume >= ('-1'::integer)::numeric) AND (amount >= ('-1'::integer)::numeric)))
+  触发测试输出: 41 passed, 1 failed  (psql exit=3)
+     | psql:/work/db/data_center.smoke.sql:860: NOTICE:  B5 FAIL  volume = -1 was accepted (volume must be >= 0)
+  RESULT: 抓到，且正好 1 条变红 —— 与期望签名一致。
+
+=== dc-factor-positive ===
+  约束: ck_dc_factor_positive   （变异后定义里必须出现 'adjust_factor >= 0'）
+  放宽[1] db/data_center.sql:151
+          adjust_factor > 0
+       -> adjust_factor >= 0
+  变异已落盘: tools/_falsify_tmp/dc-factor-positive.sql  (delta=+1 bytes)
+  变异已入库: CHECK ((adjust_factor >= (0)::numeric))
+  触发测试输出: 41 passed, 1 failed  (psql exit=3)
+     | psql:/work/db/data_center.smoke.sql:860: NOTICE:  B6 FAIL  adjust_factor = 0 was accepted (must be > 0)
+  RESULT: 抓到，且正好 1 条变红 —— 与期望签名一致。
+
+=== dc-fin-report-type-enum ===
+  约束: ck_dc_fin_report_type   （变异后定义里必须出现 'QUARTERLY'）
+  放宽[1] db/data_center.sql:181
+          report_type IN ('BALANCE', 'INCOME', 'CASHFLOW', 'INDICATOR')
+       -> report_type IN ('BALANCE', 'INCOME', 'CASHFLOW', 'INDICATOR', 'QUARTERLY')
+  变异已落盘: tools/_falsify_tmp/dc-fin-report-type-enum.sql  (delta=+13 bytes)
+  变异已入库: CHECK ((report_type = ANY (ARRAY['BALANCE'::text, 'INCOME'::text, 'CASHFLOW'::text, 'INDICATOR'::text, 'QUARTERLY'::text])))
+  触发测试输出: 41 passed, 1 failed  (psql exit=3)
+     | psql:/work/db/data_center.smoke.sql:860: NOTICE:  B7 FAIL  report_type = QUARTERLY was accepted (not a declared member)
+  RESULT: 抓到，且正好 1 条变红 —— 与期望签名一致。
+
+=== dc-fin-announce-after-period ===
+  约束: ck_dc_fin_announce_after_period   （变异后定义里必须出现 'period_end - 60'）
+  放宽[1] db/data_center.sql:183
+          announce_date >= period_end
+       -> announce_date >= period_end - 60
+  变异已落盘: tools/_falsify_tmp/dc-fin-announce-after-period.sql  (delta=+5 bytes)
+  变异已入库: CHECK ((announce_date >= (period_end - 60)))
+  触发测试输出: 41 passed, 1 failed  (psql exit=3)
+     | psql:/work/db/data_center.smoke.sql:860: NOTICE:  B8 FAIL  announce_date < period_end was accepted (D4 look-ahead leak)
+  RESULT: 抓到，且正好 1 条变红 —— 与期望签名一致。
+
+=== dc-fin-available-ge-announce ===
+  约束: ck_dc_fin_available_ge_announce   （变异后定义里必须出现 'announce_date - 60'）
+  放宽[1] db/data_center.sql:185
+          available_date >= announce_date
+       -> available_date >= announce_date - 60
+  变异已落盘: tools/_falsify_tmp/dc-fin-available-ge-announce.sql  (delta=+5 bytes)
+  变异已入库: CHECK ((available_date >= (announce_date - 60)))
+  触发测试输出: 41 passed, 1 failed  (psql exit=3)
+     | psql:/work/db/data_center.smoke.sql:860: NOTICE:  B9 FAIL  available_date < announce_date was accepted (data visible before publication)
+  RESULT: 抓到，且正好 1 条变红 —— 与期望签名一致。
+
+=== dc-roe-upper-bound ===
+  约束: ck_dc_fin_roe_range   （变异后定义里必须出现 '<= 1000'）
+  放宽[1] db/data_center.sql:187
+          roe >= -1 AND roe <= 5
+       -> roe >= -1 AND roe <= 1000
+  变异已落盘: tools/_falsify_tmp/dc-roe-upper-bound.sql  (delta=+3 bytes)
+  变异已入库: CHECK (((roe IS NULL) OR ((roe >= ('-1'::integer)::numeric) AND (roe <= (1000)::numeric))))
+  触发测试输出: 41 passed, 1 failed  (psql exit=3)
+     | psql:/work/db/data_center.smoke.sql:860: NOTICE:  B10 FAIL  roe = 600 was accepted (percentage typed as a ratio)
+  RESULT: 抓到，且正好 1 条变红 —— 与期望签名一致。
+
+=== dc-member-effective-range ===
+  约束: ck_dc_member_effective_range   （变异后定义里必须出现 'effective_to >= effective_from'）
+  放宽[1] db/data_center.sql:216
+          effective_to > effective_from
+       -> effective_to >= effective_from
+  变异已落盘: tools/_falsify_tmp/dc-member-effective-range.sql  (delta=+1 bytes)
+  变异已入库: CHECK (((effective_to IS NULL) OR (effective_to >= effective_from)))
+  触发测试输出: 41 passed, 1 failed  (psql exit=3)
+     | psql:/work/db/data_center.smoke.sql:860: NOTICE:  B11 FAIL  effective_to = effective_from was accepted (bound must be strict)
+  RESULT: 抓到，且正好 1 条变红 —— 与期望签名一致。
+
+=== dc-member-weight-range ===
+  约束: ck_dc_member_weight_range   （变异后定义里必须出现 '<= 100'）
+  放宽[1] db/data_center.sql:218
+          weight >= 0 AND weight <= 1
+       -> weight >= 0 AND weight <= 100
+  变异已落盘: tools/_falsify_tmp/dc-member-weight-range.sql  (delta=+2 bytes)
+  变异已入库: CHECK (((weight IS NULL) OR ((weight >= (0)::numeric) AND (weight <= (100)::numeric))))
+  触发测试输出: 41 passed, 1 failed  (psql exit=3)
+     | psql:/work/db/data_center.smoke.sql:860: NOTICE:  B12 FAIL  weight = 1.5 was accepted (percentage typed as a ratio)
+  RESULT: 抓到，且正好 1 条变红 —— 与期望签名一致。
+
+=== dc-ingest-status-enum ===
+  约束: ck_dc_ingest_status   （变异后定义里必须出现 'DONE'）
+  放宽[1] db/data_center.sql:248
+          status IN ('RUNNING', 'SUCCESS', 'PARTIAL', 'FAILED')
+       -> status IN ('RUNNING', 'SUCCESS', 'PARTIAL', 'FAILED', 'DONE')
+  变异已落盘: tools/_falsify_tmp/dc-ingest-status-enum.sql  (delta=+8 bytes)
+  变异已入库: CHECK ((status = ANY (ARRAY['RUNNING'::text, 'SUCCESS'::text, 'PARTIAL'::text, 'FAILED'::text, 'DONE'::text])))
+  触发测试输出: 41 passed, 1 failed  (psql exit=3)
+     | psql:/work/db/data_center.smoke.sql:860: NOTICE:  B13 FAIL  status = DONE was accepted (not a declared member)
+  RESULT: 抓到，且正好 1 条变红 —— 与期望签名一致。
+
+=== dc-ingest-priority-enum ===
+  约束: ck_dc_ingest_priority   （变异后定义里必须出现 'SECONDARY'）
+  放宽[1] db/data_center.sql:250
+          priority IN ('PRIMARY', 'FALLBACK')
+       -> priority IN ('PRIMARY', 'FALLBACK', 'SECONDARY')
+  变异已落盘: tools/_falsify_tmp/dc-ingest-priority-enum.sql  (delta=+13 bytes)
+  变异已入库: CHECK ((priority = ANY (ARRAY['PRIMARY'::text, 'FALLBACK'::text, 'SECONDARY'::text])))
+  触发测试输出: 41 passed, 1 failed  (psql exit=3)
+     | psql:/work/db/data_center.smoke.sql:860: NOTICE:  B14 FAIL  priority = SECONDARY was accepted (not a declared member)
+  RESULT: 抓到，且正好 1 条变红 —— 与期望签名一致。
+
+=== dc-quality-flag-enum ===
+  约束: ck_dc_quality_flag   （变异后定义里必须出现 'HALTED'）
+  放宽[1] db/data_center.sql:275
+          'SUSPENDED', 'LIMIT_UP', 'LIMIT_DOWN', 'ST',
+       -> 'SUSPENDED', 'LIMIT_UP', 'LIMIT_DOWN', 'ST', 'HALTED',
+  变异已落盘: tools/_falsify_tmp/dc-quality-flag-enum.sql  (delta=+10 bytes)
+  变异已入库: CHECK ((flag = ANY (ARRAY['SUSPENDED'::text, 'LIMIT_UP'::text, 'LIMIT_DOWN'::text, 'ST'::text, 'HALTED'::text, 'NEW_LISTING'::text, 'DELISTED'::text, 'VOLUME_ANOMALY'::text, 'MISSING'::text])))
+  触发测试输出: 41 passed, 1 failed  (psql exit=3)
+     | psql:/work/db/data_center.smoke.sql:860: NOTICE:  B15 FAIL  flag = HALTED was accepted (not a declared member)
+  RESULT: 抓到，且正好 1 条变红 —— 与期望签名一致。
+
+=== dc-quality-severity-enum ===
+  约束: ck_dc_quality_severity   （变异后定义里必须出现 'ERROR'）
+  放宽[1] db/data_center.sql:278
+          severity IN ('CRITICAL', 'WARNING', 'INFO')
+       -> severity IN ('CRITICAL', 'WARNING', 'INFO', 'ERROR')
+  变异已落盘: tools/_falsify_tmp/dc-quality-severity-enum.sql  (delta=+9 bytes)
+  变异已入库: CHECK ((severity = ANY (ARRAY['CRITICAL'::text, 'WARNING'::text, 'INFO'::text, 'ERROR'::text])))
+  触发测试输出: 41 passed, 1 failed  (psql exit=3)
+     | psql:/work/db/data_center.smoke.sql:860: NOTICE:  B16 FAIL  severity = ERROR was accepted (not a declared member)
+  RESULT: 抓到，且正好 1 条变红 —— 与期望签名一致。
+
+=== risk-scope-enum ===
+  约束: ck_risk_rule_scope   （变异后定义里必须出现 'ACCOUNTS'）
+  放宽[1] db/risk_control.sql:33
+          scope IN ('GLOBAL', 'ACCOUNT', 'STRATEGY', 'SYMBOL')
+       -> scope IN ('GLOBAL', 'ACCOUNT', 'STRATEGY', 'SYMBOL', 'ACCOUNTS')
+  变异已落盘: tools/_falsify_tmp/risk-scope-enum.sql  (delta=+12 bytes)
+  变异已入库: CHECK (((scope)::text = ANY ((ARRAY['GLOBAL'::character varying, 'ACCOUNT'::character varying, 'STRATEGY'::character varying, 'SYMBOL'::character varying, 'ACCOUNTS'::character varying])::text[])))
+  触发测试输出: 22 passed, 1 failed  (psql exit=3)
+     | psql:/work/db/risk_control.smoke.sql:488: NOTICE:  B18 FAIL  scope='ACCOUNTS' was accepted (not a declared member)
+  RESULT: 抓到，且正好 1 条变红 —— 与期望签名一致。
+
+=== risk-unit-enum ===
+  约束: ck_risk_rule_unit   （变异后定义里必须出现 'PERCENT'）
+  放宽[1] db/risk_control.sql:34
+          unit IN ('RATIO', 'COUNT', 'ABSOLUTE')
+       -> unit IN ('RATIO', 'COUNT', 'ABSOLUTE', 'PERCENT')
+  变异已落盘: tools/_falsify_tmp/risk-unit-enum.sql  (delta=+11 bytes)
+  变异已入库: CHECK (((unit)::text = ANY ((ARRAY['RATIO'::character varying, 'COUNT'::character varying, 'ABSOLUTE'::character varying, 'PERCENT'::character varying])::text[])))
+  触发测试输出: 22 passed, 1 failed  (psql exit=3)
+     | psql:/work/db/risk_control.smoke.sql:488: NOTICE:  B6 FAIL  unit='PERCENT' was accepted
+  RESULT: 抓到，且正好 1 条变红 —— 与期望签名一致。
+
+=== risk-comparison-enum ===
+  约束: ck_risk_rule_comparison   （变异后定义里必须出现 'LT'）
+  放宽[1] db/risk_control.sql:35
+          comparison IN ('LTE', 'GTE')
+       -> comparison IN ('LTE', 'GTE', 'LT')
+  变异已落盘: tools/_falsify_tmp/risk-comparison-enum.sql  (delta=+6 bytes)
+  变异已入库: CHECK (((comparison)::text = ANY ((ARRAY['LTE'::character varying, 'GTE'::character varying, 'LT'::character varying])::text[])))
+  触发测试输出: 22 passed, 1 failed  (psql exit=3)
+     | psql:/work/db/risk_control.smoke.sql:488: NOTICE:  B7 FAIL  comparison='LT' was accepted
+  RESULT: 抓到，且正好 1 条变红 —— 与期望签名一致。
+
+=== risk-ratio-upper-bound ===
+  约束: ck_risk_rule_ratio_range   （变异后定义里必须出现 '<= 100'）
+  放宽[1] db/risk_control.sql:37
+          threshold > 0 AND threshold <= 1
+       -> threshold > 0 AND threshold <= 100
+  变异已落盘: tools/_falsify_tmp/risk-ratio-upper-bound.sql  (delta=+2 bytes)
+  变异已入库: CHECK ((((unit)::text <> 'RATIO'::text) OR ((threshold > (0)::numeric) AND (threshold <= (100)::numeric))))
+  触发测试输出: 22 passed, 1 failed  (psql exit=3)
+     | psql:/work/db/risk_control.smoke.sql:488: NOTICE:  B1 FAIL  RATIO=10 was accepted (D3 guard ineffective)
+  RESULT: 抓到，且正好 1 条变红 —— 与期望签名一致。
+
+=== risk-ratio-lower-bound ===
+  约束: ck_risk_rule_ratio_range   （变异后定义里必须出现 'threshold >= 0'）
+  放宽[1] db/risk_control.sql:37
+          threshold > 0 AND threshold <= 1
+       -> threshold >= 0 AND threshold <= 1
+  变异已落盘: tools/_falsify_tmp/risk-ratio-lower-bound.sql  (delta=+1 bytes)
+  变异已入库: CHECK ((((unit)::text <> 'RATIO'::text) OR ((threshold >= (0)::numeric) AND (threshold <= (1)::numeric))))
+  触发测试输出: 22 passed, 1 failed  (psql exit=3)
+     | psql:/work/db/risk_control.smoke.sql:488: NOTICE:  B2 FAIL  RATIO=0 was accepted (lower bound must be exclusive)
+  RESULT: 抓到，且正好 1 条变红 —— 与期望签名一致。
+
+=== risk-global-key ===
+  约束: ck_risk_rule_global_key   （变异后定义里必须出现 'true'）
+  放宽[1] db/risk_control.sql:39
+          scope <> 'GLOBAL' OR scope_key = '*'
+       -> TRUE
+  变异已落盘: tools/_falsify_tmp/risk-global-key.sql  (delta=-32 bytes)
+  变异已入库: CHECK (true)
+  触发测试输出: 22 passed, 1 failed  (psql exit=3)
+     | psql:/work/db/risk_control.smoke.sql:488: NOTICE:  B4 FAIL  GLOBAL row with scope_key='SMOKE-A' was accepted (D2)
+  RESULT: 抓到，且正好 1 条变红 —— 与期望签名一致。
+
+=== risk-threshold-nonneg ===
+  约束: ck_risk_rule_nonneg   （变异后定义里必须出现 '>= -100'）
+  放宽[1] db/risk_control.sql:41
+          threshold >= 0
+       -> threshold >= -100
+  变异已落盘: tools/_falsify_tmp/risk-threshold-nonneg.sql  (delta=+3 bytes)
+  变异已入库: CHECK ((threshold >= ('-100'::integer)::numeric))
+  触发测试输出: 22 passed, 1 failed  (psql exit=3)
+     | psql:/work/db/risk_control.smoke.sql:488: NOTICE:  B10 FAIL threshold=-1 was accepted
+  RESULT: 抓到，且正好 1 条变红 —— 与期望签名一致。
+
+=== risk-count-int ===
+  约束: ck_risk_rule_count_int   （变异后定义里必须出现 'true'）
+  放宽[1] db/risk_control.sql:44
+          unit <> 'COUNT' OR threshold = trunc(threshold)
+       -> TRUE
+  变异已落盘: tools/_falsify_tmp/risk-count-int.sql  (delta=-43 bytes)
+  变异已入库: CHECK (true)
+  触发测试输出: 22 passed, 1 failed  (psql exit=3)
+     | psql:/work/db/risk_control.smoke.sql:488: NOTICE:  B8 FAIL  COUNT=3.5 was accepted (must be integral)
+  RESULT: 抓到，且正好 1 条变红 —— 与期望签名一致。
+
+=== risk-config-version-singleton ===
+  约束: ck_risk_config_version_singleton   （变异后定义里必须出现 'id >= 1'）
+  放宽[1] db/risk_control.sql:61
+          CONSTRAINT ck_risk_config_version_singleton CHECK (id = 1)
+       -> CONSTRAINT ck_risk_config_version_singleton CHECK (id >= 1)
+  变异已落盘: tools/_falsify_tmp/risk-config-version-singleton.sql  (delta=+1 bytes)
+  变异已入库: CHECK ((id >= 1))
+  触发测试输出: 22 passed, 1 failed  (psql exit=3)
+     | psql:/work/db/risk_control.smoke.sql:488: NOTICE:  B17 FAIL config-version row id=2 was accepted
+  RESULT: 抓到，且正好 1 条变红 —— 与期望签名一致。
+
+=== risk-audit-direction-enum ===
+  约束: ck_risk_rule_audit_direction   （变异后定义里必须出现 'WIDEN'）
+  放宽[1] db/risk_control.sql:83
+          change_direction IN ('', 'TIGHTEN', 'RELAX')
+       -> change_direction IN ('', 'TIGHTEN', 'RELAX', 'WIDEN')
+  变异已落盘: tools/_falsify_tmp/risk-audit-direction-enum.sql  (delta=+9 bytes)
+  变异已入库: CHECK (((change_direction)::text = ANY ((ARRAY[''::character varying, 'TIGHTEN'::character varying, 'RELAX'::character varying, 'WIDEN'::character varying])::text[])))
+  触发测试输出: 22 passed, 1 failed  (psql exit=3)
+     | psql:/work/db/risk_control.smoke.sql:488: NOTICE:  B19 FAIL  change_direction='WIDEN' was accepted (not a declared member)
+  RESULT: 抓到，且正好 1 条变红 —— 与期望签名一致。
+
+=== risk-intercept-action-enum ===
+  约束: ck_risk_intercept_action   （变异后定义里必须出现 'SELL'）
+  放宽[1] db/risk_control.sql:126
+          action IN ('REDUCE', 'REJECT', 'HALT')
+       -> action IN ('REDUCE', 'REJECT', 'HALT', 'SELL')
+  变异已落盘: tools/_falsify_tmp/risk-intercept-action-enum.sql  (delta=+8 bytes)
+  变异已入库: CHECK (((action)::text = ANY ((ARRAY['REDUCE'::character varying, 'REJECT'::character varying, 'HALT'::character varying, 'SELL'::character varying])::text[])))
+  触发测试输出: 22 passed, 1 failed  (psql exit=3)
+     | psql:/work/db/risk_control.smoke.sql:488: NOTICE:  B12 FAIL intercept action='SELL' was accepted
+  RESULT: 抓到，且正好 1 条变红 —— 与期望签名一致。
+
+=== risk-decision-action-enum ===
+  约束: ck_risk_decision_action   （变异后定义里必须出现 'SKIP'）
+  放宽[1] db/risk_control.sql:153
+          action IN ('PASS', 'REDUCE', 'REJECT', 'HALT')
+       -> action IN ('PASS', 'REDUCE', 'REJECT', 'HALT', 'SKIP')
+  变异已落盘: tools/_falsify_tmp/risk-decision-action-enum.sql  (delta=+8 bytes)
+  变异已入库: CHECK (((action)::text = ANY ((ARRAY['PASS'::character varying, 'REDUCE'::character varying, 'REJECT'::character varying, 'HALT'::character varying, 'SKIP'::character varying])::text[])))
+  触发测试输出: 22 passed, 1 failed  (psql exit=3)
+     | psql:/work/db/risk_control.smoke.sql:488: NOTICE:  B13 FAIL decision action='SKIP' was accepted
+  RESULT: 抓到，且正好 1 条变红 —— 与期望签名一致。
+
+=== risk-decision-run-state-enum ===
+  约束: ck_risk_decision_run_state   （变异后定义里必须出现 'HALF_OPEN'）
+  放宽[1] db/risk_control.sql:154
+          run_state IN ('NORMAL', 'DEGRADED', 'BREAKER_TRIPPED', 'KILLED')
+       -> run_state IN ('NORMAL', 'DEGRADED', 'BREAKER_TRIPPED', 'KILLED', 'HALF_OPEN')
+  变异已落盘: tools/_falsify_tmp/risk-decision-run-state-enum.sql  (delta=+13 bytes)
+  变异已入库: CHECK (((run_state)::text = ANY ((ARRAY['NORMAL'::character varying, 'DEGRADED'::character varying, 'BREAKER_TRIPPED'::character varying, 'KILLED'::character varying, 'HALF_OPEN'::character varying])::text[])))
+  触发测试输出: 22 passed, 1 failed  (psql exit=3)
+     | psql:/work/db/risk_control.smoke.sql:488: NOTICE:  B14 FAIL run_state='HALF_OPEN' was accepted
+  RESULT: 抓到，且正好 1 条变红 —— 与期望签名一致。
+
+=== risk-breaker-state-enum ===
+  约束: ck_risk_breaker_state   （变异后定义里必须出现 'HALF_OPEN'）
+  放宽[1] db/risk_control.sql:175
+          state IN ('NORMAL', 'TRIPPED')
+       -> state IN ('NORMAL', 'TRIPPED', 'HALF_OPEN')
+  变异已落盘: tools/_falsify_tmp/risk-breaker-state-enum.sql  (delta=+13 bytes)
+  变异已入库: CHECK (((state)::text = ANY ((ARRAY['NORMAL'::character varying, 'TRIPPED'::character varying, 'HALF_OPEN'::character varying])::text[])))
+  触发测试输出: 22 passed, 1 failed  (psql exit=3)
+     | psql:/work/db/risk_control.smoke.sql:488: NOTICE:  B15 FAIL breaker state='HALF_OPEN' was accepted (D7)
+  RESULT: 抓到，且正好 1 条变红 —— 与期望签名一致。
+
+=== risk-switch-state-singleton ===
+  约束: ck_risk_switch_state_singleton   （变异后定义里必须出现 'id >= 1'）
+  放宽[1] db/risk_control.sql:208
+          CONSTRAINT ck_risk_switch_state_singleton CHECK (id = 1)
+       -> CONSTRAINT ck_risk_switch_state_singleton CHECK (id >= 1)
+  变异已落盘: tools/_falsify_tmp/risk-switch-state-singleton.sql  (delta=+1 bytes)
+  变异已入库: CHECK ((id >= 1))
+  触发测试输出: 22 passed, 1 failed  (psql exit=3)
+     | psql:/work/db/risk_control.smoke.sql:488: NOTICE:  B16 FAIL kill-switch row id=2 was accepted
+  RESULT: 抓到，且正好 1 条变红 —— 与期望签名一致。
+
+=== 汇总 ===
+  dc-version-format-anchor   CAUGHT
+  dc-symbol-delist-after-list CAUGHT
+  dc-bar-price-positive      CAUGHT
+  dc-bar-ohlc-order          CAUGHT
+  dc-bar-volume-nonneg       CAUGHT
+  dc-factor-positive         CAUGHT
+  dc-fin-report-type-enum    CAUGHT
+  dc-fin-announce-after-period CAUGHT
+  dc-fin-available-ge-announce CAUGHT
+  dc-roe-upper-bound         CAUGHT
+  dc-member-effective-range  CAUGHT
+  dc-member-weight-range     CAUGHT
+  dc-ingest-status-enum      CAUGHT
+  dc-ingest-priority-enum    CAUGHT
+  dc-quality-flag-enum       CAUGHT
+  dc-quality-severity-enum   CAUGHT
+  risk-scope-enum            CAUGHT
+  risk-unit-enum             CAUGHT
+  risk-comparison-enum       CAUGHT
+  risk-ratio-upper-bound     CAUGHT
+  risk-ratio-lower-bound     CAUGHT
+  risk-global-key            CAUGHT
+  risk-threshold-nonneg      CAUGHT
+  risk-count-int             CAUGHT
+  risk-config-version-singleton CAUGHT
+  risk-audit-direction-enum  CAUGHT
+  risk-intercept-action-enum CAUGHT
+  risk-decision-action-enum  CAUGHT
+  risk-decision-run-state-enum CAUGHT
+  risk-breaker-state-enum    CAUGHT
+  risk-switch-state-singleton CAUGHT
+
+verdict: OK -- 每个被放宽的约束都被触发测试抓到了；触发测试确有效力。
+         覆盖: 31 个案例 / 30 条命名 CHECK 约束
+               （ck_risk_rule_ratio_range 上下界各一例，所以案例数比约束数多 1）
+         未覆盖: PRIMARY KEY、uq_dc_data_version_active、uq_dc_quality_issue、
+                 risk_rule.threshold 的 NOT NULL —— 它们不是 CHECK 表达式，
+                 而本工具的手法只对 CHECK 成立。
+         另一半边界: 本工具只证明「被放宽的那一条会红」，不证明「除它以外全是绿」——
+                 后者靠 n_fail == 1 这个签名间接兜住（变异波及多例会判 MISSED）。
