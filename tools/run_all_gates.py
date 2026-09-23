@@ -40,6 +40,13 @@ What this harness does NOT do
 It does not execute any SQL. These gates prove the constraints are still WRITTEN, not
 that they REJECT -- no amount of green in this report changes that.
 
+Nor does it run pytest. tools/verify_skeleton.py proves the I0 skeleton is still wired
+(pyproject / package / test files / the CI `run:` lines); proving that the tests actually
+PASS needs an interpreter with pytest installed, which is a third-party dependency this
+directory deliberately does not have. The real `python -m pytest -q` exit code lives in
+tools/ci-dryrun-report.txt, produced by tools/ci_dryrun.py -- a SNAPSHOT, same caveat as
+the SQL smoke report: valid only for the interpreter/commit recorded inside it.
+
 Runtime evidence is a separate channel: tools/run_sql_smoke.py boots a throwaway
 PostgreSQL via docker-compose.smoke.yml, applies both DDLs and runs both smoke tests on
 a genuinely empty database, then writes tools/sql-smoke-report.txt. That file is a
@@ -122,6 +129,18 @@ GATES = [
         'what': '迭代计划里每个标「已交付」的迭代都引用了一条真实存在的证据路径',
         'runner': ['tools/verify_iteration_plan.py'],
         'selftest': ['tools/verify_iteration_plan.py', '--selftest'],
+    },
+    {
+        'name': 'skeleton',
+        'tier': 'A',
+        # I0 的产物（pyproject / 包目录 / 测试文件 / CI 接线）都是「存在且能跑，
+        # 但删掉不会有人喊」的东西：把 ci.yml 里那行 run_all_gates 注释掉，本报告
+        # 在本地照样全绿，而门禁从此再也不会被执行。这个门禁守的就是那条接线。
+        # 它**不跑 pytest**：那会把第三方依赖拖进 tools/，并且在没有 .venv 的机器
+        # 上报环境性 FAIL。pytest 的真实退出码由 tools/ci-dryrun-report.txt 记录。
+        'what': 'I0 骨架还在：pyproject / 包 / 测试 / CI 接线（不跑 pytest）',
+        'runner': ['tools/verify_skeleton.py'],
+        'selftest': ['tools/verify_skeleton.py', '--selftest'],
     },
     {
         'name': 'core-contract-refs',

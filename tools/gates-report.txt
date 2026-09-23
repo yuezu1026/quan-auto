@@ -1,4 +1,4 @@
-SCOPE: FULL -- all 5 registered gate(s) ran.
+SCOPE: FULL -- all 6 registered gate(s) ran.
 
 ==============================================================================
 GATE md-fidelity (tier A) selftest=PASS verdict=PASS 0 finding(s)
@@ -34,11 +34,19 @@ GATE iteration-plan (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 迭代计划里每个标「已交付」的迭代都引用了一条真实存在的证据路径
 argv: tools/verify_iteration_plan.py
 ------------------------------------------------------------------------------
-CRLF-normalised: plan=15763 bytes (迭代计划.md)
-extracted: iterations=5 delivered=0 dod_sections=5
+CRLF-normalised: plan=17569 bytes (迭代计划.md)
+extracted: iterations=5 delivered=1 dod_sections=5
 verdict: PASS (0 issue(s))
-NOTE: no iteration is marked 已交付 yet, so C3/C4 found nothing to check on this run -- that is an empty result, NOT a verification. Their failing branch is exercised by --selftest samples C3-delivered-no-evidence / C4-ghost-path / C4-unverifiable-evidence.
 NOTE: this gate checks the plan is internally well-formed and that no completion claim dangles. It cannot judge whether an iteration was actually delivered -- someone still has to open the cited evidence file.
+
+==============================================================================
+GATE skeleton (tier A) selftest=PASS verdict=PASS 0 finding(s)
+what: I0 骨架还在：pyproject / 包 / 测试 / CI 接线（不跑 pytest）
+argv: tools/verify_skeleton.py
+------------------------------------------------------------------------------
+root: D:\project-quan\quan-auto
+denominator: 6 detector(s) ran: PYPROJECT, VERSION, PACKAGE, TESTS, CI, CI-SWALLOW
+verdict: PASS (0 issue(s))
 
 ==============================================================================
 GATE core-contract-refs (tier B) selftest=PASS verdict=RATCHET 39/39

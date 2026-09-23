@@ -1,0 +1,42 @@
+# CI：与本地**同一套命令**，两件事 —— 跑测试、跑门禁。
+#
+# 为什么只有这两步：本仓库的判据都在 `tools/run_all_gates.py` 里，测试是 TDD 的红网。
+# 任何「CI 里额外做一遍、本地不做」的检查都会变成两套口径，所以不设。
+#
+# 两个自带的反空转出口码（不要用 `|| true` 把它们吞掉）：
+#   pytest        收集到 0 个测试 -> 退出码 5（非 0）
+#   run_all_gates 5 个门禁全部 PASS 时退出码 0；门禁失败 = 1；**harness 自身自测失败 = 2**
+#
+# ⚠️ 本仓库**没有配置 git remote**（`git remote -v` 为空），所以这份 workflow
+#    目前**从未在 GitHub 上真实运行过**。不得被读成「CI 已跑通」。
+#    在它有远端并能真实红一次之前，I0「触发测试」那一格只能用本地等价往返记录
+#    （`python tools/ci_dryrun.py`，证据 `tools/ci-dryrun-report.txt`）来支撑，
+#    且必须写明「本地等价」而不是「CI」。
+
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # 用 -e .[dev] 而不是单独装 pytest：这样 pyproject.toml 的
+      # [build-system] 与 [project] 也会被真实走一遍（打包配置写错会在这里红）。
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+
+      - name: pytest
+        run: python -m pytest -q
+
+      - name: gates
+        run: python tools/run_all_gates.py

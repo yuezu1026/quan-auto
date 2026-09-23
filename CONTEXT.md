@@ -11,8 +11,11 @@
 
 ## 1. 这是什么
 
-智能量化交易平台的**开工前准备阶段**。仓库里**没有任何可运行代码**，交付物只有三类：
-契约、DDL、门禁。真正的实现还没开始，所以这里没有 `src/`、没有依赖清单、没有测试框架。
+智能量化交易平台的**开工前准备阶段**。到现在为止交付物只有三类：
+契约、DDL、门禁 —— **真正的实现一行都还没写**（`quanauto/` 是只有版本号的空包）。
+2026-09-23 I0 把工程骨架搭起来了：`pyproject.toml` + `quanauto/` 包 + `tests/`（pytest 可跑）
++ `.github/workflows/ci.yml` + `skeleton` 门禁，但**没有任何业务模块**，依赖清单也仍是空的
+（`dependencies = []`，不做投机性预置）。
 
 ## 2. 硬约束（违反任何一条都会造成不可逆损失）
 
@@ -22,7 +25,7 @@
 | C2 | `docs/` 下 3 个 `.md` 由 `.docx` 转换生成，**重新转换会覆盖** | 只能在其**之后追加**，禁止原地改已有段落。原地改 = 内容丢失 + md-fidelity 门禁失败。**追加的内容同样会被重新转换抹掉**，所以每个追加块（模块4 的「以契约为准」注、附录A）都登记在 `verify_md_coverage.py` 的 `ADDENDA` 清单里，被抹掉即 FAIL |
 | C3 | 控制台是 **cp936(GBK)** | stdout 出现 GBK 之外的字符（如 `↔`）会让 Python 抛 `UnicodeEncodeError` 并丢掉整段输出；PowerShell `>` 写的是 **UTF-16LE** 不是 UTF-8；含中文的 argv 会被破坏 |
 | C4 | `tools/` 下**只用标准库** | 不要引入任何第三方依赖 |
-| C5 | ~~本仓库不是 git 仓库~~ **已修一半（2026-09-23）**：已是 git 仓库（`main`，基线提交 `053f620`） | 但**只有基线一个提交** ⇒ 只能整体退回基线，没有细粒度还原点。改文件前仍要想清楚 |
+| C5 | ~~本仓库不是 git 仓库~~ **已修完（2026-09-23）**：是 git 仓库（`main`，基线提交 `053f620`，一次迭代一个提交） | 但**没有配置 git remote** ⇒ 推不上去，`.github/workflows/ci.yml` **从未在 GitHub 上真实运行过**；CI 的本地等价证据是 `tools/ci-dryrun-report.txt`（快照，改完代码要重跑） |
 
 ## 3. 仓库地图
 
@@ -44,7 +47,17 @@
 | `docs/智能量化交易平台-风控层接口契约文档.md` | 风控层契约（补充主契约缺失的类型/异常） |
 | `docs/智能量化交易平台-数据中心接口契约文档.md` | 数据中心契约，含 D1~D10 设计决策 |
 
-### C. 数据库
+### C. 工程骨架（2026-09-23 I0 交付；守门门禁 = `skeleton`）
+
+| 文件 | 作用 |
+|---|---|
+| `pyproject.toml` | 包元数据 / pytest 配置。**`dependencies = []` 是故意的**：依赖由真正用它的模块带进来 |
+| `quanauto/__init__.py` | 包入口，**只有 `__version__`，没有任何实现**（刻意不放 `NotImplementedError` 桩，否则「已实现」与「可 import」长得一样） |
+| `tests/test_skeleton.py` | 骨架自检 3 条：版本与 `pyproject.toml` 一致 / import 不把重依赖拉进来 / 测试数不为 0 |
+| `.github/workflows/ci.yml` | 只两条 `run:`（`pytest -q` 与 `run_all_gates.py`），**禁止 `|| true` 吞退出码**；因无 git remote，**从未在 GitHub 上跑过** |
+| `.venv/` | 仓库内虚拟环境（只装了 pytest）；**不入库**（`.gitignore`） |
+
+### D. 数据库
 
 | 文件 | 规模 | 状态 |
 |---|---|---|
@@ -59,7 +72,7 @@
 > （逐条放宽 CHECK 表达式，看它是否变红；现已覆盖 **31/31**）。同时记住边界：只跑过**那一个镜像**，
 > DDL 标题里的「PostgreSQL 14+」仍未证实，改过 `db/*.sql` 后那轮结论即作废。
 
-### D. 门禁与工具
+### E. 门禁与工具
 
 | 文件 | 作用 |
 |---|---|
@@ -71,6 +84,9 @@
 | `tools/verify_contract_refs.py` | 契约引用的类型/异常是否有定义（B7 欠账所在） |
 | `tools/verify_data_center.py` | 数据中心契约 §3.6.1 与 DDL 约束清单双向一致（C1~C7）+ 对 `db/data_center.smoke.sql` 的触发测试覆盖核对（C7） |
 | `tools/verify_iteration_plan.py` | 迭代计划里每个标「已交付」的迭代是否引用了一条**真实存在**的证据路径（防幽灵 ✅）+ DoD 四件套形状 |
+| `tools/verify_skeleton.py` | I0 骨架是否还在（pyproject / 包 / 测试文件 / CI 的 `run:` 接线），**不跑 pytest** |
+| `tools/ci_dryrun.py` | 在本地把 CI 的两条命令真跑一遍 + 两次红→绿往返（含清 `__pycache__`），写 `tools/ci-dryrun-report.txt`。**不是门禁**（需 .venv） |
+| `tools/ci-dryrun-report.txt` | CI 的**本地等价**证据 —— **快照**，只对报告内的解释器与 commit 成立 |
 | `tools/docx2md.py` | docx→md 转换器（**重跑会覆盖产物 A**） |
 | `tools/dump_docx_paras.py` | 定位 docx 段落，排查 md-fidelity 差异时的取证工具 |
 | `docker-compose.smoke.yml` | 一次性 PostgreSQL 容器（无 `ports:`、无命名卷 ⇒ `down -v` 必得空库） |
@@ -100,6 +116,7 @@ python tools/run_all_gates.py --selftest      # 证明这个 harness 自己会�
 | data-center-ddl | `python tools/verify_data_center.py` | 无参数 |
 | iteration-plan | `python tools/verify_iteration_plan.py` | 无参数（可选末尾跟一个文件路径，用于把守卫指向别的文件） |
 | core-contract-refs | `python tools/verify_contract_refs.py --extra=docs/智能量化交易平台-数据中心接口契约文档.md --extra=docs/智能量化交易平台-风控层接口契约文档.md` | **少一个 `--extra=` 就会把已定义的类型误报成缺失**，虚增基线、掩盖真实漂移 |
+| skeleton | `python tools/verify_skeleton.py` | 无参数（可选末尾跟一个目录，用于把守卫指向别的根）。**它不跑 pytest**，别把它当回归测试用 |
 
 每个门禁都支持 `--selftest`。
 
@@ -139,11 +156,15 @@ python tools/falsify_smoke.py            # 证伪那两份绿（逐条放宽约�
 
 ## 6. 当前状态（一句话版）
 
-**仓库**：已是 git 仓库（`main` 分支，2026-09-23 建立基线提交 `053f620`，35 个受控文件）。
-但**只有基线这一个提交** ⇒ 只有「退回基线」这一条退路。
-**I0 只完成了「可回滚」那一半**：「可运行」那一半（`pyproject.toml` + 包目录 + `pytest` + CI）仍未做。
+**仓库**：已是 git 仓库（`main` 分支，2026-09-23 建立基线提交 `053f620`，受控文件 42 个）。
+I0 之前只有基线一个提交；现在有 5 个提交（`053f620` → `99fa6ff` → `b19bac8` → `a059d3b` → I0 骨架），
+但仍是「整轮提交」粒度，没有细粒度还原点。
+**I0 的「可回滚」与「可运行」两半都已交付**：`.venv` + pytest（3 passed）、`pyproject.toml`、
+`quanauto/` 包、`tests/test_skeleton.py`、`.github/workflows/ci.yml`。
+但 CI **从未在 GitHub 上跑过**（仓库没有配置 git remote），本地等价证据是
+`tools/ci-dryrun-report.txt`（含两次红→绿往返）；它是快照，改完代码要 `python tools/ci_dryrun.py` 重跑。
 
-5 个门禁：4 个 tier-A 全绿；`core-contract-refs` 是 tier-B 欠账，基线 **39**（T1=2 / T2=19 / T3=18）。
+6 个门禁：5 个 tier-A 全绿；`core-contract-refs` 是 tier-B 欠账，基线 **39**（T1=2 / T2=19 / T3=18）。
 最大阻塞是 **B7**：主契约引用了 19 个类型和 18 个异常却从未定义，还有 2 个 python 块无法解析。
 **数据库侧已不再是「运行时未证实」**：2026-09-23 两份触发测试在容器 `postgres:17`（17.11）上
 分别是 **23/0** 与 **42/0** PASS，且这两份绿的**每一条命名 CHECK 都已被

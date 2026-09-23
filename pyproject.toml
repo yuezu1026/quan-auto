@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quan-auto"
+# ⚠️ 这个版本号与 quanauto/__init__.py 的 __version__ 必须一致 ——
+#    tests/test_skeleton.py 会核对两处，改一处不改另一处会红（两个版本来源 = 已知漂移源）。
+version = "0.0.0"
+description = "智能量化交易平台 —— Python 研究/回测线（当前处于 I0 骨架阶段，尚无可运行实现）"
+requires-python = ">=3.11"
+
+# 依赖**必须**是实现推着走：现在一行实现都没有，所以这里是空的。
+# 真实需要（pandas / akshare / baostock / pyarrow …）由 I1/I2 按需加入，
+# 并且每加一条都要说明是哪一个模块在用它。禁止预先堆一份「以后可能要用」的清单。
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.setuptools]
+packages = ["quanauto"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# 仓库是扁平布局、包未安装，靠这条把仓库根挂进 sys.path。
+pythonpath = ["."]
+addopts = ["-ra", "--strict-markers", "--strict-config"]
