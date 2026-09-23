@@ -86,12 +86,12 @@ I1 交付了第一条端到端竖切（CSV → MA 双均线 → 撮合 → 绩�
 | `tools/verify_data_center.py` | 数据中心契约 §3.6.1 与 DDL 约束清单双向一致（C1~C7）+ 对 `db/data_center.smoke.sql` 的触发测试覆盖核对（C7） |
 | `tools/verify_iteration_plan.py` | 迭代计划里每个标「已交付」的迭代是否引用了一条**真实存在**的证据路径（防幽灵 ✅）+ DoD 四件套形状 |
 | `tools/verify_skeleton.py` | I0 骨架是否还在（pyproject / 包 / 测试 / CI 的 `run:` 接线），**不跑 pytest**；另守 `CONTEXT.md` 三件事不许过期 —— 状态陈述（`IMPL-STATUS`）、写死的门禁计数（`GATE-COUNT`）、**地图里的路径必须真实存在**（`MAP-PATHS`）。⚠️ 它们只管结构，**看不见错字/乱码**：改完中文文案要回读核对 |
-| `tools/verify_backtest_reproducibility.py` | 回测可复现性：同种子两次跑 `deterministic` 段逐字节一致、换种子必须真的改变、样本非空、段结构合规（R1~R4） |
+| `tools/verify_backtest_reproducibility.py` | 回测可复现性：同种子两次跑 `deterministic` 段逐字节一致、换种子必须真的改变、样本非空、段结构合规、入库证据不可是过期快照（R1~R5）；**默认只读**，重录证据要显式 `--record` |
 | `tools/verify_contract_signature.py` | 契约签名与实现**双向**一致（S1~S7）+ 未登记成员 / 未实现缺口清单；机器可读投影是 `tools/contract-signature-manifest.json` |
 | `tools/contract-signature-manifest.json` | 契约签名的机器可读投影（`classes` / `non_normative_blocks` / `not_implemented` / `extras`） |
 | `tools/pytest_mutation_check.py` | 把实现逐处改坏，验证 `tests/test_backtest_slice.py` 真的会红（**不是门禁**：它验证的是测试，且慢） |
 | `tools/pytest-mutation-report.txt` | 上一条的逐变异证据 —— **快照**，改实现或改测试后作废 |
-| `.rounds/i1/` | I1 可复现性门禁的样本（同种子两份 + 换种子一份 + 自测一份） |
+| `.rounds/i1/` | I1 可复现性门禁的证据样本（同种子两份 + 换种子一份，共三份）—— 由 `--record` 显式重录，**跑门禁不会改它们** |
 | `tools/ci_dryrun.py` | 在本地把 CI 的两条命令真跑一遍 + 两次红→绿往返（含清 `__pycache__`），写 `tools/ci-dryrun-report.txt`。**不是门禁**（需 .venv） |
 | `tools/ci-dryrun-report.txt` | CI 的**本地等价**证据 —— **快照**，只对报告内的解释器与 commit 成立 |
 | `tools/docx2md.py` | docx→md 转换器（**重跑会覆盖产物 A**） |

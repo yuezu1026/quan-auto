@@ -54,11 +54,12 @@ what: 同种子两次回测的报告 deterministic 段逐字节相同，换种�
 argv: tools/verify_backtest_reproducibility.py
 ------------------------------------------------------------------------------
 repo: D:\project-quan\quan-auto
-detectors=4
+detectors=5
   - R1-SAME-SEED-IDENTICAL: 同种子两次跑，deterministic 段逐字节相同
   - R2-SEED-CHANGES-RESULT: 换种子必须真的改变 deterministic 段
   - R3-NON-VACUOUS: 样本非空：有成交、净值非常数（防空转假绿）
   - R4-DETERMINISTIC-KEYS: 段结构/键集/种子位置符合约定
+  - R5-EVIDENCE-CURRENT: 入库的证据样本与本次真跑的一致（过期快照判红，不静默刷新）
 [selftest] 触发测试：每个样本都要看见它该报的 FINDING
   OK   CLEAN-runtime-differs-not-compared codes=[]
   OK   CLEAN-different-seeds              codes=[]
@@ -71,7 +72,11 @@ detectors=4
   OK   MUT-seed-mismatch                  codes=['R4-DETERMINISTIC-KEYS']
   OK   MUT-cli-fails-on-missing-csv       codes=['R1-SAME-SEED-IDENTICAL']
   OK   CLEAN-real-cli-passes-shape        codes=[]
-samples=11
+  OK   CLEAN-evidence-current             codes=[]
+  OK   MUT-evidence-stale                 codes=['R5-EVIDENCE-CURRENT']
+  OK   MUT-evidence-missing               codes=['R5-EVIDENCE-CURRENT']
+  OK   GATE-evidence-dir-empty            codes=['R5-EVIDENCE-CURRENT']
+samples=15
 [real] 在真实仓库上跑（自测通过不代表真实产物没问题）
 issues=0
 verdict: PASS

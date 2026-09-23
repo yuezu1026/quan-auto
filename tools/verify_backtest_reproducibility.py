@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """I1 门禁（A 级）：同一条命令跑两次，`deterministic` 段必须逐字节相同。
 
-用法：`python tools/verify_backtest_reproducibility.py [repo_root]`
+用法：`python tools/verify_backtest_reproducibility.py [repo_root] [--record]`
 
 ## 为什么需要这个门禁
 
@@ -28,6 +28,21 @@
 每个样本先自断言「变异真的生效了」（例如 R2 样本必须确认两份报告确实不同），
 再断言报出的 FINDING 代码集合与预期**完全相等** —— 少了是漏检，多了是误报。
 
+## 为什么默认**不写**仓库（2026-09-23 改）
+
+改之前，这个门禁每次运行都会把 4 份报告写回 `.rounds/i1/`（3 份真跑样本 + 1 份自测
+探针）。而报告里 `runtime.duration_ms` 是墙钟耗时、**天生每次都不同**（通常 0，偶尔 1）
+⇒ 跑一次检查就可能把已入库的证据文件改掉一个字节。
+
+后果不是「多一个改动」，而是**信号失效**：`git status` 从此永远不干净，「我到底改没改
+东西」与「检查跑没跑过」两个问题都答不出来；一次无关的提交也会悄悄带上证据文件的
+字节变化（`7c5e0d3` 就是这样带上了一次）。
+
+现在：默认**只读**（报告写进临时目录，跑完删掉），并新增 R5 把「库里那份证据」与
+「本次真跑的结果」比一比 —— 过期快照判红，而不是被静默刷新。重新录制是一次**显式
+动作**：`--record`（`run_all_gates.py` 从不传它，且它只改「证据」，改不动 R1~R4 ——
+那四条只比本次跑出来的两份报告）。
+
 ## 边界 —— 这个门禁**不**证明什么
 
 * **不等于跨机器可复现**：只在本机、本解释器、本文件系统上跑过。
@@ -41,14 +56,17 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 
 DETECTORS = (
     ("R1-SAME-SEED-IDENTICAL", "同种子两次跑，deterministic 段逐字节相同"),
     ("R2-SEED-CHANGES-RESULT", "换种子必须真的改变 deterministic 段"),
     ("R3-NON-VACUOUS", "样本非空：有成交、净值非常数（防空转假绿）"),
     ("R4-DETERMINISTIC-KEYS", "段结构/键集/种子位置符合约定"),
+    ("R5-EVIDENCE-CURRENT", "入库的证据样本与本次真跑的一致（过期快照判红，不静默刷新）"),
 )
 
 SCHEMA = "quanauto.backtest-report/1"
@@ -70,6 +88,14 @@ MISSING_FIXTURE = "tests/fixtures/this-file-does-not-exist.csv"
 EVIDENCE_DIR = os.path.join(".rounds", "i1")
 SEED_A = 7
 SEED_B = 8
+# 「用哪个种子、写哪个文件名」只在这里写一遍：R1/R2 用本次跑出来的两份互比，
+# R5 用它们与**入库的那三份**比。文件名写错会让 R5 去读一个不存在的路径 ⇒ 判红，
+# 所以它既是配置也是判据的一部分。
+EVIDENCE_PLAN = (
+    ("a1", SEED_A, "report-seed7-a.json"),
+    ("a2", SEED_A, "report-seed7-b.json"),
+    ("b", SEED_B, "report-seed8.json"),
+)
 
 
 # ── 工具 ─────────────────────────────────────────────────────────────
@@ -251,28 +277,91 @@ def run_cli(root: str, csv_rel: str, seed: int, out_rel: str) -> tuple:
         return None, [("R1-SAME-SEED-IDENTICAL", "报告读不出来：%s (%s)" % (out_rel, exc))]
 
 
-def real_run(root: str) -> list:
+def _load_report(path: str) -> object:
+    """读一份入库的证据报告；读不出来返回 None（由 check_evidence 判红）。"""
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, ValueError):
+        return None
+
+
+def check_evidence(fresh: dict, committed: object, label: str) -> list:
+    """R5：入库的证据文件必须与本次真跑的结果一致 —— 只比 `deterministic` 段。
+
+    与 R1 的区别：R1 比「本次跑的两次」，这里比「本次跑的 vs 磁盘上那份」。
+    没有这一条，默认只读就会带来新问题：入库的证据可能在无人察觉时变成过期快照，
+    而它正是迭代计划 DoD 里按路径引用的那份文件（「快照过期」与「检查通过」会同时成立）。
+
+    `runtime` 段**故意不比** —— 与 R1 同一套理由：那一整段只该有墙钟耗时在变。
+    所以这一条永远不会因为「又跑了一次」而红，只会在内容真的变了时红。
+    """
+    if committed is None:
+        return [("R5-EVIDENCE-CURRENT",
+                 "%s: 证据文件不存在或读不出来 —— DoD 引用的证据路径成了空地址" % label)]
+    if not isinstance(committed, dict):
+        return [("R5-EVIDENCE-CURRENT", "%s: 证据文件不是 JSON 对象" % label)]
+    if canonical(committed.get("deterministic")) != canonical(fresh.get("deterministic")):
+        return [("R5-EVIDENCE-CURRENT",
+                 "%s: 入库证据与本次跑出来的 deterministic 段不同 —— 快照已过期"
+                 "（引擎改了、或 fixture 改了）。确认新结果无误后用 `--record` 重录并提交" % label)]
+    if canonical(committed.get("inputs")) != canonical(fresh.get("inputs")):
+        return [("R5-EVIDENCE-CURRENT", "%s: inputs 段与本次跑出来的不同" % label)]
+    return []
+
+
+def check_evidence_dir(root: str, reports: dict) -> list:
+    """按 EVIDENCE_PLAN 逐份比对入库证据；一个文件都没有时判红（防空转）。"""
+    findings: list = []
+    present = 0
+    for name, _seed, fname in EVIDENCE_PLAN:
+        path = os.path.join(root, EVIDENCE_DIR, fname)
+        if os.path.exists(path):
+            present += 1
+        findings.extend(check_evidence(reports[name], _load_report(path), "%s(%s)" % (name, fname)))
+    if not present:
+        findings.append(
+            ("R5-EVIDENCE-CURRENT",
+             "%s 下一个证据文件都没有 —— 证据路径全是空的，这条检查在空转；先 `--record` 录一次" % EVIDENCE_DIR)
+        )
+    return findings
+
+
+def real_run(root: str, record: bool = False) -> list:
     if not os.path.exists(os.path.join(root, FIXTURE)):
         # 提取为空必须判 FAIL：没有行情文件就没有可比对的样本，全绿是空转出来的。
         return [("R3-NON-VACUOUS", "行情 fixture 不存在：%s —— 没有样本就没有可复现性可言" % FIXTURE)]
-    os.makedirs(os.path.join(root, EVIDENCE_DIR), exist_ok=True)
-    # 两次同种子跑**故意写到不同文件**：这样「报告里有没有泄漏输出路径」也会被顺带测出来。
-    plan = (
-        ("a1", SEED_A, os.path.join(EVIDENCE_DIR, "report-seed7-a.json")),
-        ("a2", SEED_A, os.path.join(EVIDENCE_DIR, "report-seed7-b.json")),
-        ("b", SEED_B, os.path.join(EVIDENCE_DIR, "report-seed8.json")),
-    )
-    reports = {}
-    findings: list = []
-    for name, seed, out_rel in plan:
-        report, errs = run_cli(root, FIXTURE, seed, out_rel)
-        if report is None:
-            return errs
-        reports[name] = report
-        findings.extend(check_shape(report, "%s(seed=%d)" % (name, seed), expect_seed=seed))
-    findings.extend(check_identical(reports["a1"], reports["a2"]))
-    findings.extend(check_differs(reports["a1"], reports["b"]))
-    return findings
+    work = tempfile.mkdtemp(prefix="quanauto-repro-")
+    try:
+        # 两次同种子跑**故意写到不同文件**：这样「报告里有没有泄漏输出路径」也会被顺带测出来。
+        # 2026-09-23 起写进**临时目录**（见模块文档「为什么默认不写仓库」）。
+        reports = {}
+        findings: list = []
+        for name, seed, fname in EVIDENCE_PLAN:
+            report, errs = run_cli(root, FIXTURE, seed, os.path.join(work, fname))
+            if report is None:
+                return errs
+            reports[name] = report
+            findings.extend(check_shape(report, "%s(seed=%d)" % (name, seed), expect_seed=seed))
+        findings.extend(check_identical(reports["a1"], reports["a2"]))
+        findings.extend(check_differs(reports["a1"], reports["b"]))
+        if record:
+            # 显式录制。默认**不写**仓库：跑一次检查就改一次仓库的话，`git status` 的
+            # 干净与否就再也回答不了「我改过东西没有」。`run_all_gates.py` 从不传它。
+            out_dir = os.path.join(root, EVIDENCE_DIR)
+            os.makedirs(out_dir, exist_ok=True)
+            names = []
+            for _name, _seed, fname in EVIDENCE_PLAN:
+                shutil.copyfile(os.path.join(work, fname), os.path.join(out_dir, fname))
+                names.append(fname)
+            print("[record] 已写入 %s：%s" % (EVIDENCE_DIR, ", ".join(names)))
+            print("[record] 这是一次仓库改动，请检查 diff 后提交；"
+                  "本次 R5 不参与判定（本次就是录制动作），R1~R4 照常判定")
+        else:
+            findings.extend(check_evidence_dir(root, reports))
+        return findings
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
 
 
 # ── 触发测试样本 ───────────────────────────────────────────────────────
@@ -359,21 +448,81 @@ def selftest(root: str) -> int:
     ok &= expect("MUT-seed-mismatch", check_shape(a, "mismatch", expect_seed=SEED_B), ["R4-DETERMINISTIC-KEYS"])
 
     # 真 CLI：行情文件不存在必须非零退出并被拦下（不能静默跳过）
-    _, errs = run_cli(root, MISSING_FIXTURE, SEED_A, os.path.join(EVIDENCE_DIR, "report-should-not-exist.json"))
-    ok &= expect("MUT-cli-fails-on-missing-csv", errs, ["R1-SAME-SEED-IDENTICAL"])
-    # 真 CLI：正常输入同一份报告结构必须过关（0 报错）
-    report, errs = run_cli(root, FIXTURE, SEED_A, os.path.join(EVIDENCE_DIR, "report-selftest.json"))
-    if report is None:
-        print("  FAIL CLEAN-real-cli 起不来：%s" % errs)
-        ok = False
-    else:
-        ok &= expect("CLEAN-real-cli-passes-shape", errs + check_shape(report, "real", expect_seed=SEED_A), [])
+    # 探针一律写**临时目录**：写进 EVIDENCE_DIR 的话，「跑检查」就等于「改仓库」。
+    work = tempfile.mkdtemp(prefix="quanauto-repro-probe-")
+    try:
+        _, errs = run_cli(root, MISSING_FIXTURE, SEED_A, os.path.join(work, "report-should-not-exist.json"))
+        ok &= expect("MUT-cli-fails-on-missing-csv", errs, ["R1-SAME-SEED-IDENTICAL"])
+        # 真 CLI：正常输入同一份报告结构必须过关（0 报错）
+        report, errs = run_cli(root, FIXTURE, SEED_A, os.path.join(work, "report-probe.json"))
+        if report is None:
+            print("  FAIL CLEAN-real-cli 起不来：%s" % errs)
+            ok = False
+        else:
+            ok &= expect("CLEAN-real-cli-passes-shape", errs + check_shape(report, "real", expect_seed=SEED_A), [])
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+    # R5 的文件系统那一半：用合成报告造沙盒，不需要真跑 CLI。
+    eq_a = [100000.0, 101000.0, 99500.0]
+    eq_b = [100000.0, 101000.0, 98000.0]
+    fresh = {"a1": synthetic(SEED_A, eq_a), "a2": synthetic(SEED_A, eq_a), "b": synthetic(SEED_B, eq_b)}
+
+    def evidence_sandbox(files: dict) -> str:
+        """建一个只含 `.rounds/i1/<fname>` 的沙盒根目录，用来考 R5 的文件读取那一半。"""
+        made = tempfile.mkdtemp(prefix="quanauto-evidence-")
+        os.makedirs(os.path.join(made, EVIDENCE_DIR), exist_ok=True)
+        for fname, payload in files.items():
+            with open(os.path.join(made, EVIDENCE_DIR, fname), "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, ensure_ascii=False)
+        return made
+
+    def committed_from_fresh(runtime: dict = None) -> dict:
+        out = {}
+        for name, _seed, fname in EVIDENCE_PLAN:
+            payload = dict(fresh[name])
+            if runtime is not None:
+                payload["runtime"] = runtime
+            out[fname] = payload
+        return out
+
+    # 控制组：库里那份与本次真跑**逐键相同、只有 runtime 不同** ⇒ 必须安静。
+    # 这就是「一条测试配一条控制变异」：变异打在这条判据故意不看的地方。
+    made = evidence_sandbox(committed_from_fresh(runtime={"duration_ms": 999}))
+    try:
+        ok &= expect("CLEAN-evidence-current", check_evidence_dir(made, fresh), [])
+    finally:
+        shutil.rmtree(made, ignore_errors=True)
+    # 变异：入库的那份是过期快照（只有 seed8 那份的净值变了）
+    stale = committed_from_fresh()
+    stale[EVIDENCE_PLAN[2][2]] = synthetic(SEED_B, [100000.0, 101000.0, 99999.0])
+    assert canonical(stale[EVIDENCE_PLAN[2][2]]["deterministic"]) != canonical(fresh["b"]["deterministic"]), \
+        "样本构造失效：过期快照的变异没生效"
+    made = evidence_sandbox(stale)
+    try:
+        ok &= expect("MUT-evidence-stale", check_evidence_dir(made, fresh), ["R5-EVIDENCE-CURRENT"])
+    finally:
+        shutil.rmtree(made, ignore_errors=True)
+    # 变异：证据文件缺失（DoD 引用的路径成了空地址）
+    made = evidence_sandbox(committed_from_fresh())
+    os.remove(os.path.join(made, EVIDENCE_DIR, EVIDENCE_PLAN[2][2]))
+    assert not os.path.exists(os.path.join(made, EVIDENCE_DIR, EVIDENCE_PLAN[2][2])), "样本构造失效：文件没删掉"
+    try:
+        ok &= expect("MUT-evidence-missing", check_evidence_dir(made, fresh), ["R5-EVIDENCE-CURRENT"])
+    finally:
+        shutil.rmtree(made, ignore_errors=True)
+    # 空转守卫：目录在、但一个证据文件都没有 ⇒ 拒绝通过
+    made = evidence_sandbox({})
+    try:
+        ok &= expect("GATE-evidence-dir-empty", check_evidence_dir(made, fresh), ["R5-EVIDENCE-CURRENT"])
+    finally:
+        shutil.rmtree(made, ignore_errors=True)
     return 0 if ok else 2
 
 
 # ── 主流程 ────────────────────────────────────────────────────────────
-def verify(root: str) -> list:
-    return real_run(root)
+def verify(root: str, record: bool = False) -> list:
+    return real_run(root, record=record)
 
 
 def main(argv: list) -> int:
@@ -382,7 +531,14 @@ def main(argv: list) -> int:
     positional = [a for a in argv[1:] if not a.startswith("--")]
     default_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     root = os.path.abspath(positional[0]) if positional else default_root
+    record = "--record" in argv
+    if record and "--selftest" in argv:
+        # 一个会改仓库、一个必须是只读的触发测试 —— 同时用就没有明确的语义。
+        print("usage: --record 与 --selftest 不能同时用")
+        return 2
     print("repo: %s" % root)
+    if record:
+        print("mode: RECORD（会把本次真跑的报告写回 %s —— 这是一次仓库改动）" % EVIDENCE_DIR)
     print("detectors=%d" % len(DETECTORS))
     for code, what in DETECTORS:
         print("  - %s: %s" % (code, what))
@@ -400,7 +556,7 @@ def main(argv: list) -> int:
         return 2
     print("samples=%d" % len(SAMPLES_SEEN))
     print("[real] 在真实仓库上跑（自测通过不代表真实产物没问题）")
-    findings = verify(root)
+    findings = verify(root, record=record)
     for code, message in findings:
         print("FINDING [%s] %s" % (code, message))
     print("issues=%d" % len(findings))
