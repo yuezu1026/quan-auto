@@ -105,7 +105,12 @@ DATE_RE = re.compile(r'\d{4}-\d{2}-\d{2}')
 # 文档判红十几次的探测器，最后一定会被人用「放宽」的方式关掉。
 KNOWN_EXTS = ('.py', '.md', '.json', '.toml', '.yml', '.yaml', '.sql', '.txt',
               '.csv', '.docx', '.cfg', '.ini', '.proto', '.html')
+# 遍历时跳过的目录 —— 它们都是**本机 / 工具产物**，不是仓库内容（`.gitignore` 忽略，
+# 或由 pytest / npm 随时生成）。这一份清单同时被两处用，成员故意完全相同：
+#   - `_repo_basenames`：遍历时不看它们（既慢，又会把「同名文件恰好存在」变成巧合）；
+#   - `_classify_ref`：地图提到它们**不算仓库地址**（见 LOCAL_ONLY_DIRS）。
 SKIP_WALK_DIRS = frozenset(('.git', '.venv', '__pycache__', '.pytest_cache', 'node_modules'))
+LOCAL_ONLY_DIRS = SKIP_WALK_DIRS
 BACKTICK_RE = re.compile(r'`([^`\n]+)`')
 
 
@@ -374,13 +379,20 @@ def _classify_ref(tok):
     前导点被当作隐藏文件名，于是**纯扩展名**（`| .md（产物，勿原地改） | .docx（源） |`
     这种表头）自动落进 skip。用 `endswith` 会把两个表头当成两条幽灵路径（实测踩到）。
     代价是隐藏文件（`.gitignore`）也不在覆盖内，这是明知的选择。
+
+    首段落在 `LOCAL_ONLY_DIRS` 时同样 skip：地图里的 `.venv/` 是「在你机器的哪里」，
+    不是「仓库里的地址」—— CONTEXT.md 自己就写着它**不入库**，本探测器的遍历也把它
+    排除在外。要求它必须在仓库里，等于同一个探测器同时断言「不是仓库内容」与
+    「必须在仓库里」。2026-09-24 首次真跑 GitHub CI 时正是 `.venv/` 把 skeleton 判红：
+    本机绿、克隆红 —— **判据依赖环境就是判据的缺陷**。
+    豁免范围只能是这一份本机产物清单（样本 `MUT-map-ghost-slash` 守着它没被放宽）。
     """
     if not tok or ' ' in tok or '\t' in tok or tok.startswith('-'):
         return 'skip'
     if any(c in tok for c in '*<{'):
         return 'glob'
     if '/' in tok:
-        return 'slash'
+        return 'skip' if tok.split('/')[0] in LOCAL_ONLY_DIRS else 'slash'
     return 'bare' if os.path.splitext(tok)[1].lower() in KNOWN_EXTS else 'skip'
 
 
@@ -631,6 +643,16 @@ def selftest():
         expect('CLEAN-map-paths-ok',
                _sandbox(tmp, context_md='表头 `.md` / `.docx` 不是路径；见 `pyproject.toml`、'
                                         '`quanauto/*.py` 与 `quanauto/__init__.py`。\n'),
+               ())
+        # 15f) 干净样本：地图提到**本机产物**（`.venv/`）不算幽灵路径。
+        #      ⚠️ 这条样本是 2026-09-24 首次真跑 GitHub CI 抓到的：本机有 `.venv/`，
+        #      克隆里没有 ⇒ 同一个 commit 在同一份判据下本机绿、CI 红。判据依赖环境
+        #      就是判据的缺陷（CONTEXT.md 自己写着 `.venv/` **不入库**，本探测器的
+        #      SKIP_WALK_DIRS 也把它排除在遍历外 —— 两处都说「不是仓库内容」，
+        #      只有存在性那一支要求它在仓库里，是自相矛盾）。
+        expect('CLEAN-map-local-machinery',
+               _sandbox(tmp, context_md='本机虚拟环境在 `.venv/`（不入库）；'
+                                        '依赖清单见 `pyproject.toml`。\n'),
                ())
         # 16) 「一行实现都没有」是同族里第 6 种写法 -> 措辞表要收得住变体
         expect('MUT-impl-status-no-line-impl',
