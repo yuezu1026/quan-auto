@@ -41,6 +41,8 @@
   PowerShell `>` 重定向写的是 **UTF-16LE**，不是 UTF-8。
 - **`tools/` 下只用标准库**，不要引入第三方依赖。
 - **本仓库是 git 仓库**（`main` 分支，2026-09-23 建立基线提交 `053f620`，此后一次迭代一个提交），
-  但**没有配置 git remote** ⇒ 推不上去，`.github/workflows/ci.yml` **从未在 GitHub 上真实运行过**。
-  CI 的本地等价证据是 `tools/ci-dryrun-report.txt`（快照，改完代码要 `python tools/ci_dryrun.py` 重跑）。
+  2026-09-24 起已推上 GitHub（公开仓库，remote `origin`）⇒ `.github/workflows/ci.yml` **真的会跑**。
+  首次真跑当场判红：`skeleton` 门禁抓到 `CONTEXT.md` 指向的 `.venv/` 在克隆里不存在（本机存在）
+  ⇒ **判据依赖环境就是判据的缺陷**，已修。本机口径的等价证据仍是 `tools/ci-dryrun-report.txt`
+  （快照，改完代码要 `python tools/ci_dryrun.py` 重跑），两份证据不能互相替代。
   改文件前仍要想清楚。

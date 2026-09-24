@@ -7,11 +7,11 @@
 #   pytest        收集到 0 个测试 -> 退出码 5（非 0）
 #   run_all_gates 全部门禁 PASS 时退出码 0；门禁失败 = 1；**harness 自身自测失败 = 2**
 #
-# ⚠️ 本仓库**没有配置 git remote**（`git remote -v` 为空），所以这份 workflow
-#    目前**从未在 GitHub 上真实运行过**。不得被读成「CI 已跑通」。
-#    在它有远端并能真实红一次之前，I0「触发测试」那一格只能用本地等价往返记录
-#    （`python tools/ci_dryrun.py`，证据 `tools/ci-dryrun-report.txt`）来支撑，
-#    且必须写明「本地等价」而不是「CI」。
+# ⚠️ 2026-09-24 起这份 workflow **真的在 GitHub 上跑**（remote `origin`，公开仓库）。
+#    首次真跑就在 `skeleton` 门禁上判红：本机有 `.venv/`、克隆里没有，同一个 commit
+#    两边结论不同 ⇒ 判据依赖环境，已修（`verify_skeleton._classify_ref`）。
+#    「跑过」不等于「跑通」，结论一律以那次运行的输出为准，别拿本注释当证据；
+#    本机口径的等价证据仍是 `python tools/ci_dryrun.py`（`tools/ci-dryrun-report.txt`）。
 
 name: ci
 

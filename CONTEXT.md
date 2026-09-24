@@ -27,7 +27,7 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 | C2 | `docs/` 下 3 个 `.md` 由 `.docx` 转换生成，**重新转换会覆盖** | 只能在其**之后追加**，禁止原地改已有段落。原地改 = 内容丢失 + md-fidelity 门禁失败。**追加的内容同样会被重新转换抹掉**，所以每个追加块（模块4 的「以契约为准」注、附录A）都登记在 `verify_md_coverage.py` 的 `ADDENDA` 清单里，被抹掉即 FAIL。⚠️ ADDENDA **只对「有 `.docx` 对应物」的文件成立**：`docs/智能量化交易平台-数据中心接口契约文档.md` 是**手写契约**（`docs/` 下没有同名 `.docx`），可以原地编辑，它的附录 A 也**不该**登记进去 —— 登记上去只会变成一条永远不会被检查的死条目 |
 | C3 | 控制台是 **cp936(GBK)** | stdout 出现 GBK 之外的字符（如 `↔`）会让 Python 抛 `UnicodeEncodeError` 并丢掉整段输出；PowerShell `>` 写的是 **UTF-16LE** 不是 UTF-8；含中文的 argv 会被破坏 |
 | C4 | `tools/` 下**只用标准库** | 不要引入任何第三方依赖 |
-| C5 | ~~本仓库不是 git 仓库~~ **已修完（2026-09-23）**：是 git 仓库（`main`，基线提交 `053f620`，一次迭代一个提交） | 但**没有配置 git remote** ⇒ 推不上去，`.github/workflows/ci.yml` **从未在 GitHub 上真实运行过**；CI 的本地等价证据是 `tools/ci-dryrun-report.txt`（快照，改完代码要重跑） |
+| C5 | ~~本仓库不是 git 仓库~~ **已修完（2026-09-23）**：是 git 仓库（`main`，基线提交 `053f620`，一次迭代一个提交） | ~~没有配置 git remote~~ **也已修完（2026-09-24）**：remote `origin` 已接（公开仓库 yuezu1026/quan-auto），`main` 已推送 ⇒ `.github/workflows/ci.yml` **真的在 GitHub 上跑**。首次真跑就在 `skeleton` 门禁上判红：本机有 `.venv/`、克隆里没有 ⇒ 判据依赖环境，已修。CI 的本地等价证据仍是 `tools/ci-dryrun-report.txt`（快照，改完代码要重跑），两者**不能互相替代** |
 
 ## 3. 仓库地图
 
@@ -61,7 +61,7 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 | `tests/test_data_center_pit.py` | I2 S1 的 PIT 回归测试 18 条：预取未来数据必须抛 `FutureDataAccessError`、窗口越界必须抛而**不是**裁剪、回测会话下 `QFQ`/`BFILL` 必须被拒。含 I2 DoD 点名的那条**触发测试**（让 store 无视窗口，确认取数真的被拒）。另有一条**故意断言已知缺口**的用例，`S3` 落地后要**删掉它**而不是改期望值 |
 | `tests/test_data_center_adapter.py` | I2 S2 的适配器回归测试 32 条：源列名不许透出下游、映射后必须是标准 schema、手→股与百分号两处换算、裸代码/指数后缀/`report_type` 越界必须抛。它测的是映射**机制**，不是映射**内容**（未联过网，见 DC 契约附录 B10） |
 | `tests/fixtures/sample_prices.csv` | 回归测试与可复现性门禁共用的小样本行情 |
-| `.github/workflows/ci.yml` | 只两条 `run:`（`pytest -q` 与 `run_all_gates.py`），**禁止 `|| true` 吞退出码**；因无 git remote，**从未在 GitHub 上跑过** |
+| `.github/workflows/ci.yml` | 只两条 `run:`（`pytest -q` 与 `run_all_gates.py`），**禁止 `|| true` 吞退出码**；2026-09-24 起已在 GitHub 上真跑（`origin` 公开）—— 首次真跑抓到的环境依赖判据已修 |
 | `.venv/` | 仓库内虚拟环境（只装了 pytest）；**不入库**（`.gitignore`） |
 
 ### D. 数据库
@@ -186,8 +186,9 @@ python tools/falsify_smoke.py            # 证伪那两份绿（逐条放宽约�
 **I2 仍远未完成**：S1 交付 PIT 边界层、S2 交付采集侧适配器；**PostgreSQL 写入与回测改读真实日线都还没写**，
 复权因子也仍恒为 1.0（已知缺口，DC 契约附录 A 记着、附录 B 复述并给出关闭条件）——
 `docs/迭代计划.md` 里 I2 的「产物」行留空是**如实**，不是漏填。
-但 CI **从未在 GitHub 上跑过**（仓库没有配置 git remote），本地等价证据是
-`tools/ci-dryrun-report.txt`（含两次红→绿往返）；它是快照，改完代码要 `python tools/ci_dryrun.py` 重跑。
+CI 自 2026-09-24 起**在 GitHub 上真跑**（`origin` 公开，`main` 已推）；本地等价证据
+`tools/ci-dryrun-report.txt`（含两次红→绿往返）给的是本机解释器的口径，改完代码要
+`python tools/ci_dryrun.py` 重跑 —— 两份证据**不能互相替代**。
 
 门禁数量一律**现取**（`python tools/run_all_gates.py --list`），不在这里写死：
 tier-A 全绿；`core-contract-refs` 是 tier-B 欠账，基线 **39**（T1=2 / T2=19 / T3=18）。
