@@ -54,7 +54,7 @@ GATE iteration-plan (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 迭代计划里每个标「已交付」的迭代都引用了一条真实存在的证据路径
 argv: tools/verify_iteration_plan.py
 ------------------------------------------------------------------------------
-CRLF-normalised: plan=23521 bytes (迭代计划.md)
+CRLF-normalised: plan=24004 bytes (迭代计划.md)
 extracted: iterations=5 delivered=2 dod_sections=5
 verdict: PASS (0 issue(s))
 NOTE: this gate checks the plan is internally well-formed and that no completion claim dangles. It cannot judge whether an iteration was actually delivered -- someone still has to open the cited evidence file.
