@@ -24,17 +24,25 @@ I0 §四 的「触发测试」一行要求一次真实的红→绿往返记录�
 红→绿往返怎么做才不是自欺
 --------------------------
 「跑一次绿」证明不了这套命令会红。所以这里做一次**真实往返**：
-  1. 故意在测试里插一句必然失败的自断言（通过替换一个 UTF-8 字符，见下）；
-  2. 断言替换**确实发生了**（`applied=False` 直接 exit 2）—— 变异没生效时「全绿」
-     是在**没改过的文件**上得出的结论，本仓库踩过这个坑；
-  3. 跑 pytest，要求退出码 != 0（红）；
-  4. 还原文件，比对字节与原始内容完全一致；
-  5. 再跑，要求退出码 == 0（绿）。
+  1. 按**字节**替换靶文件里的一处内容（靶子见 `ROUNDTRIPS`），行尾与 BOM 原样不动；
+  2. 断言替换**确实发生了**（否则 exit 2）—— 变异没生效时「全绿」是在**没改过的
+     文件**上得出的结论，本仓库踩过这个坑；
+  3. 再断言**解释器读回的值真的变了**（`probe` 一栏）。字节变了而解释器读不到新值，
+     说明变异没到达被测模块（陈旧字节码 / import 解析到别的副本 / cwd 不对）。
+     2026-09-24 实测到一次这种**假红**：变异已落盘，pytest 仍报 75 passed。只比字节
+     的话，那一次会被静静记成「绿」，所以读回现在是硬判据；
+  4. 跑目标命令，要求退出码 != 0（红）；
+  5. 还原，并断言与原始内容**逐字节**一致、且解释器读回值回到基线；
+  6. 再跑，要求退出码 == 0（绿）。
+
+`--selftest` 是对第 2/3 步的**触发测试**：真变异（期望放行）、字节变了但解释器读回
+不变（期望抓住 —— 就是上面那次假红）、靶字符串失配（期望 exit 2）三个样本。
 
 Usage
 -----
     python tools/ci_dryrun.py                # 跑全部（含红→绿往返）
     python tools/ci_dryrun.py --no-roundtrip # 只跑绿，跳过往返（快）
+    python tools/ci_dryrun.py --selftest     # 只跑触发测试（不碰仓库文件）
 
 Exit codes: 0 = 全部符合预期, 1 = 有一步不符预期, 2 = 工具自身坏了（如变异没应用）
 """
@@ -45,6 +53,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -63,6 +72,8 @@ ROUNDTRIPS = [
         'frm': '__version__ = "0.1.0"',
         'to': '__version__ = "0.1.1"',
         'cmd': 'pytest',
+        # 解释器层面的读回：只有它变了，才说明变异真的到达了 pytest 看到的那个模块。
+        'probe': 'import quanauto; print(quanauto.__version__)',
         'what': '把包版本改成 0.1.1（与 pyproject 不一致）',
     },
     {
@@ -121,17 +132,90 @@ def purge_pycache(root):
     return removed
 
 
-def read_text(path):
-    try:
-        with open(path, encoding='utf-8-sig') as fh:
-            return fh.read().replace('\r\n', '\n')
-    except OSError:
-        return None
+def read_bytes(path):
+    with open(path, 'rb') as fh:
+        return fh.read()
 
 
-def write_text(path, text):
-    with open(path, 'w', encoding='utf-8', newline='\n') as fh:
-        fh.write(text)
+def write_bytes(path, data):
+    with open(path, 'wb') as fh:
+        fh.write(data)
+
+
+def probe_value(py, snippet, cwd):
+    """跑一次性的 `python -c`，返回 (rc, 读回值)。
+
+    刻意连退出码一起返回：探针自己崩了（ImportError 等）时读回值不可信，不能拿
+    「崩之前那点输出」去跟基线比 —— 那会变成一个更隐蔽的假绿。
+    """
+    rc, out, err = run([py, '-c', snippet], cwd=cwd)
+    if rc == 0:
+        return rc, out.strip()
+    return rc, (tail(err, 1)[0] if err.strip() else '(no stderr)')
+
+
+# apply_mutation 的失败原因 -> 给人看的一句话。键就是返回的 status。
+MUTATION_TROUBLE = {
+    'missing': lambda i: '找不了 %s' % i['rel'],
+    'bad-anchor': lambda i: ('靶字符串在 %s 里出现 %d 次（需要恰好 1 次）；'
+                             '替换会静默 no-op 或打错地方' % (i['rel'], i['count'])),
+    'noop': lambda i: '替换没产生任何变化（变异未应用）',
+    'write-mismatch': lambda i: '变异写入后读回不一致',
+    'probe-broken': lambda i: '探针自身就没跑成功（rc != 0），读回值不可信',
+    'not-reached': lambda i: ('解释器读回的值在变异前后一模一样（%s）—— 变异没到达'
+                              '解释器：陈旧字节码 / import 解析到别的副本 / cwd 不对。'
+                              '此时「全绿」是在**没改过的模块**上得出的' % i['base']),
+}
+
+
+def apply_mutation(spec, py, say, root=None):
+    """把变异写进靶文件，并在解释器层面读回。返回 (status, info)。
+
+    'ok' 时**文件是变异后的、没有还原** —— 红跑必须发生在变异落盘之后，还原是调用方
+    的事（`roundtrip` 在 finally 里做）。其余状态一律已经把文件还原干净。
+    """
+    root = ROOT if root is None else root
+    target = os.path.join(root, spec['path'])
+    info = {'path': target, 'rel': spec['path'].replace('\\', '/'), 'raw': None,
+            'mutated': None, 'base': None, 'mut': None, 'count': 0}
+    if not os.path.isfile(target):
+        return 'missing', info
+
+    raw = read_bytes(target)
+    info['raw'] = raw
+    # 按**字节**替换：先 decode 成 str 再写回会把 CRLF 洗成 LF、把 BOM 弄丢，
+    # 于是「还原」那一步实际上是在改行尾，报告却还写着「字节一致」。
+    frm = spec['frm'].encode('utf-8')
+    to = spec['to'].encode('utf-8')
+    info['count'] = raw.count(frm)
+    if info['count'] != 1:
+        return 'bad-anchor', info
+
+    mutated = raw.replace(frm, to)
+    info['mutated'] = mutated
+    if mutated == raw:
+        return 'noop', info
+
+    snippet = spec.get('probe')
+    if snippet:
+        rc, info['base'] = probe_value(py, snippet, root)
+        if rc != 0:
+            return 'probe-broken', info
+
+    write_bytes(target, mutated)
+    if read_bytes(target) != mutated:
+        write_bytes(target, raw)
+        return 'write-mismatch', info
+    purge_pycache(root)
+
+    if snippet:
+        rc, info['mut'] = probe_value(py, snippet, root)
+        if rc == 0 and info['mut'] != info['base']:
+            return 'ok', info
+        write_bytes(target, raw)
+        purge_pycache(root)
+        return ('probe-broken' if rc != 0 else 'not-reached'), info
+    return 'ok', info
 
 
 def tail(text, n=12):
@@ -139,63 +223,64 @@ def tail(text, n=12):
     return lines[-n:]
 
 
-def roundtrip(spec, py, say, failures):
+def roundtrip(spec, py, say, failures, root=None):
     """对 spec 描述的一处变异做一次红→绿往返；任一步不符预期就记入 failures。
 
-    返回 2 表示工具自身坏了（靶子不在、变异未应用、还原不回去），调用方必须直接停。
+    返回 2 表示工具自身坏了（靶子不在、变异未应用、变异没到达解释器、还原不回去），
+    调用方必须直接停 —— 这时候「绿」不构成任何证据。
     """
-    target = os.path.join(ROOT, spec['path'])
-    rel = spec['path'].replace('\\', '/')
-    cmd = [py, '-m', 'pytest', '-q'] if spec['cmd'] == 'pytest' else \
-        [py, '-X', 'utf8', os.path.join('tools', 'verify_skeleton.py')]
-    label = 'pytest' if spec['cmd'] == 'pytest' else 'verify_skeleton'
+    root = ROOT if root is None else root
+    if spec.get('cmd') == 'raw':
+        cmd = [py] + list(spec['argv'])
+        label = spec.get('label', 'raw')
+    elif spec['cmd'] == 'pytest':
+        cmd = [py, '-m', 'pytest', '-q']
+        label = 'pytest'
+    else:
+        cmd = [py, '-X', 'utf8', os.path.join('tools', 'verify_skeleton.py')]
+        label = 'verify_skeleton'
 
     say('### %s -- %s' % (spec['tag'], spec['what']))
-    say('  靶子: %s  %r -> %r' % (rel, spec['frm'], spec['to']))
-    before = read_text(target)
-    if before is None:
-        say('exit: 2 -- 找不了 %s' % rel)
-        return 2
-    if before.count(spec['frm']) != 1:
-        say('exit: 2 -- 靶字符串在 %s 里出现 %d 次（需要恰好 1 次）；'
-            '替换会静默 no-op 或打错地方' % (rel, before.count(spec['frm'])))
-        return 2
+    say('  靶子: %s  %r -> %r'
+        % (spec['path'].replace('\\', '/'), spec['frm'], spec['to']))
 
-    after = before.replace(spec['frm'], spec['to'])
-    # 🔴 自断言：变异必须真的改了文件，否则「红/绿」都是在**没改过的文件**上得出的
-    if after == before:
-        say('exit: 2 -- 替换没产生任何变化（变异未应用）')
+    status, info = apply_mutation(spec, py, say, root)
+    if status != 'ok':
+        say('exit: 2 -- %s' % MUTATION_TROUBLE[status](info))
         return 2
-    write_text(target, after)
-    if read_text(target) != after:
-        write_text(target, before)
-        say('exit: 2 -- 变异写入后读回不一致')
-        return 2
+    rel = info['rel']
     say('  applied: True  (字节已变)')
+    if info['base'] is not None:
+        say('  解释器读回: 变异前 %s -> 变异后 %s  （一样就说明变异没到达解释器）'
+            % (info['base'], info['mut']))
 
-    killed = purge_pycache(ROOT)
-    say('  清缓存: 删掉 %d 个 __pycache__（否则同秒写回会让 Python 继续用旧字节码）' % killed)
     try:
-        rc_red, out_red, err_red = run(cmd)
+        rc_red, out_red, err_red = run(cmd, cwd=root)
     finally:
-        write_text(target, before)
-        purge_pycache(ROOT)
-    restored = read_text(target) == before
+        write_bytes(info['path'], info['raw'])
+        purge_pycache(root)
+    restored = read_bytes(info['path']) == info['raw']
     say('  红: %s exit=%d' % (label, rc_red))
     for ln in tail(out_red + err_red, 3):
         say('    | ' + ln)
-    say('  还原: %s' % ('字节与原始内容一致' if restored else '不一致！'))
+    say('  还原: %s' % ('与原始字节逐字节一致' if restored else '不一致！'))
 
     if not restored:
         failures.append('%s: %s 还原不回去，仓库已被改脏' % (spec['tag'], rel))
         return 0
+    if info['base'] is not None:
+        rc_probe, rest = probe_value(py, spec['probe'], root)
+        say('  解释器读回: 还原后 %s' % rest)
+        if rc_probe != 0 or rest != info['base']:
+            failures.append('%s: 还原后解释器读到的仍是变异值（%s，基线 %s）—— '
+                            '接下来的绿不作数' % (spec['tag'], rest, info['base']))
     if rc_red == 0:
         failures.append('%s: %s 在该变异下仍然退出 0 —— 这一步不会红，绿没有意义'
                         % (spec['tag'], label))
     elif rc_red == 2:
         failures.append('%s: %s 退出 2（自检/收集错误），红得不干净' % (spec['tag'], label))
 
-    rc_green, out_green, err_green = run(cmd)
+    rc_green, out_green, err_green = run(cmd, cwd=root)
     say('  绿: %s exit=%d' % (label, rc_green))
     for ln in tail(out_green + err_green, 3):
         say('    | ' + ln)
@@ -205,7 +290,62 @@ def roundtrip(spec, py, say, failures):
     return 0
 
 
+# --selftest 的样本：(tag, probe, 期望 roundtrip 返回码)。
+# 第二个样本是**故意做绝**的：变异确实写进了文件（字节已变），但探针读的是个常量，
+# 于是「解释器读回不变」—— 如果没这道判据，它会被静静记成一次「成功的红→绿」。
+SELFTEST_CASES = (
+    ('A-真变异', 'import scratchpkg; print(scratchpkg.VALUE)', 0),
+    ('B-字节变了但解释器读回不变', 'print("CONST")', 2),
+    ('C-靶字符串失配', 'import scratchpkg; print(scratchpkg.VALUE)', 2),
+)
+
+
+def selftest(py):
+    """新判据的**触发测试**：不碰仓库文件，靶子建在临时目录里。
+
+    `cmd='raw'` 把 pytest 换成一个假的检查器 —— 真正的往返驱动（`roundtrip` / 
+    `apply_mutation`）一行不改地跑，所以这里测的是调用点，而不是另一个纯函数。
+    样本三类：真变异（期望 0 push）、假绿（字节变了、解释器读回不变，期望挡住）、
+    靶字符串失配（期望 exit 2）。
+    """
+    scratch = tempfile.mkdtemp(prefix='ci-dryrun-selftest-')
+    results = []
+    try:
+        pkg = os.path.join(scratch, 'scratchpkg')
+        os.makedirs(pkg)
+        target = os.path.join(pkg, '__init__.py')
+        write_bytes(target, b'VALUE = "AAA"\n')
+        raw0 = read_bytes(target)
+        # 顶替 pytest 的检查器：变异后（BBB）必须红，还原后（AAA）必须绿。
+        argv = ['-c', 'import sys, scratchpkg;'
+                      'sys.exit(0 if scratchpkg.VALUE == "AAA" else 1)']
+        rel = os.path.join('scratchpkg', '__init__.py')
+
+        for tag, probe, want_rc in SELFTEST_CASES:
+            spec = {'tag': tag, 'path': rel, 'cmd': 'raw', 'argv': argv,
+                    'label': 'fake-checker', 'what': tag, 'probe': probe,
+                    'frm': 'VALUE = "AAA"' if not tag.startswith('C') else 'VALUE = "ZZZ"',
+                    'to': 'VALUE = "BBB"'}
+            fails = []
+            rc = roundtrip(spec, py, lambda *a, **k: None, fails, root=scratch)
+            same = read_bytes(target) == raw0
+            ok = (rc == want_rc) and same and not fails
+            results.append(ok)
+            print('  [%s] %-24s rc=%d (期望 %d) 逐字节已还原=%s fails=%d'
+                  % ('OK ' if ok else 'BAD', tag, rc, want_rc, same, len(fails)))
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+    good = sum(1 for r in results if r)
+    print('verdict: %s (%d/%d sample(s))'
+          % ('PASS' if good == len(results) else 'FAIL', good, len(results)))
+    return 0 if good == len(results) else 2
+
+
 def main(argv):
+    if '--selftest' in argv:
+        print('# ci-dryrun --selftest（不碰仓库文件，只跑临时目录里的触发测试）')
+        return selftest(find_python()[0])
     no_roundtrip = '--no-roundtrip' in argv
     py, py_label = find_python()
     pytest_cmd = [py, '-m', 'pytest', '-q']
