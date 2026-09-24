@@ -44,6 +44,7 @@ from quanauto.pgstore import (
     PgBarIngestor,
     PgBarStore,
     PsycopgConnection,
+    SQL_SELECT_EXISTING,
 )
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -199,7 +200,9 @@ def test_select_symbols_is_distinct_and_versioned():
 
 # ── 写侧：SQL 形状 ───────────────────────────────────────────────────────
 def test_upsert_sql_follows_contract_rule_6():
-    conn = FakeConn(script=[[]])
+    # 脚本要写全：`RETURNING` 得给一行才算「新插入」。空返回值在本实现里是「并发写者抢先」
+    # 的信号（约定 6 第 2 步），不是「写成功」—— 省略它，形状用例会顺带变成分支用例。
+    conn = FakeConn(script=[[], [{"symbol": SYMBOL}]])
     PgBarIngestor(conn).upsert_daily_bars([_bar()])
     ins = _insert_calls(conn)
     assert len(ins) == 1, [c[0] for c in conn.calls]
@@ -211,7 +214,7 @@ def test_upsert_sql_follows_contract_rule_6():
 
 
 def test_upsert_binds_values_in_column_list_order():
-    conn = FakeConn(script=[[]])
+    conn = FakeConn(script=[[], [{"symbol": SYMBOL}]])
     PgBarIngestor(conn).upsert_daily_bars([_bar()])
     sql, params = _insert_calls(conn)[0]
     assert params == (
@@ -344,6 +347,23 @@ def test_our_own_errors_are_not_double_wrapped():
         PgBarIngestor(conn).upsert_daily_bars([_bar(close="10.5")])
 
 
+def test_already_classified_error_from_a_lower_layer_passes_through():
+    """下层已经用我们的异常类报过的错，不许在出口再包一层。
+
+    这条是**变异测试发现的缺口**：`_raise_if_divergent` 是在 `_run` **外面**抛的，
+    所以上面那条用例根本没经过 `_run` 的 `except QuanAutoError: raise` 守卫 ——
+    把守卫删掉套件依然 28 passed（实测）。这条用例便是那个变异（`S8-our-own-errors-get-wrapped`）
+    的主人：删了它，`tools/pytest_mutation_check.py` 里的 S8 会立刻变成 CAUGHT=no。
+    这里直接让下层抛我们的异常，才真正压住那条守卫。
+    """
+    boom = DataStoreError("下层已经判过：连接断了")
+    conn = FakeConn(error=boom)
+    with pytest.raises(DataStoreError) as caught:
+        PgBarStore(conn, VERSION).select_bars(SYMBOL, DAY, DAY)
+    assert caught.value is boom, \
+        "本项目自己的异常必须原样穿过，不许套成 DataStoreError(DataStoreError)：%r" % (caught.value,)
+
+
 # ── 驱动惰性 ─────────────────────────────────────────────────────────────
 def test_import_pgstore_does_not_import_the_driver():
     """子进程里真跑一次 `import`：CI 与本机都没装 psycopg，导入期拉驱动就全红。"""
@@ -370,3 +390,122 @@ def test_value_fields_are_the_six_numeric_columns():
     assert VALUE_FIELDS == ("open", "high", "low", "close", "volume", "amount")
     assert "source" in BAR_COLUMNS and "source" not in VALUE_FIELDS
     assert set(VALUE_FIELDS) < set(BAR_COLUMNS)
+
+
+# ── 驱动适配层：装驱动的那条路径 ─────────────────────────────────────────
+# 本机与 CI 都没装 psycopg ⇒「`PsycopgConnection` 究竟怎么调驱动」这条路径默认没人走，
+# 于是它是最容易烂掉又最不容易被发现的一段。用一个假驱动模块顶替 `sys.modules["psycopg"]`
+# 就能把它走通。
+#
+# 效力边界写清楚：这证明的是**我们怎么调驱动**（要字典行、要复用连接、要把事务上下文
+# 原样传下去），**不是**「psycopg 会那样做」—— 后者只能来自容器通道那份报告。
+class _DriverCursor:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def fetchall(self):
+        return list(self._rows)
+
+
+class _DriverConn:
+    """假 psycopg 连接：只实现我们真正用到的那几个成员，多一个都没有。"""
+
+    def __init__(self, script=None):
+        self.script = list(script or [])
+        self.calls = []
+        self.exits = []
+
+    def execute(self, sql, params=()):
+        self.calls.append((sql, tuple(params)))
+        return _DriverCursor(self.script.pop(0) if self.script else [])
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        # `dict`/`str` 记下来，好断言「是提交还是回滚」；返回 False ⇒ 异常继续往上抛。
+        self.exits.append(exc_type.__name__ if exc_type else "commit")
+        return False
+
+    def close(self):
+        self.exits.append("close")
+
+
+class _DictRow:
+    """`psycopg.rows.dict_row` 的替身 —— 按**身份**比较，防止实现里换成别的默认值。"""
+
+
+_DICT_ROW = _DictRow()
+
+
+class _FakePsycopgRows:
+    dict_row = _DICT_ROW
+
+
+class _FakePsycopg:
+    """假驱动模块（塞进 `sys.modules["psycopg"]`）。"""
+
+    def __init__(self, conn):
+        self._conn = conn
+        self.connect_calls = []
+        self.rows = _FakePsycopgRows()
+
+    def connect(self, dsn, **kwargs):
+        self.connect_calls.append((dsn, kwargs))
+        return self._conn
+
+
+def test_psycopg_connection_asks_the_driver_for_mapping_rows(monkeypatch):
+    driver = _DriverConn([[_row()]])
+    fake = _FakePsycopg(driver)
+    monkeypatch.setitem(sys.modules, "psycopg", fake)
+
+    conn = PsycopgConnection("postgresql://u@127.0.0.1:1/quanauto")
+    rows = conn.execute(SQL_SELECT_EXISTING, (SYMBOL, DAY, VERSION))
+
+    assert rows == [_row()], "行的形态要原样交出去，别再自己转一遍"
+    assert len(fake.connect_calls) == 1, "连接必须复用：每次 execute 重连＝每次丢事务"
+    dsn, kwargs = fake.connect_calls[0]
+    assert dsn.startswith("postgresql://"), dsn
+    assert kwargs.get("row_factory") is _DICT_ROW, (
+        "必须显式要字典行：本模块按列名取值（row['close']），默认的元组行会让取值依赖列序，"
+        "列序一改就静默错位。实际 kwargs=%r" % (kwargs,)
+    )
+    assert driver.calls[0][1] == (SYMBOL, DAY, VERSION), driver.calls
+    conn.close()
+    assert driver.exits == ["close"], driver.exits
+
+
+def test_psycopg_transaction_is_the_drivers_commit_and_rollback(monkeypatch):
+    """`transaction()` 必须把驱动自己的提交/回滚语义原样传下去。
+
+    这条不是吹毛求疵：若这里写成手工 `BEGIN`/`COMMIT`，异常路径漏掉回滚的后果是
+    「库里的半批数据」，它不会自己冒泡成任何一条测试失败 —— 只能靠这条控制组盯住。
+    """
+    driver = _DriverConn()
+    monkeypatch.setitem(sys.modules, "psycopg", _FakePsycopg(driver))
+    conn = PsycopgConnection("postgresql://u@127.0.0.1:1/quanauto")
+
+    with conn.transaction():
+        pass
+    with pytest.raises(ValueError):
+        with conn.transaction():
+            raise ValueError("boom")
+    assert driver.exits == ["commit", "ValueError"], driver.exits
+
+
+def test_store_and_ingestor_over_the_driver_seam_end_to_end(monkeypatch):
+    """端到端控制组：分支用例用 `FakeConn` 测过，但「`PgBarIngestor` / `PgBarStore` 与
+    真实适配层接不接得上」它证明不了（键名对不上、事务没生效、行形态不对都可能发生）。
+    这里把假驱动接到 `PsycopgConnection` 上，让读和写各走一遍完整链路。"""
+    driver = _DriverConn([[_row()], [], [_row()]])
+    monkeypatch.setitem(sys.modules, "psycopg", _FakePsycopg(driver))
+    conn = PsycopgConnection("postgresql://u@127.0.0.1:1/quanauto")
+
+    bars = PgBarStore(conn, VERSION).select_bars(SYMBOL, DAY, DAY)
+    assert len(bars) == 1 and bars[0].close == Decimal("10.5"), bars
+
+    report = PgBarIngestor(conn).upsert_daily_bars([_bar()])
+    assert (report.inserted, report.skipped) == (1, 0), report
+    assert len(driver.calls) == 3, [c[0][:40] for c in driver.calls]
+    assert driver.exits == ["commit"], "整批一个事务，正常退出必须提交：%r" % driver.exits

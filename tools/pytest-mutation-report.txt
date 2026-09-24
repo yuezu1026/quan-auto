@@ -1,23 +1,47 @@
-baseline: 先跑一次干净的全绿
-baseline: 全绿 OK (passed=22)
-APPLIED M1-account-double-frozen @ quanauto/broker.py (newline='\r\n')
+baseline: 先跑一次干净的全绿（tests/test_backtest_slice.py + tests/test_data_center_store.py）
+baseline: 全绿 OK (passed=51)
+APPLIED M1-account-double-frozen @ quanauto/broker.py (newline='\r\n', tests=tests/test_backtest_slice.py)
   CAUGHT=yes exit=1 failed=2 (test_max_drawdown_is_plausible, test_pending_buy_does_not_change_total_capital)
-APPLIED M2-fill-at-close-not-open @ quanauto/broker.py (newline='\r\n')
+APPLIED M2-fill-at-close-not-open @ quanauto/broker.py (newline='\r\n', tests=tests/test_backtest_slice.py)
   CAUGHT=yes exit=1 failed=1 (test_trades_fill_at_bar_open)
-APPLIED M3-slippage-silently-zero @ quanauto/broker.py (newline='\r\n')
+APPLIED M3-slippage-silently-zero @ quanauto/broker.py (newline='\r\n', tests=tests/test_backtest_slice.py)
   CAUGHT=yes exit=1 failed=2 (test_different_seed_changes_deterministic_section_under_slippage, test_slippage_reduces_available_cash)
-APPLIED M4-oversell-guard-gone @ quanauto/broker.py (newline='\r\n')
+APPLIED M4-oversell-guard-gone @ quanauto/broker.py (newline='\r\n', tests=tests/test_backtest_slice.py)
   CAUGHT=yes exit=1 failed=3 (test_oversell_is_rejected_without_raising, test_oversell_leaves_cash_untouched, test_rejected_order_keeps_a_reason)
-APPLIED M5-no-leakage-check-dead @ quanauto/engine.py (newline='\r\n')
+APPLIED M5-no-leakage-check-dead @ quanauto/engine.py (newline='\r\n', tests=tests/test_backtest_slice.py)
   CAUGHT=yes exit=1 failed=1 (test_no_leakage_can_actually_fail)
-APPLIED M6-get-result-silent-none @ quanauto/engine.py (newline='\r\n')
+APPLIED M6-get-result-silent-none @ quanauto/engine.py (newline='\r\n', tests=tests/test_backtest_slice.py)
   CAUGHT=yes exit=1 failed=1 (test_get_result_before_run_raises)
-APPLIED M7-run-partial-window-ignored @ quanauto/engine.py (newline='\r\n')
+APPLIED M7-run-partial-window-ignored @ quanauto/engine.py (newline='\r\n', tests=tests/test_backtest_slice.py)
   CAUGHT=yes exit=1 failed=1 (test_run_partial_rejects_window_outside_config)
-APPLIED M8-no-leakage-silent-pass-without-run @ quanauto/engine.py (newline='\r\n')
+APPLIED M8-no-leakage-silent-pass-without-run @ quanauto/engine.py (newline='\r\n', tests=tests/test_backtest_slice.py)
   CAUGHT=yes exit=1 failed=1 (test_no_leakage_before_run_reports_warning_instead_of_silent_pass)
-APPLIED CONTROL-comment-only @ quanauto/broker.py (newline='\r\n')
+APPLIED CONTROL-comment-only @ quanauto/broker.py (newline='\r\n', tests=tests/test_backtest_slice.py)
   control OK: 没抓到（本检查器确实会报 caught=NO）
-mutations=8 caught=8 control=1
+APPLIED S1-read-drops-version-filter @ quanauto/pgstore.py (newline='\r\n', tests=tests/test_data_center_store.py)
+  CAUGHT=yes exit=1 failed=2 (test_select_bars_binds_the_data_version, test_select_bars_sql_is_parameterized_not_interpolated)
+APPLIED S2-read-window-becomes-open @ quanauto/pgstore.py (newline='\r\n', tests=tests/test_data_center_store.py)
+  CAUGHT=yes exit=1 failed=2 (test_select_bars_sql_is_parameterized_not_interpolated, test_select_bars_window_is_closed_and_ordered_in_sql)
+APPLIED S3-symbols-lose-distinct @ quanauto/pgstore.py (newline='\r\n', tests=tests/test_data_center_store.py)
+  CAUGHT=yes exit=1 failed=1 (test_select_symbols_is_distinct_and_versioned)
+APPLIED S4-write-becomes-plain-insert @ quanauto/pgstore.py (newline='\r\n', tests=tests/test_data_center_store.py)
+  CAUGHT=yes exit=1 failed=1 (test_upsert_sql_follows_contract_rule_6)
+APPLIED S5-identical-row-writes-anyway @ quanauto/pgstore.py (newline='\r\n', tests=tests/test_data_center_store.py)
+  CAUGHT=yes exit=1 failed=3 (test_upsert_batch_mixes_branches_per_row, test_upsert_identical_rerun_writes_nothing, test_upsert_identical_under_trailing_zeros_is_still_identical)
+APPLIED S6-empty-returning-counted-as-inserted @ quanauto/pgstore.py (newline='\r\n', tests=tests/test_data_center_store.py)
+  CAUGHT=yes exit=1 failed=2 (test_upsert_concurrent_divergent_insert_raises_ingest_conflict, test_upsert_concurrent_identical_insert_is_skipped)
+APPLIED S7-version-check-moves-inside-transaction @ quanauto/pgstore.py (newline='\r\n', tests=tests/test_data_center_store.py)
+  CAUGHT=yes exit=1 failed=1 (test_upsert_rejects_a_blank_data_version_before_any_sql)
+APPLIED S8-our-own-errors-get-wrapped @ quanauto/pgstore.py (newline='\r\n', tests=tests/test_data_center_store.py)
+  CAUGHT=yes exit=1 failed=1 (test_already_classified_error_from_a_lower_layer_passes_through)
+APPLIED S9-driver-imported-eagerly @ quanauto/pgstore.py (newline='\r\n', tests=tests/test_data_center_store.py)
+  ENV-LIMIT S9-driver-imported-eagerly：本机 .venv 没装 psycopg ⇒ 顶层拉驱动只能是收集期 ImportError，在断言之前就炸，本机无法自证；真正生效的是装了驱动的环境（pyproject 的 datasources/pg extra）
+    （本机结果：exit=2 passed=0 errors=1，断言根本没跑到）
+APPLIED S10-driver-row-factory-dropped @ quanauto/pgstore.py (newline='\r\n', tests=tests/test_data_center_store.py)
+  CAUGHT=yes exit=1 failed=1 (test_psycopg_connection_asks_the_driver_for_mapping_rows)
+APPLIED CONTROL-comment-only-store @ quanauto/pgstore.py (newline='\r\n', tests=tests/test_data_center_store.py)
+  control OK: 没抓到（本检查器确实会报 caught=NO）
+NOTE [ENV-LIMIT] S9-driver-imported-eagerly 只在本机验不了，不等于通过；换到装了 psycopg 的环境要重跑
+mutations=17 caught=17 control=2 env_limited=1
 report=D:\project-quan\quan-auto\tools\pytest-mutation-report.txt
 verdict: PASS

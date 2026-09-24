@@ -1,7 +1,8 @@
-"""变异检查：把 quanauto 的实现逐处改坏，确认 `tests/test_backtest_slice.py` 真的会红。
+"""变异检查：把 quanauto 的实现逐处改坏，确认对应套件真的会红。
 
-**为什么需要它**：I1 的实现写在测试之前，「先红后绿」的顺序证据不在 git 历史里。
-剩下的唯一可信替代是**变异检查** —— 一条永远绿的测试和没有测试是一样的。
+两个目标套件：
+  * `tests/test_backtest_slice.py`（I1 回测切片，实现写在测试之前 —— 先红后绿的顺序证据不在 git 历史里）
+  * `tests/test_data_center_store.py`（I2 S3 落库侧）
 （本仓库对门禁的同一条纪律：每个自建检查器都要做触发测试；测试套件就是检查器。）
 
 **纪律（每条都对应过一次真实的假绿）**：
@@ -14,8 +15,14 @@
   * `MUTATION` 触发出来的失败必须是**断言/异常**，不能是 `ImportError`/语法错
     （收集阶段就炸掉，等于测试根本没跑）。
 
-**它不进 `run_all_gates.py` 的注册表**：每个变异要跑一次 pytest（本文件 8 处变异），
+**它不进 `run_all_gates.py` 的注册表**：每个变异要跑一次 pytest（本文件 19 处变异），
 慢，且它验证的对象是测试而不是产物契约。手动跑，或改完测试后跑一次。
+
+**`env_limit`（一条变异的出口）**：有的缺陷在**本机环境里根本不可能被断言抓住**
+（例：变异把「驱动惰性导入」改成模块顶层拉驱动 —— 本机没装 psycopg，
+结果只能是收集期 ImportError，那条断言真正生效的环境是装了驱动的环境）。
+这类变异必须**逐条写明理由**并标为 `ENV-LIMIT`：它只证明「这里验不了」，
+**不等于 PASS**，也不允许把一条没被抓到的变异事后追认为 `env_limit`。
 """
 
 from __future__ import annotations
@@ -28,6 +35,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PYTHON = os.path.join(ROOT, ".venv", "Scripts", "python.exe")
 TARGET = "tests/test_backtest_slice.py"
+TESTS_STORE = "tests/test_data_center_store.py"
 REPORT = os.path.join(ROOT, "tools", "pytest-mutation-report.txt")
 
 CONTROL = "MUST-NOT-BE-CAUGHT"
@@ -111,6 +119,117 @@ MUTATIONS = [
         "new": "    # ── 订单（MUTATION：只改注释，必须抓不到）",
         "expect": CONTROL,
     },
+    # ── I2 S3：落库侧（quanauto/pgstore.py ↔ tests/test_data_center_store.py） ──
+    {
+        "tag": "S1-read-drops-version-filter",
+        "tests": TESTS_STORE,
+        "path": "quanauto/pgstore.py",
+        "old": '"WHERE symbol = %s AND data_version = %s "',
+        "new": '"WHERE symbol = %s "',
+        "expect": ["test_select_bars_binds_the_data_version"],
+    },
+    {
+        "tag": "S2-read-window-becomes-open",
+        "tests": TESTS_STORE,
+        "path": "quanauto/pgstore.py",
+        "old": '"AND trade_date >= %s AND trade_date <= %s "',
+        "new": '"AND trade_date >= %s "',
+        "expect": ["test_select_bars_window_is_closed_and_ordered_in_sql"],
+    },
+    {
+        "tag": "S3-symbols-lose-distinct",
+        "tests": TESTS_STORE,
+        "path": "quanauto/pgstore.py",
+        "old": '"SELECT DISTINCT symbol FROM dc_daily_bar WHERE data_version = %s ORDER BY symbol"',
+        "new": '"SELECT symbol FROM dc_daily_bar WHERE data_version = %s ORDER BY symbol"',
+        "expect": ["test_select_symbols_is_distinct_and_versioned"],
+    },
+    {
+        "tag": "S4-write-becomes-plain-insert",
+        "tests": TESTS_STORE,
+        "path": "quanauto/pgstore.py",
+        "old": '"ON CONFLICT (symbol, trade_date, data_version) DO UPDATE "',
+        "new": '""',
+        "expect": ["test_upsert_sql_follows_contract_rule_6"],
+    },
+    {
+        "tag": "S5-identical-row-writes-anyway",
+        "tests": TESTS_STORE,
+        "path": "quanauto/pgstore.py",
+        "old": (
+            "            _raise_if_divergent(bar, existing[0])\n            return False\n"
+            "        written = _run("
+        ),
+        "new": (
+            "            _raise_if_divergent(bar, existing[0])\n            return True\n"
+            "        written = _run("
+        ),
+        "expect": ["test_upsert_identical_rerun_writes_nothing"],
+    },
+    {
+        "tag": "S6-empty-returning-counted-as-inserted",
+        "tests": TESTS_STORE,
+        "path": "quanauto/pgstore.py",
+        "old": (
+            '        written = _run(self.conn, SQL_UPSERT_BAR, _insert_params(bar), "写入日线")\n'
+            "        if written:\n            return True"
+        ),
+        "new": (
+            '        written = _run(self.conn, SQL_UPSERT_BAR, _insert_params(bar), "写入日线")\n'
+            "        return True"
+        ),
+        "expect": ["test_upsert_concurrent_identical_insert_is_skipped"],
+    },
+    {
+        "tag": "S7-version-check-moves-inside-transaction",
+        "tests": TESTS_STORE,
+        "path": "quanauto/pgstore.py",
+        "old": (
+            "        for bar in bars:\n"
+            '            _require_version(bar.data_version, "行 %s/%s" % (bar.symbol, bar.trade_date))'
+        ),
+        "new": "        for bar in bars:\n            pass",
+        "expect": ["test_upsert_rejects_a_blank_data_version_before_any_sql"],
+    },
+    {
+        "tag": "S8-our-own-errors-get-wrapped",
+        "tests": TESTS_STORE,
+        "path": "quanauto/pgstore.py",
+        "old": (
+            "        return list(conn.execute(sql, params))\n    except QuanAutoError:\n"
+            "        raise\n    except Exception as exc:"
+        ),
+        "new": "        return list(conn.execute(sql, params))\n    except Exception as exc:",
+        "expect": ["test_already_classified_error_from_a_lower_layer_passes_through"],
+    },
+    {
+        "tag": "S9-driver-imported-eagerly",
+        "tests": TESTS_STORE,
+        "path": "quanauto/pgstore.py",
+        "old": "from .datacenter import BarStore, DailyBar",
+        "new": "from .datacenter import BarStore, DailyBar\n\nimport psycopg  # MUT",
+        "expect": ["test_import_pgstore_does_not_import_the_driver"],
+        "env_limit": (
+            "本机 .venv 没装 psycopg ⇒ 顶层拉驱动只能是收集期 ImportError，"
+            "在断言之前就炸，本机无法自证；真正生效的是装了驱动的环境（pyproject 的 datasources/pg extra）"
+        ),
+    },
+    {
+        "tag": "S10-driver-row-factory-dropped",
+        "tests": TESTS_STORE,
+        "path": "quanauto/pgstore.py",
+        "old": "            self._conn = psycopg.connect(self.dsn, row_factory=psycopg.rows.dict_row)",
+        "new": "            self._conn = psycopg.connect(self.dsn)",
+        "expect": ["test_psycopg_connection_asks_the_driver_for_mapping_rows"],
+    },
+    {
+        "tag": "CONTROL-comment-only-store",
+        "tests": TESTS_STORE,
+        "path": "quanauto/pgstore.py",
+        "old": "# ── SQL ──",
+        "new": "# ── SQL（MUTATION：只改注释，必须抓不到） ──",
+        "expect": CONTROL,
+    },
 ]
 
 FAILED_RE = re.compile(r"^(FAILED|ERROR) (\S+)::(\w+)")
@@ -151,12 +270,13 @@ def apply_mutation(original: bytes, old: str, new: str) -> tuple[bytes, int]:
     return mutated.replace("\n", newline_of(original)).encode("utf-8"), hits
 
 
-def run_pytest() -> tuple[int, set, dict, str]:
+def run_pytest(test_file) -> tuple[int, set, dict, str]:
+    paths = [test_file] if isinstance(test_file, str) else list(test_file)
     env = dict(os.environ)
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
     proc = subprocess.run(
-        [PYTHON, "-X", "utf8", "-m", "pytest", TARGET, "-q", "--tb=no", "-rfE", "-p", "no:cacheprovider"],
+        [PYTHON, "-X", "utf8", "-m", "pytest", *paths, "-q", "--tb=no", "-rfE", "-p", "no:cacheprovider"],
         cwd=ROOT,
         env=env,
         capture_output=True,
@@ -179,8 +299,9 @@ def main() -> int:
         say("verdict: FAIL")
         return 2
 
-    say("baseline: 先跑一次干净的全绿")
-    code, names, counts, output = run_pytest()
+    # 基线两个套件一起跑：基线只要有一处不是全绿，后面的「红」就什么都证明不了。
+    say("baseline: 先跑一次干净的全绿（%s + %s）" % (TARGET, TESTS_STORE))
+    code, names, counts, output = run_pytest([TARGET, TESTS_STORE])
     if code != 0 or names:
         say("FINDING [BASELINE] 基线不是全绿（exit=%d, failed=%d）—— 后面的红说明不了任何事"
             % (code, len(names)))
@@ -193,10 +314,12 @@ def main() -> int:
 
     failed_mutations = []
     parse_problems = []
+    env_limited = []
     total_mutations = 0
     caught_count = 0
     for item in MUTATIONS:
         path = os.path.join(ROOT, item["path"].replace("/", os.sep))
+        test_file = item.get("tests", TARGET)
         original = read_bytes(path)
         mutated, hits = apply_mutation(original, item["old"], item["new"])
         if hits != 1:
@@ -204,10 +327,11 @@ def main() -> int:
             parse_problems.append("%s: 变异原文在 %s 里出现 %d 次（要求恰好 1 次），变异未生效"
                                   % (item["tag"], item["path"], hits))
             continue
-        say("APPLIED %s @ %s (newline=%s)" % (item["tag"], item["path"], repr(newline_of(original))))
+        say("APPLIED %s @ %s (newline=%s, tests=%s)"
+            % (item["tag"], item["path"], repr(newline_of(original)), test_file))
         write_bytes(path, mutated)
         try:
-            code, names, counts, output = run_pytest()
+            code, names, counts, output = run_pytest(test_file)
             collected_errors = counts.get("error", 0) + counts.get("errors", 0)
             collection_broken = "errors during collection" in output or counts.get("passed", 0) == 0
         finally:
@@ -221,6 +345,14 @@ def main() -> int:
                 failed_mutations.append(item["tag"])
             else:
                 say("  control OK: 没抓到（本检查器确实会报 caught=NO）")
+            continue
+
+        if collection_broken and item.get("env_limit"):
+            # 本机验不了的变异：只证明「这里验不了」，绝不算 CAUGHT，也不算 PASS。
+            env_limited.append(item["tag"])
+            say("  ENV-LIMIT %s：%s" % (item["tag"], item["env_limit"]))
+            say("    （本机结果：exit=%d passed=%d errors=%d，断言根本没跑到）"
+                % (code, counts.get("passed", 0), collected_errors))
             continue
 
         total_mutations += 1
@@ -240,7 +372,10 @@ def main() -> int:
     problems = failed_mutations + parse_problems
     for text in parse_problems:
         say("FINDING [MUTATION-HARNESS] %s" % text)
-    say("mutations=%d caught=%d control=1" % (total_mutations, caught_count))
+    for tag in env_limited:
+        say("NOTE [ENV-LIMIT] %s 只在本机验不了，不等于通过；换到装了 psycopg 的环境要重跑" % tag)
+    say("mutations=%d caught=%d control=2 env_limited=%d"
+        % (total_mutations, caught_count, len(env_limited)))
     say("report=%s" % REPORT)
     if problems:
         say("verdict: FAIL (%d issue(s))" % len(problems))
