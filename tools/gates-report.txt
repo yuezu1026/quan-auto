@@ -24,7 +24,7 @@ GATE data-center-ddl (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 数据中心契约 §3.6.1 与 db/data_center.sql 约束清单双向一致
 argv: tools/verify_data_center.py
 ------------------------------------------------------------------------------
-CRLF-normalised: contract=71733 bytes, ddl=18907 bytes, smoke=40791 bytes
+CRLF-normalised: contract=77238 bytes, ddl=18907 bytes, smoke=40791 bytes
 extracted: tables=9 documented=16 declared=16 in_body=16 mysqlisms=0 smoke_asserted=16
 verdict: PASS (0 issue(s))
 NOTE: this gate never executes the DDL and never inspects a CHECK expression. Passing it does NOT mean the constraints reject bad values -- that is what db/data_center.smoke.sql has to print SMOKE PASS for. That run has happened (see tools/sql-smoke-report.txt, and tools/falsify-report.txt for the per-constraint falsification); both are SNAPSHOTS and are void the moment any db/*.sql or *.smoke.sql file changes.
@@ -34,7 +34,7 @@ GATE data-center-pit (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: DataFeed 取数路径的 as_of 两层防线（_require_visible + record_access）与回测会话的 QFQ/BFILL 拒绝都还在，且只由 DataCenter.as_of() 产出
 argv: tools/verify_data_center_pit.py
 ------------------------------------------------------------------------------
-CRLF-normalised: quanauto\datafeed.py=12304 bytes, quanauto\datacenter.py=23760 bytes, quanauto\datasources.py=48389 bytes
+CRLF-normalised: quanauto\datafeed.py=12304 bytes, quanauto\datacenter.py=24577 bytes, quanauto\datasources.py=48389 bytes
 extracted: scanned_modules=3 feed_classes=3 pit_feeds=1 unbounded_feeds=2 feed_methods=22 feed_instantiations=1 store_touchers=4 date_takers=7 as_of_impls=1 guard_raises=1
 verdict: PASS (0 issue(s))
 NOTE: this gate parses the source, it never executes it. Passing it does NOT mean the PIT guard rejects at runtime -- that is what tests/test_data_center_pit.py shows (18 cases, including the I2 trigger test where a store ignores the window and record_access must refuse). This gate proves the opposite direction: that the two layers cannot be dropped silently when a method is added later.
@@ -44,7 +44,7 @@ GATE data-center-adapter (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 适配器把源列名/取值翻成标准 schema、采集层不含数据库驱动、上游 SDK 只在函数内惰性 import、且行对象不暴露源字段名
 argv: tools/verify_data_center_adapter.py
 ------------------------------------------------------------------------------
-CRLF-normalised: quanauto\datasources.py=48389 bytes, quanauto\datacenter.py=23760 bytes, docs\智能量化交易平台-数据中心接口契约文档.md=71733 bytes
+CRLF-normalised: quanauto\datasources.py=48389 bytes, quanauto\datacenter.py=24577 bytes, docs\智能量化交易平台-数据中心接口契约文档.md=77238 bytes
 extracted: scanned_modules=2 str_maps=5 column_maps=4 value_maps=1 schema_bindings=4 module_imports=9 lazy_source_imports=2 row_classes=3 denylist_names=26 contract_schemas=3
 verdict: PASS (0 issue(s))
 NOTE: 这个门禁只解析源码、从不执行、不导入 pandas、不跑 pytest。它证明的是「结构上没被绕过」，**不是**「映射表的内容是对的」—— 源列名是从各源文档抄来的，从未联网核对（akshare/baostock 都没装），那条欠账登记在数据中心契约附录 B。运行时行为由 tests/test_data_center_adapter.py 负责。
@@ -54,7 +54,7 @@ GATE iteration-plan (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 迭代计划里每个标「已交付」的迭代都引用了一条真实存在的证据路径
 argv: tools/verify_iteration_plan.py
 ------------------------------------------------------------------------------
-CRLF-normalised: plan=26819 bytes (迭代计划.md)
+CRLF-normalised: plan=29396 bytes (迭代计划.md)
 extracted: iterations=5 delivered=2 dod_sections=5
 verdict: PASS (0 issue(s))
 NOTE: this gate checks the plan is internally well-formed and that no completion claim dangles. It cannot judge whether an iteration was actually delivered -- someone still has to open the cited evidence file.

@@ -61,6 +61,7 @@ from .errors import (
     BacktestExecutionError,
     ConfigValidationError,
     DataFeedRegistrationError,
+    DataVersionError,
     ExportError,
     NoResultError,
     OrderRejectedError,
@@ -376,8 +377,13 @@ class BacktestEngine:
             result.data_version = self._data_version()
             result.strategy_version = self._strategy_version()
             result.params_used = self._params_used()
-            result.validation_report = self.validate_no_leakage()
+            # `validate_no_leakage()` 读的是 `self._result` ⇒ **必须先挂上去再问它**。
+            # 反过来写（先问后挂）会让每一份报告里的 `validation_report` 都是那句
+            # “尚未执行回测”的空壳：`is_valid=True`、`row_count=0` —— 看着永远通过。
+            # 直接调 `validate_no_leakage()` 的单元用例查不出来（那时 `_result` 已经在了），
+            # 只有端到端读 `result.validation_report` 才看得见（`tests/test_backtest_db_feed.py`）。
             self._result = result
+            result.validation_report = self.validate_no_leakage()
             return result
         except QuanAutoError:
             raise
@@ -476,13 +482,37 @@ class BacktestEngine:
         )
 
     def _data_version(self) -> str:
-        """数据版本：把每个数据源的路径 + 标的 + K 线根数拼成一个短标识。
+        """数据版本：报告里用来回答「这轮回测读的是**哪一份**数据」。
 
         刻意**不**用文件修改时间 / 哈希 —— 报告要能跨机器逐字节比，而 mtime 做不到。
+
+        分两支，而且**由 feed 自己说了算**：
+
+        * feed 声明了 `data_version`（`DbDataFeed` 即如此，值来自 `DataCenter.as_of()`）
+          ⇒ 用它，格式 `symbol@version`。空串 ⇒ 抛 `DataVersionError`：
+          绝不能盖个假章上去　—— 一纸 `600000.SH::35` 出了报告，读的人没有任何
+          办法知道这轮读的是哪份数据，而那个 `35` 只是**根数**。换一份 `data_version`
+          重采，只要天数一样，报告就一模一样（D8 要的可复现性标记在这里是瞎的）。
+        * 否则退回 I1 的老格式 `symbol:文件名:根数` —— `.rounds/i1` 的报告是逐字节
+          比对的证据，不能无端改形状。
+
+        `data_version` 用的是属性探测而不是 `isinstance(DbDataFeed)`：契约里
+        `DataFeed` 并不声明这个成员，谁声明了谁就得为它负责；引擎不认识具体的 feed 类，
+        依赖方向也不用反过来。
         """
         parts = []
         for symbol in sorted(self._datafeeds):
             feed = self._datafeeds[symbol]
+            declared = getattr(feed, "data_version", None)
+            if declared is not None:
+                text = str(declared).strip()
+                if not text:
+                    raise DataVersionError(
+                        "%s 的数据源声明了空的 data_version，报告无法标记这轮读的是哪份数据（D8）"
+                        % (symbol,)
+                    )
+                parts.append("%s@%s" % (symbol, text))
+                continue
             path = os.path.basename(getattr(feed, "csv_path", ""))
             parts.append("%s:%s:%d" % (symbol, path, len(feed.get_available_dates(symbol))))
         return "|".join(parts)

@@ -36,6 +36,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PYTHON = os.path.join(ROOT, ".venv", "Scripts", "python.exe")
 TARGET = "tests/test_backtest_slice.py"
 TESTS_STORE = "tests/test_data_center_store.py"
+TESTS_DB_FEED = "tests/test_backtest_db_feed.py"
 REPORT = os.path.join(ROOT, "tools", "pytest-mutation-report.txt")
 
 CONTROL = "MUST-NOT-BE-CAUGHT"
@@ -230,6 +231,65 @@ MUTATIONS = [
         "new": "# ── SQL（MUTATION：只改注释，必须抓不到） ──",
         "expect": CONTROL,
     },
+    # ── I2 S3 后半：引擎接 `as_of()` 产出的 feed（↔ tests/test_backtest_db_feed.py） ──
+    {
+        "tag": "S11-store-decimals-leak-into-the-engine",
+        "tests": TESTS_DB_FEED,
+        "path": "quanauto/datacenter.py",
+        "old": (
+            "            open=_as_float(row.open),\n"
+            "            high=_as_float(row.high),\n"
+            "            low=_as_float(row.low),\n"
+            "            close=_as_float(row.close),\n"
+        ),
+        "new": (
+            "            open=row.open,\n"
+            "            high=row.high,\n"
+            "            low=row.low,\n"
+            "            close=row.close,\n"
+        ),
+        "expect": ["test_engine_runs_end_to_end_over_a_store_backed_feed"],
+    },
+    {
+        "tag": "S12-data-version-ignores-the-declared-version",
+        "tests": TESTS_DB_FEED,
+        "path": "quanauto/engine.py",
+        "old": '            declared = getattr(feed, "data_version", None)\n',
+        "new": "            declared = None\n",
+        "expect": ["test_report_data_version_is_the_stores_data_version"],
+    },
+    {
+        "tag": "S13-blank-declared-version-stamped-anyway",
+        "tests": TESTS_DB_FEED,
+        "path": "quanauto/engine.py",
+        "old": "                if not text:\n                    raise DataVersionError(\n",
+        "new": "                if False:  # MUT\n                    raise DataVersionError(\n",
+        "expect": ["test_a_feed_that_declares_a_blank_version_is_refused_not_faked"],
+    },
+    {
+        "tag": "S14-validation-report-computed-before-the-result-exists",
+        "tests": TESTS_DB_FEED,
+        "path": "quanauto/engine.py",
+        "old": (
+            "            self._result = result\n"
+            "            result.validation_report = self.validate_no_leakage()\n"
+            "            return result\n"
+        ),
+        "new": (
+            "            result.validation_report = self.validate_no_leakage()\n"
+            "            self._result = result\n"
+            "            return result\n"
+        ),
+        "expect": ["test_engine_runs_end_to_end_over_a_store_backed_feed"],
+    },
+    {
+        "tag": "CONTROL-comment-only-db-feed",
+        "tests": TESTS_DB_FEED,
+        "path": "quanauto/datacenter.py",
+        "old": "    # ── 两道防线 ",
+        "new": "    # ── 两道防线（MUTATION：只改注释，必须抓不到） ",
+        "expect": CONTROL,
+    },
 ]
 
 FAILED_RE = re.compile(r"^(FAILED|ERROR) (\S+)::(\w+)")
@@ -299,9 +359,9 @@ def main() -> int:
         say("verdict: FAIL")
         return 2
 
-    # 基线两个套件一起跑：基线只要有一处不是全绿，后面的「红」就什么都证明不了。
-    say("baseline: 先跑一次干净的全绿（%s + %s）" % (TARGET, TESTS_STORE))
-    code, names, counts, output = run_pytest([TARGET, TESTS_STORE])
+    # 基线三套件一起跑：基线只要有一处不是全绿，后面的「红」就什么都证明不了。
+    say("baseline: 先跑一次干净的全绿（%s + %s + %s）" % (TARGET, TESTS_STORE, TESTS_DB_FEED))
+    code, names, counts, output = run_pytest([TARGET, TESTS_STORE, TESTS_DB_FEED])
     if code != 0 or names:
         say("FINDING [BASELINE] 基线不是全绿（exit=%d, failed=%d）—— 后面的红说明不了任何事"
             % (code, len(names)))
@@ -317,6 +377,7 @@ def main() -> int:
     env_limited = []
     total_mutations = 0
     caught_count = 0
+    control_count = 0
     for item in MUTATIONS:
         path = os.path.join(ROOT, item["path"].replace("/", os.sep))
         test_file = item.get("tests", TARGET)
@@ -339,6 +400,7 @@ def main() -> int:
             assert read_bytes(path) == original, "恢复失败：%s" % item["path"]
 
         if item["expect"] == CONTROL:
+            control_count += 1
             if names:
                 say("  CONTROL 失败：只改注释的变异居然让测试变红 —— 说明有测试在乱红：%s"
                     % ", ".join(sorted(names)))
@@ -374,8 +436,8 @@ def main() -> int:
         say("FINDING [MUTATION-HARNESS] %s" % text)
     for tag in env_limited:
         say("NOTE [ENV-LIMIT] %s 只在本机验不了，不等于通过；换到装了 psycopg 的环境要重跑" % tag)
-    say("mutations=%d caught=%d control=2 env_limited=%d"
-        % (total_mutations, caught_count, len(env_limited)))
+    say("mutations=%d caught=%d control=%d env_limited=%d"
+        % (total_mutations, caught_count, control_count, len(env_limited)))
     say("report=%s" % REPORT)
     if problems:
         say("verdict: FAIL (%d issue(s))" % len(problems))

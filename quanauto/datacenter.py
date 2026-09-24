@@ -282,6 +282,19 @@ def _as_date(value) -> date:
     return value
 
 
+def _as_float(value) -> float:
+    """存储形状 → 契约形状：`BarData` 的数值字段是 `float`（§2.1.1）。
+
+    存储层交出来的却是 `Decimal`（`pgstore._row_to_bar`；`tests/test_data_center_store.py`
+    **特意**断言了 `isinstance(bar.close, Decimal)` —— 写侧要靠精确比较判「同值不写」）。
+    不在这里收口，第一次信号计算就是 `float // Decimal` → `TypeError`，而且是在引擎深处
+    被包成 `BacktestExecutionError` 抛出来。`volume` 早就转成 `int` 了，价格那五列漏了
+    同一个动作 —— 这就是两个半边各自都绿、接起来跑不通的那个接缝
+    （咬住它的用例：`tests/test_backtest_db_feed.py`）。
+    """
+    return float(value)
+
+
 class DbDataFeed(DataFeed):
     """库（PostgreSQL `dc_daily_bar`）支撑的 `DataFeed`，**绑定**一个 `as_of_date`。
 
@@ -312,12 +325,12 @@ class DbDataFeed(DataFeed):
         stamp = _as_datetime(row.trade_date)
         return BarData(
             symbol=row.symbol,
-            open=row.open,
-            high=row.high,
-            low=row.low,
-            close=row.close,
+            open=_as_float(row.open),
+            high=_as_float(row.high),
+            low=_as_float(row.low),
+            close=_as_float(row.close),
             volume=int(row.volume),
-            amount=row.amount,
+            amount=_as_float(row.amount),
             datetime=stamp,
             timestamp=epoch_seconds(stamp),
         )

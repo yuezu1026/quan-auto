@@ -1,5 +1,5 @@
-baseline: 先跑一次干净的全绿（tests/test_backtest_slice.py + tests/test_data_center_store.py）
-baseline: 全绿 OK (passed=51)
+baseline: 先跑一次干净的全绿（tests/test_backtest_slice.py + tests/test_data_center_store.py + tests/test_backtest_db_feed.py）
+baseline: 全绿 OK (passed=61)
 APPLIED M1-account-double-frozen @ quanauto/broker.py (newline='\r\n', tests=tests/test_backtest_slice.py)
   CAUGHT=yes exit=1 failed=2 (test_max_drawdown_is_plausible, test_pending_buy_does_not_change_total_capital)
 APPLIED M2-fill-at-close-not-open @ quanauto/broker.py (newline='\r\n', tests=tests/test_backtest_slice.py)
@@ -41,7 +41,17 @@ APPLIED S10-driver-row-factory-dropped @ quanauto/pgstore.py (newline='\r\n', te
   CAUGHT=yes exit=1 failed=1 (test_psycopg_connection_asks_the_driver_for_mapping_rows)
 APPLIED CONTROL-comment-only-store @ quanauto/pgstore.py (newline='\r\n', tests=tests/test_data_center_store.py)
   control OK: 没抓到（本检查器确实会报 caught=NO）
+APPLIED S11-store-decimals-leak-into-the-engine @ quanauto/datacenter.py (newline='\r\n', tests=tests/test_backtest_db_feed.py)
+  CAUGHT=yes exit=1 failed=7 (test_a_feed_that_declares_a_blank_version_is_refused_not_faked, test_engine_runs_end_to_end_over_a_store_backed_feed, test_pgbarstore_plugs_into_the_engine_and_binds_the_data_version, test_report_data_version_is_the_stores_data_version, test_the_same_snapshot_twice_gives_the_same_deterministic_section, test_the_session_guard_sees_every_row_the_engine_read, test_two_snapshots_with_the_same_bar_count_do_not_collide)
+APPLIED S12-data-version-ignores-the-declared-version @ quanauto/engine.py (newline='\r\n', tests=tests/test_backtest_db_feed.py)
+  CAUGHT=yes exit=1 failed=5 (test_a_feed_that_declares_a_blank_version_is_refused_not_faked, test_pgbarstore_plugs_into_the_engine_and_binds_the_data_version, test_report_data_version_is_the_stores_data_version, test_the_same_snapshot_twice_gives_the_same_deterministic_section, test_two_snapshots_with_the_same_bar_count_do_not_collide)
+APPLIED S13-blank-declared-version-stamped-anyway @ quanauto/engine.py (newline='\r\n', tests=tests/test_backtest_db_feed.py)
+  CAUGHT=yes exit=1 failed=1 (test_a_feed_that_declares_a_blank_version_is_refused_not_faked)
+APPLIED S14-validation-report-computed-before-the-result-exists @ quanauto/engine.py (newline='\r\n', tests=tests/test_backtest_db_feed.py)
+  CAUGHT=yes exit=1 failed=1 (test_engine_runs_end_to_end_over_a_store_backed_feed)
+APPLIED CONTROL-comment-only-db-feed @ quanauto/datacenter.py (newline='\r\n', tests=tests/test_backtest_db_feed.py)
+  control OK: 没抓到（本检查器确实会报 caught=NO）
 NOTE [ENV-LIMIT] S9-driver-imported-eagerly 只在本机验不了，不等于通过；换到装了 psycopg 的环境要重跑
-mutations=17 caught=17 control=2 env_limited=1
+mutations=21 caught=21 control=3 env_limited=1
 report=D:\project-quan\quan-auto\tools\pytest-mutation-report.txt
 verdict: PASS
