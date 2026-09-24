@@ -13,8 +13,11 @@
 
 智能量化交易平台的**开发进行中**。契约、DDL、门禁三件套已齐，I0 建了工程骨架，
 I1 交付了第一条端到端竖切（CSV → MA 双均线 → 撮合 → 绩效 → 回测报告），
-I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**；适配器与落库尚未开始）。
-依赖清单仍然是空的（`dependencies = []`，不做投机性预置）—— 已交付的竖切只用标准库。
+I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**、**S2 已落采集侧适配器
+`quanauto/datasources.py`**；落库与回测改读尚未开始）。
+依赖清单从 I2 S2 起**不再为空**：`dependencies = ["pandas>=2.0"]`（使用者 `quanauto/datasources.py`，
+数据中心契约 §3.2 的方法签名逐字写了 `pd.DataFrame`）+ `[datasources]` extra（`akshare` / `baostock`，
+适配器对它们是**惰性 import**）。I0/I1 当时的空清单是**选择不是缺口** —— 那时的竖切只用标准库。
 
 ## 2. 硬约束（违反任何一条都会造成不可逆损失）
 
@@ -44,18 +47,19 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 | `docs/开发工作流规范.md` | ★ **开工前的作业规程**：产物四件套 / TDD 红源 / 四类漂移 / 对称棘轮 / 触发测试硬要求 / 六类真实踩坑案例 / token 分层 / 红线清单 |
 | `docs/迭代计划.md` | ★ **交付节奏**：竖切 **I0~I4**（股票池那一轮已于 2026-09-23 裁决砍掉）、每个迭代的 DoD 四件套、B7 棘轮燃尽表、不采用的敏捷做法。原「待决」问题（迭代计划里那 5 条 + 更早的 Q1/Q7）已全部裁决并回填，**已无未决项** |
 | `docs/智能量化交易平台-风控层接口契约文档.md` | 风控层契约（补充主契约缺失的类型/异常） |
-| `docs/智能量化交易平台-数据中心接口契约文档.md` | 数据中心契约，含 D1~D10 设计决策 + **附录 A**（I2 S1 实现侧裁决与偏差登记：`DataFeedError` 继承、`SessionMode` 本地类型、越界两种语义、复权因子恒 1.0 这个已知缺口）。**手写契约，没有 `.docx`** ⇒ 可原地编辑，不进 C2 的 `ADDENDA` |
+| `docs/智能量化交易平台-数据中心接口契约文档.md` | 数据中心契约，含 D1~D10 设计决策 + **附录 A**（I2 S1 实现侧裁决与偏差登记：`DataFeedError` 继承、`SessionMode` 本地类型、越界两种语义、复权因子恒 1.0 这个已知缺口）+ **附录 B**（I2 S2 适配器裁决与偏差：`ValidationReport` 升格为 5 字段、pandas 是显式依赖、源 SDK 只能惰性导入、符号后缀与指数歧义、两处“安静的事故”（手/股、百分号）、`report_type` 必须适配器层映射完，另记两条已知缺口：停牌/涨跌停标记无处可落（契约内部不一致）、龙虎榜/资金流向无标准 schema）。**手写契约，没有 `.docx`** ⇒ 可原地编辑，不进 C2 的 `ADDENDA` |
 
 ### C. 工程骨架（2026-09-23 I0 交付；守门门禁 = `skeleton`）
 
 | 文件 | 作用 |
 |---|---|
-| `pyproject.toml` | 包元数据 / pytest 配置。**`dependencies = []` 是故意的**：依赖由真正用它的模块带进来 |
+| `pyproject.toml` | 包元数据 / pytest 配置。依赖**由真正用它的模块带进来**，禁预置「以后大概会用」的包：现在是 `pandas>=2.0`（使用者 `quanauto/datasources.py`），源 SDK 走 `[datasources]` extra（I0/I1 当时是空数组，因为那时的竖切只用标准库） |
 | `quanauto/__init__.py` | 包入口，只有 `__version__` 与 `__all__`（其它模块下的实现不在此 re-export：否则「实现在那里」与「一 import 就全拉起来」长得一样） |
-| `quanauto/*.py`（11 个模块：10 个实现 + 入口 `cli.py`） | I1 的产物：`models` / `enums` / `errors` / `events` / `datafeed` / `strategies` / `broker` / `engine` / `performance` / `cli`；**I2 S1 追加 `datacenter.py`**（PIT / `as_of` 边界层）。守门门禁 = `contract-signature`（签名不许偏离契约）+ `data-center-pit` |
+| `quanauto/*.py`（12 个模块：11 个实现 + 入口 `cli.py`） | I1 的产物：`models` / `enums` / `errors` / `events` / `datafeed` / `strategies` / `broker` / `engine` / `performance` / `cli`；**I2 S1 追加 `datacenter.py`**（PIT / `as_of` 边界层）、**I2 S2 追加 `datasources.py`**（采集侧适配器：源列名/取值 → 标准 schema + `ValidationReport`）。守门门禁 = `contract-signature`（签名不许偏离契约）+ `data-center-pit` + `data-center-adapter` |
 | `tests/test_skeleton.py` | 骨架自检 3 条：版本与 `pyproject.toml` 一致 / import 不把重依赖拉进来 / 测试数不为 0 |
 | `tests/test_backtest_slice.py` | I1 的回归测试 22 条：竖切的不变量（同种子可复现、成交价取下一根 K 线开盘价、拒单不抛异常…）。它**没有**红→绿的 git 证据（实现先于测试），替代证据是 `tools/pytest_mutation_check.py` |
 | `tests/test_data_center_pit.py` | I2 S1 的 PIT 回归测试 18 条：预取未来数据必须抛 `FutureDataAccessError`、窗口越界必须抛而**不是**裁剪、回测会话下 `QFQ`/`BFILL` 必须被拒。含 I2 DoD 点名的那条**触发测试**（让 store 无视窗口，确认取数真的被拒）。另有一条**故意断言已知缺口**的用例，`S3` 落地后要**删掉它**而不是改期望值 |
+| `tests/test_data_center_adapter.py` | I2 S2 的适配器回归测试 32 条：源列名不许透出下游、映射后必须是标准 schema、手→股与百分号两处换算、裸代码/指数后缀/`report_type` 越界必须抛。它测的是映射**机制**，不是映射**内容**（未联过网，见 DC 契约附录 B10） |
 | `tests/fixtures/sample_prices.csv` | 回归测试与可复现性门禁共用的小样本行情 |
 | `.github/workflows/ci.yml` | 只两条 `run:`（`pytest -q` 与 `run_all_gates.py`），**禁止 `|| true` 吞退出码**；因无 git remote，**从未在 GitHub 上跑过** |
 | `.venv/` | 仓库内虚拟环境（只装了 pytest）；**不入库**（`.gitignore`） |
@@ -81,17 +85,19 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 |---|---|
 | `tools/run_all_gates.py` | ★ **统一入口**，一条命令跑全部门禁并给出一个总判据 |
 | `tools/gates-report.txt` | 上一次运行的完整输出 —— **看结果读它，不要重跑** |
+| `tools/dev.py` | 本地开发环的**单一入口**（`check` / `full` / `gate` / `test` / `status` / `--selftest`）：一次调用拿 pytest + 门禁的总判据，省掉 PS 5.1 的编码税。**故意不做**：缓存判定（缓存判定＝假绿工厂）、建第二份门禁注册表、按改动路由门禁（少跑却报绿）；**只打 ASCII**，中文细节留在 `tools/gates-report.txt` |
 | `tools/gates-baseline.json` | tier-B 棘轮基线，**手工维护**，禁止自动写入 |
 | `tools/verify_md_coverage.py` | docx 的每一段（含表格单元）是否都出现在对应 md 中；另断言声明的追加段落（`ADDENDA`）未被重新转换抹掉 |
 | `tools/verify_risk_config.py` | 风控契约 §3.6 与 DDL 与 smoke.sql 三方一致 |
 | `tools/verify_contract_refs.py` | 契约引用的类型/异常是否有定义（B7 欠账所在） |
 | `tools/verify_data_center.py` | 数据中心契约 §3.6.1 与 DDL 约束清单双向一致（C1~C7）+ 对 `db/data_center.smoke.sql` 的触发测试覆盖核对（C7） |
 | `tools/verify_data_center_pit.py` | ★ **I2 S1 新门禁**：`DataFeed` 取数路径的 `as_of` **两层防线**（显式日期参数越界必须抛 / 经 guard 逐行登记）+ 回测会话下 `QFQ`/`BFILL` 必须被拒 + 只有 `DataCenter.as_of()` 能产出 `DataFeed`。「越界＝抛而非裁剪」这条语义的机器判据就在这里。**只解析 AST，从不执行被检代码、不跑 pytest** |
+| `tools/verify_data_center_adapter.py` | ★ **I2 S2 新门禁**（`data-center-adapter`）：采集侧适配器把源列名/取值翻成标准 schema（A1/A2/A4/A8）、采集层不含数据库驱动（A5）、源 SDK 只能惰性 import（A6）、行对象不暴露源字段名（A7）、新映射表/列名元组未登记即报错（A3/A9）、两个空转守卫（A0/A10）。**只解析源码文本**：不执行适配器、不联网、不 import pandas |
 | `tools/verify_iteration_plan.py` | 迭代计划里每个标「已交付」的迭代是否引用了一条**真实存在**的证据路径（防幽灵 ✅）+ DoD 四件套形状 |
 | `tools/verify_skeleton.py` | I0 骨架是否还在（pyproject / 包 / 测试 / CI 的 `run:` 接线），**不跑 pytest**；另守 `CONTEXT.md` 三件事不许过期 —— 状态陈述（`IMPL-STATUS`）、写死的门禁计数（`GATE-COUNT`）、**地图里的路径必须真实存在**（`MAP-PATHS`）。⚠️ 它们只管结构，**看不见错字/乱码**：改完中文文案要回读核对 |
 | `tools/verify_backtest_reproducibility.py` | 回测可复现性：同种子两次跑 `deterministic` 段逐字节一致、换种子必须真的改变、样本非空、段结构合规、入库证据不可是过期快照（R1~R5）；**默认只读**，重录证据要显式 `--record` |
 | `tools/verify_contract_signature.py` | 契约签名与实现**双向**一致（S1~S7）+ 未登记成员 / 未实现缺口清单；机器可读投影是 `tools/contract-signature-manifest.json` |
-| `tools/contract-signature-manifest.json` | 契约签名的机器可读投影（`classes` / `non_normative_blocks` / `not_implemented` / `extras`） |
+| `tools/contract-signature-manifest.json` | 契约签名的机器可读投影（`classes` / `impl_only` / `non_normative_blocks` / `not_implemented` / `extras`）。`impl_only` 是**只有实现、契约没写**的类（如数据源适配器三角色），只能做反向漂移检查 |
 | `tools/pytest_mutation_check.py` | 把实现逐处改坏，验证 `tests/test_backtest_slice.py` 真的会红（**不是门禁**：它验证的是测试，且慢） |
 | `tools/pytest-mutation-report.txt` | 上一条的逐变异证据 —— **快照**，改实现或改测试后作废 |
 | `.rounds/i1/` | I1 可复现性门禁的证据样本（同种子两份 + 换种子一份，共三份）—— 由 `--record` 显式重录，**跑门禁不会改它们** |
@@ -125,6 +131,7 @@ python tools/run_all_gates.py --selftest      # 证明这个 harness 自己会�
 | risk-config | `python tools/verify_risk_config.py` | 无参数（可选末尾跟 workspace root） |
 | data-center-ddl | `python tools/verify_data_center.py` | 无参数 |
 | data-center-pit | `python tools/verify_data_center_pit.py` | 无参数。**只解析源码**，不执行被检代码、不跑 pytest |
+| data-center-adapter | `python tools/verify_data_center_adapter.py` | 无参数。**只解析源码文本**，不执行适配器、不联网、**不 import pandas** —— 它证明不了「映射出来的数据是对的」（DC 契约附录 B10） |
 | iteration-plan | `python tools/verify_iteration_plan.py` | 无参数（可选末尾跟一个文件路径，用于把守卫指向别的文件） |
 | core-contract-refs | `python tools/verify_contract_refs.py --extra=docs/智能量化交易平台-数据中心接口契约文档.md --extra=docs/智能量化交易平台-风控层接口契约文档.md` | **少一个 `--extra=` 就会把已定义的类型误报成缺失**，虚增基线、掩盖真实漂移 |
 | skeleton | `python tools/verify_skeleton.py` | 无参数（可选末尾跟一个目录，用于把守卫指向别的根）。**它不跑 pytest**，别把它当回归测试用 |
@@ -171,11 +178,13 @@ python tools/falsify_smoke.py            # 证伪那两份绿（逐条放宽约�
 提交粒度是**整轮提交**（没有细粒度还原点）：基线 `053f620` → 契约/门禁若干 → **I0 骨架 `fe9e060`**，
 其后仍是每个迭代一个提交；**当前提交数与 HEAD 一律现取 `git log --oneline`，不要在上面写死数字**
 （写死的数字每次提交都会过期，本项目已经在「过时计数」上踩过两次）。
-**I0 的「可回滚」与「可运行」两半都已交付，I1 又在其上打了第一条竖切，I2 S1 再把 PIT / `as_of` 边界层加厚**：
-`.venv` + pytest（数量**现取** `python -m pytest -q`；2026-09-23 I2 S1 实测 `43 passed` = 骨架 3 + 竖切 22 + PIT 18）、
-`pyproject.toml`（`dependencies = []` 仍是空的，而且是故意的）、`quanauto/` 包（10 个实现模块，入口 `quanauto.cli`）、
-`tests/`（骨架自检 3 条 + 竖切回归 22 条 + PIT 回归 18 条）、`.github/workflows/ci.yml`。
-**I2 远未完成**：S1 只交付了 PIT 边界层，`AKShare`/`Baostock` 适配器与 PostgreSQL 写入**都还没写** ——
+**I0 的「可回滚」与「可运行」两半都已交付，I1 又在其上打了第一条竖切，I2 S1 加厚了 PIT / `as_of` 边界层，I2 S2 把采集侧适配器接上**：
+`.venv` + pytest（数量**现取** `python -m pytest -q`；2026-09-24 I2 S2 实测 `75 passed` = 骨架 3 + 竖切 22 + PIT 18 + 适配器 32）、
+`pyproject.toml`（`dependencies = ["pandas>=2.0"]` —— S2 起**不再是空数组**，理由见 §1；源 SDK 在 `[datasources]` extra 里）、
+`quanauto/` 包（11 个实现模块，入口 `quanauto.cli`）、
+`tests/`（骨架自检 3 条 + 竖切回归 22 条 + PIT 回归 18 条 + 适配器回归 32 条）、`.github/workflows/ci.yml`。
+**I2 仍远未完成**：S1 交付 PIT 边界层、S2 交付采集侧适配器；**PostgreSQL 写入与回测改读真实日线都还没写**，
+复权因子也仍恒为 1.0（已知缺口，DC 契约附录 A 记着、附录 B 复述并给出关闭条件）——
 `docs/迭代计划.md` 里 I2 的「产物」行留空是**如实**，不是漏填。
 但 CI **从未在 GitHub 上跑过**（仓库没有配置 git remote），本地等价证据是
 `tools/ci-dryrun-report.txt`（含两次红→绿往返）；它是快照，改完代码要 `python tools/ci_dryrun.py` 重跑。
