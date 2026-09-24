@@ -1,5 +1,5 @@
 baseline: 先跑一次干净的全绿（tests/test_backtest_slice.py + tests/test_data_center_store.py + tests/test_backtest_db_feed.py + tests/test_backtest_risk_gate.py）
-baseline: 全绿 OK (passed=73)
+baseline: 全绿 OK (passed=78)
 APPLIED M1-account-double-frozen @ quanauto/broker.py (newline='\r\n', tests=tests/test_backtest_slice.py)
   CAUGHT=yes exit=1 failed=2 (test_max_drawdown_is_plausible, test_pending_buy_does_not_change_total_capital)
 APPLIED M2-fill-at-close-not-open @ quanauto/broker.py (newline='\r\n', tests=tests/test_backtest_slice.py)
@@ -27,7 +27,7 @@ APPLIED S3-symbols-lose-distinct @ quanauto/pgstore.py (newline='\r\n', tests=te
 APPLIED S4-write-becomes-plain-insert @ quanauto/pgstore.py (newline='\r\n', tests=tests/test_data_center_store.py)
   CAUGHT=yes exit=1 failed=1 (test_upsert_sql_follows_contract_rule_6)
 APPLIED S5-identical-row-writes-anyway @ quanauto/pgstore.py (newline='\r\n', tests=tests/test_data_center_store.py)
-  CAUGHT=yes exit=1 failed=3 (test_upsert_batch_mixes_branches_per_row, test_upsert_identical_rerun_writes_nothing, test_upsert_identical_under_trailing_zeros_is_still_identical)
+  CAUGHT=yes exit=1 failed=4 (test_upsert_batch_mixes_branches_per_row, test_upsert_identical_rerun_writes_nothing, test_upsert_identical_under_trailing_zeros_is_still_identical, test_upsert_ignores_a_float_tail_below_the_table_scale)
 APPLIED S6-empty-returning-counted-as-inserted @ quanauto/pgstore.py (newline='\r\n', tests=tests/test_data_center_store.py)
   CAUGHT=yes exit=1 failed=2 (test_upsert_concurrent_divergent_insert_raises_ingest_conflict, test_upsert_concurrent_identical_insert_is_skipped)
 APPLIED S7-version-check-moves-inside-transaction @ quanauto/pgstore.py (newline='\r\n', tests=tests/test_data_center_store.py)
@@ -41,6 +41,10 @@ APPLIED S10-driver-row-factory-dropped @ quanauto/pgstore.py (newline='\r\n', te
   CAUGHT=yes exit=1 failed=1 (test_psycopg_connection_asks_the_driver_for_mapping_rows)
 APPLIED CONTROL-comment-only-store @ quanauto/pgstore.py (newline='\r\n', tests=tests/test_data_center_store.py)
   control OK: 没抓到（本检查器确实会报 caught=NO）
+APPLIED S12a-transaction-uses-the-connection-context-manager @ quanauto/pgstore.py (newline='\r\n', tests=tests/test_data_center_store.py)
+  CAUGHT=yes exit=1 failed=2 (test_psycopg_transaction_is_the_drivers_commit_and_rollback, test_store_and_ingestor_over_the_driver_seam_end_to_end)
+APPLIED S12b-quantize-dropped-before-compare-and-bind @ quanauto/pgstore.py (newline='\r\n', tests=tests/test_data_center_store.py)
+  CAUGHT=yes exit=1 failed=2 (test_upsert_binds_values_already_quantized_to_the_table_scale, test_upsert_ignores_a_float_tail_below_the_table_scale)
 APPLIED S11-store-decimals-leak-into-the-engine @ quanauto/datacenter.py (newline='\r\n', tests=tests/test_backtest_db_feed.py)
   CAUGHT=yes exit=1 failed=7 (test_a_feed_that_declares_a_blank_version_is_refused_not_faked, test_engine_runs_end_to_end_over_a_store_backed_feed, test_pgbarstore_plugs_into_the_engine_and_binds_the_data_version, test_report_data_version_is_the_stores_data_version, test_the_same_snapshot_twice_gives_the_same_deterministic_section, test_the_session_guard_sees_every_row_the_engine_read, test_two_snapshots_with_the_same_bar_count_do_not_collide)
 APPLIED S12-data-version-ignores-the-declared-version @ quanauto/engine.py (newline='\r\n', tests=tests/test_backtest_db_feed.py)
@@ -58,6 +62,6 @@ APPLIED M16-risk-gate-open-loop @ quanauto/engine.py (newline='\r\n', tests=test
 APPLIED M17-risk-block-not-recorded @ quanauto/engine.py (newline='\r\n', tests=tests/test_backtest_risk_gate.py)
   CAUGHT=yes exit=1 failed=2 (test_kill_switch_before_run_keeps_every_order_out_of_market, test_zero_share_reduction_is_a_block_not_a_zero_order)
 NOTE [ENV-LIMIT] S9-driver-imported-eagerly 只在本机验不了，不等于通过；换到装了 psycopg 的环境要重跑
-mutations=24 caught=24 control=3 env_limited=1
+mutations=26 caught=26 control=3 env_limited=1
 report=D:\project-quan\quan-auto\tools\pytest-mutation-report.txt
 verdict: PASS

@@ -67,7 +67,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, datetime
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, Iterator, List, Mapping, Protocol, Sequence, runtime_checkable
 
 from .datacenter import BarStore, DailyBar
@@ -110,6 +110,14 @@ BAR_COLUMNS = (
 
 #: 参与「同值/异值」判定的字段（见约定 3）。
 VALUE_FIELDS = ("open", "high", "low", "close", "volume", "amount")
+
+#: `dc_daily_bar` 六个数值列在库里的标度（`numeric(18,4)` / `numeric(20,4)`，**都是 4**）。
+#: 写入/判等前把值量化到这个标度，是 D10「同一批次重跑结果必须与跑一次相同」的前提：
+#: 库会按 `numeric(_,4)` 四舍五入后再存，若本批带子标度的浮点尾巴，两侧就不是同一个数。
+#: 改 `db/data_center.sql` 的标度必须同时改这里（`.rounds/_i2b3_db_roundtrip.py`
+#: 会从 DDL 正则量出标度并与实际行为对拍，实测记录见契约附录 B18.3）。
+_VALUE_SCALE = 4
+_VALUE_QUANTUM = Decimal(1).scaleb(-_VALUE_SCALE)
 
 # ── SQL ──────────────────────────────────────────────────────────────────
 #: 读一个 (标的, 版本, 闭区间窗口) 的日线，按交易日升序。
@@ -203,21 +211,41 @@ def _as_date_value(value) -> date:
 
 
 def _as_decimal(value) -> Decimal:
-    """数值列一律走 `Decimal`。
+    """数值列一律走 `Decimal`，并量化到库内标度（`_VALUE_SCALE`）。
 
     用 `Decimal(str(value))` 而不是 `Decimal(value)`：`Decimal(0.1)` 会把二进制浮点的
     误差原样带进来（`0.1000000000000000055511151231257827`），于是「同一个 0.1」在
     两条路径上判不相等 —— 判等和 CHECK 约束都会跟着出错。`bool` 先挡掉，因为它是
     `int` 的子类，会被 `str()` 变成 `'True'`。
+
+    末尾的 `quantize` 是 2026-09-24 补的，依据是 D10 幂等：库里这六列都是 `numeric(_,4)`，
+    PostgreSQL 入库时会四舍五入到 4 位；若本批带 1e-7 的浮点尾巴（源侧 2 位小数的「万元」
+    × 10000 走 float64 就会，实测 `842270399.9999999`，数学上是 `842270400`），
+    就会与库内的 `842270400.0000` 判成「异值」⇒ **同一批次连跑两次**抛 DATA_007，
+    D10 的「重跑不产生重复」当场破裂。量化后两侧都等于库真正会存下的那个数，判等才有意义。
+
+    量化只放在这一个函数里 ⇒ 读、写、比**三条路径同时收敛**（读侧本来就是 4 位，量化为恒等），
+    而且 `INSERT` 绑定的参数也一并带标度，库端 `IS DISTINCT FROM` 那道闸同样判成「同值」。
+    实测见契约附录 B18.3。
     """
-    if isinstance(value, Decimal):
-        return value
     if isinstance(value, bool) or value is None:
         raise DataStoreError("数值列收到 %r，无法转成 Decimal" % (value,))
     try:
-        return Decimal(str(value).strip())
+        if isinstance(value, Decimal):
+            number = value
+        else:
+            number = Decimal(str(value).strip())
     except (InvalidOperation, ValueError, AttributeError) as exc:
         raise DataStoreError("数值列收到 %r，无法转成 Decimal" % (value,)) from exc
+    try:
+        # `ROUND_HALF_UP` 在 `Decimal` 里的定义是「半数远离零」，与 PostgreSQL `numeric`
+        # 的四舍五入同义 —— 用错模式（如默认的 `ROUND_HALF_EVEN`）会让两侧在 `.00005`
+        # 这类值上悄悄分家。
+        return number.quantize(_VALUE_QUANTUM, rounding=ROUND_HALF_UP)
+    except InvalidOperation as exc:
+        raise DataStoreError(
+            "数值列 %r 量化到 %d 位小数失败（超出 decimal 上下文精度）" % (value, _VALUE_SCALE)
+        ) from exc
 
 
 def _row_to_bar(row: Mapping[str, Any]) -> DailyBar:
@@ -424,9 +452,30 @@ class PsycopgConnection:
 
     @contextmanager
     def transaction(self) -> Iterator["PsycopgConnection"]:
-        """psycopg 3 的连接上下文语义：正常退出提交，异常退出回滚。"""
+        """psycopg 3 的事务语义：正常退出提交，异常退出回滚。
+
+        ⚠️ 这里**必须**是 `conn.transaction()`，**绝不能**写成 `with conn:`。
+        实测（psycopg 3.3.6，`psycopg/connection.py` 的 `Connection.__exit__`）：
+
+            if exc_type: self.rollback()
+            else:        self.commit()
+            # Close the connection only if it doesn't belong to a pool.
+            if not getattr(self, "_pool", None):
+                self.close()
+
+        `psycopg.connect()` 不带 pool ⇒ 出块时**连连接一起关掉**。而本类是一个可以反复用的
+        连接对象（`_connect()` 里有 `if self._conn is None` 的复用），于是「先入库、再读回」
+        这种最自然的用法会在第二次调用上炸成 `DATA_008 ... the connection is closed`。
+        `Connection.transaction()` 才是「在既有连接上开一个事务」的 API：提交/回滚，不关连接。
+
+        这一条曾经是错的，而**离线测试全绿**：测试里的假连接把 `__exit__` 写成「只记
+        commit/rollback，不关连接」—— 那是照**作者的假设**写的，不是照驱动实测写的。
+        抓到它的是容器通道那条探针（契约附录 B18）。教训与 B16.1/B17.1 同源：
+        **对驱动行为的假设属于外部事实，只能测，不能想**；假连接必须照实测重写，
+        否则它证明的只是「实现等于它自己」。
+        """
         conn = self._connect()
-        with conn:
+        with conn.transaction():
             yield self
 
     def close(self) -> None:

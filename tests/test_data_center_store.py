@@ -8,6 +8,13 @@
 * 这里守的是**形状与分支**：SQL 是否参数化、约定 6 的 upsert 在不在、三个分支
   （插入 / 同值重跑 / 同主键异值）是否各走各路、驱动异常有没有被包装。
 
+**2026-09-24 兑现**：上面那句「证据只能来自容器通道那份报告」不是修辞。报告（契约附录 B18）
+真的来了，并且当场把本文件的一个假设判死：假驱动的 `__exit__` 原先「只记 commit/rollback、
+不关连接」，是把作者的猜测当成了 psycopg 的行为；真驱动（3.3.6）在 `with conn:` 出块时
+**提交/回滚之后还会关连接**。于是 `PsycopgConnection.transaction()` 里的 `with conn:` 让
+「先入库、再读回」在真库上炸，而本文件全绿。假驱动现已照实测重写（关连接 + 关掉后再
+`execute` 就抛），并另有一条用例专门钉住它的保真度。
+
 TDD：本文件与 `quanauto/pgstore.py` 的红步骤同批提交 —— 先有失败的断言，再有实现。
 复现红状态：
 
@@ -23,6 +30,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import subprocess
 import sys
 from datetime import date
@@ -30,6 +38,7 @@ from decimal import Decimal
 
 import pytest
 
+from quanauto import pgstore
 from quanauto.datacenter import DailyBar
 from quanauto.errors import (
     DataStoreError,
@@ -55,8 +64,9 @@ DAY = date(2026, 1, 5)
 
 
 def _bar(symbol: str = SYMBOL, trade_date: date = DAY, close: str = "10.5",
-         data_version: str = VERSION, source: str = "akshare") -> DailyBar:
-    """一条标准日线。`close` 收字符串，方便造「同值但写法不同」（`10.5` vs `10.5000`）。"""
+         data_version: str = VERSION, source: str = "akshare",
+         amount: str = "10500") -> DailyBar:
+    """一条标准日线。`close`/`amount` 收字符串，方便造「同值但写法不同」（`10.5` vs `10.5000`）。"""
     return DailyBar(
         symbol=symbol,
         trade_date=trade_date,
@@ -65,13 +75,13 @@ def _bar(symbol: str = SYMBOL, trade_date: date = DAY, close: str = "10.5",
         low=Decimal("9.9"),
         close=Decimal(close),
         volume=Decimal("1000"),
-        amount=Decimal("10500"),
+        amount=Decimal(amount),
         source=source,
         data_version=data_version,
     )
 
 
-def _row(close: str = "10.5") -> dict:
+def _row(close: str = "10.5", amount: str = "10500.0000") -> dict:
     """库里的那一行 —— **故意全是字符串**。
 
     psycopg 会把 `date` / `numeric` 转成 Python 类型，但并不是所有通道都这样
@@ -88,7 +98,7 @@ def _row(close: str = "10.5") -> dict:
         "low": "9.9000",
         "close": close,
         "volume": "1000.0000",
-        "amount": "10500.0000",
+        "amount": amount,
         "source": "akshare",
         "data_version": VERSION,
     }
@@ -262,6 +272,66 @@ def test_upsert_identical_under_trailing_zeros_is_still_identical():
     assert not _insert_calls(conn), conn.calls
 
 
+def test_upsert_ignores_a_float_tail_below_the_table_scale():
+    """D10 在**浮点尾巴**面前必须成立：库内 `842270400.0000` 与本批 `842270399.9999999` 是同一个值。
+
+    尾巴不是笔误，是float64 算必然的产物：源侧「万元」保留 2 位小数，乘 10000 就落在
+    整数下方一点点（实测，见契约附录 B16.7 / B18.3）。库里那列是 `numeric(20,4)`，
+    PostgreSQL 写入时本就把它存成 `842270400.0000`；若判等前不量化到同一标度，就是拿两个
+    不同的数去比 ⇒ 同一批次连跑两次抛 DATA_007，而 D10 要求的正是「重跑 == 跑一次」。
+
+    这条用例就是真库上那次 DATA_007 的离线复现（样本编号 S12b）。
+    """
+    tail, stored = Decimal("842270399.9999999"), Decimal("842270400.0000")
+    assert tail != stored, "前置：尾巴与库内值在 `Decimal` 上确实不等，否则本用例在空转"
+    conn = FakeConn(script=[[_row(amount="842270400.0000")]])
+    report = PgBarIngestor(conn).upsert_daily_bars([_bar(amount="842270399.9999999")])
+    assert (report.inserted, report.skipped) == (0, 1), report
+    assert not _insert_calls(conn), \
+        "子标度的尾巴不算异值，不该发 INSERT：%s" % [c[0][:40] for c in conn.calls]
+    assert conn.events == ["begin", "commit"], conn.events
+
+
+def test_upsert_binds_values_already_quantized_to_the_table_scale():
+    """绑给库的参数要**带标度**：库端 `IS DISTINCT FROM` 是拿字符串化的 numeric 比的。
+
+    量化只放在 `_as_decimal` 一处，所以写侧参数顺带收敛；这条用例把「顺带」变成判据，
+    免得日后有人把量化挪到读侧（那时写侧又会给库一个带尾巴的值，库端那道闸就判成异值）。
+    """
+    conn = FakeConn(script=[[], [{"symbol": SYMBOL}]])
+    PgBarIngestor(conn).upsert_daily_bars([_bar(amount="842270399.9999999")])
+    bound = _insert_calls(conn)[0][1][BAR_COLUMNS.index("amount")]
+    assert bound == Decimal("842270400.0000"), bound
+    assert str(bound) == "842270400.0000", "绑定的值必须带库内标度：%r" % (str(bound),)
+
+
+def test_upsert_still_calls_a_one_cent_change_a_conflict():
+    """反向用例：量化**没有**把真差异一起抹掉。一分钱 = 1e-2 = 100 个量化单位。"""
+    conn = FakeConn(script=[[_row(close="10.0000")]])
+    with pytest.raises(IngestConflictError) as caught:
+        PgBarIngestor(conn).upsert_daily_bars([_bar(close="10.01")])
+    assert "close" in str(caught.value), str(caught.value)
+
+
+def test_value_scale_matches_the_ddl():
+    """`_VALUE_SCALE` 是 `db/data_center.sql` 标度的镜像 —— 抄错就得再破一次幂等。
+
+    离线套件不连库，所以只能把 DDL 当文本读来对账；**提取为空必须判失败**（正则失配时
+    一个刻度都比不到，却会打印「全等」）。
+    """
+    ddl = open(os.path.join(REPO_ROOT, "db", "data_center.sql"), encoding="utf-8").read()
+    table = re.search(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?dc_daily_bar\b(.*?);",
+                      ddl, re.S | re.I)
+    assert table, "没在 DDL 里找到 dc_daily_bar 的 CREATE TABLE —— 提取为空，本用例形同虚设"
+    scales = {m.group(1).lower(): int(m.group(2)) for m in re.finditer(
+        r"\b(open|high|low|close|volume|amount)\s+numeric\(\s*\d+\s*,\s*(\d+)\s*\)",
+        table.group(1), re.I)}
+    assert set(scales) == set(VALUE_FIELDS), \
+        "DDL 里六个数值列的标度没全取到，取到的是 %r" % (scales,)
+    assert set(scales.values()) == {pgstore._VALUE_SCALE}, \
+        "DDL 标度 %r 与 `_VALUE_SCALE=%d` 不一致" % (scales, pgstore._VALUE_SCALE)
+
+
 def test_upsert_divergent_value_raises_ingest_conflict():
     conn = FakeConn(script=[[_row(close="10.0000")]])
     with pytest.raises(IngestConflictError) as caught:
@@ -407,15 +477,41 @@ class _DriverCursor:
         return list(self._rows)
 
 
+class _DriverClosed(RuntimeError):
+    """关掉的连接上再 `execute` 会抛的东西 —— 照实测抄（psycopg 3 报
+    `OperationalError: the connection is closed`）。"""
+
+
 class _DriverConn:
-    """假 psycopg 连接：只实现我们真正用到的那几个成员，多一个都没有。"""
+    """假 psycopg 连接：只实现我们真正用到的那几个成员，并且**照实测抄语义**。
+
+    ⚠️ 这个类是 2026-09-24 重写的，重写的原因是它**曾经把驱动写错、因此放跑了一个真缺陷**：
+
+      旧版 `__exit__` 只记一句 `commit` / 异常名，**不关连接** —— 那是照「我以为 psycopg
+      的 `with conn:` 是提交/回滚」写的。实测 psycopg 3.3.6 的 `Connection.__exit__`
+      （`psycopg/connection.py`）在提交/回滚之后还有一句：
+
+          if not getattr(self, "_pool", None):
+              self.close()
+
+      `psycopg.connect()` 不带 pool ⇒ **出块就关连接**。于是 `PsycopgConnection.transaction()`
+      里写 `with conn:` 时，「先入库、再读回」在真库上炸成 `DATA_008 ... connection is closed`，
+      而本文件里的每一条用例都是绿的 —— 假连接把「实现等于它自己」当成了证据。
+
+      现在：`__exit__` 提交/回滚**并关连接**，`transaction()` 提交/回滚**且不关**，
+      且关掉之后再 `execute` 会抛。于是「我们的 `transaction()` 必须在事务后让连接还能用」
+      这件事，离线用例就能盯住，不必等到起容器。
+    """
 
     def __init__(self, script=None):
         self.script = list(script or [])
         self.calls = []
         self.exits = []
+        self.closed = False
 
     def execute(self, sql, params=()):
+        if self.closed:
+            raise _DriverClosed("the connection is closed")
         self.calls.append((sql, tuple(params)))
         return _DriverCursor(self.script.pop(0) if self.script else [])
 
@@ -423,11 +519,24 @@ class _DriverConn:
         return self
 
     def __exit__(self, exc_type, exc, tb):
-        # `dict`/`str` 记下来，好断言「是提交还是回滚」；返回 False ⇒ 异常继续往上抛。
+        # 照实测：提交或回滚，**然后关连接**。`dict`/`str` 记下来好断言是哪一种；
+        # 返回 False ⇒ 异常继续往上抛。
         self.exits.append(exc_type.__name__ if exc_type else "commit")
+        self.close()
         return False
 
+    @contextlib.contextmanager
+    def transaction(self):
+        """照实测：`Connection.transaction()` 提交/回滚，**不**关连接。"""
+        try:
+            yield self
+        except BaseException as exc:
+            self.exits.append(type(exc).__name__)
+            raise
+        self.exits.append("commit")
+
     def close(self):
+        self.closed = True
         self.exits.append("close")
 
 
@@ -477,12 +586,18 @@ def test_psycopg_connection_asks_the_driver_for_mapping_rows(monkeypatch):
 
 
 def test_psycopg_transaction_is_the_drivers_commit_and_rollback(monkeypatch):
-    """`transaction()` 必须把驱动自己的提交/回滚语义原样传下去。
+    """`transaction()` 必须把驱动自己的提交/回滚语义原样传下去，**且事务后连接还能用**。
 
     这条不是吹毛求疵：若这里写成手工 `BEGIN`/`COMMIT`，异常路径漏掉回滚的后果是
     「库里的半批数据」，它不会自己冒泡成任何一条测试失败 —— 只能靠这条控制组盯住。
+
+    「还能用」那半句是 2026-09-24 补的，补的原因是它真的坏过：`transaction()` 原先写的是
+    `with conn:`，而 psycopg 3 的 `Connection.__exit__` 在提交/回滚之后**还会关连接**
+    （`if not getattr(self, "_pool", None): self.close()`，实测 psycopg 3.3.6），
+    于是「先入库、再读回」的第二次调用报 `the connection is closed`。修法与实测记录：
+    `quanauto/pgstore.py` 的 `PsycopgConnection.transaction` 文档串 / 契约附录 B18。
     """
-    driver = _DriverConn()
+    driver = _DriverConn([[_row()]])
     monkeypatch.setitem(sys.modules, "psycopg", _FakePsycopg(driver))
     conn = PsycopgConnection("postgresql://u@127.0.0.1:1/quanauto")
 
@@ -492,13 +607,43 @@ def test_psycopg_transaction_is_the_drivers_commit_and_rollback(monkeypatch):
         with conn.transaction():
             raise ValueError("boom")
     assert driver.exits == ["commit", "ValueError"], driver.exits
+    assert driver.closed is False, "事务结束**不能**关连接：本类是可反复用的长命连接"
+    assert conn.execute(SQL_SELECT_EXISTING, (SYMBOL, DAY, VERSION)) == [_row()], (
+        "事务之后必须还能用同一条连接 —— 「入完一批、紧接着读回」靠的就是这件事"
+    )
+
+
+def test_the_fake_driver_mirrors_the_measured_connection_context_trap():
+    """假驱动的**保真度**本身也要被盯住，否则它证明的只是「实现等于它自己」。
+
+    实测（psycopg 3.3.6 `Connection.__exit__`）：`with conn:` 提交/回滚之后**会关连接**
+    （不带 pool 时）。这条把该语义钉在假驱动上：哪天真驱动的行为变了、而我们照旧写假驱动，
+    这里先红。它同时解释了为什么 `PsycopgConnection.transaction()` 不许写成 `with conn:`。
+    """
+    with _DriverConn() as driver:
+        pass
+    assert (driver.closed, driver.exits) == (True, ["commit", "close"]), driver.exits
+
+    driver2 = _DriverConn()
+    with pytest.raises(ValueError):
+        with driver2:
+            raise ValueError("boom")
+    assert (driver2.closed, driver2.exits) == (True, ["ValueError", "close"]), driver2.exits
+
+    driver3 = _DriverConn()
+    with driver3.transaction():
+        pass
+    assert (driver3.closed, driver3.exits) == (False, ["commit"]), driver3.exits
+    driver3.close()
+    with pytest.raises(_DriverClosed):
+        driver3.execute("SELECT 1")
 
 
 def test_store_and_ingestor_over_the_driver_seam_end_to_end(monkeypatch):
     """端到端控制组：分支用例用 `FakeConn` 测过，但「`PgBarIngestor` / `PgBarStore` 与
     真实适配层接不接得上」它证明不了（键名对不上、事务没生效、行形态不对都可能发生）。
     这里把假驱动接到 `PsycopgConnection` 上，让读和写各走一遍完整链路。"""
-    driver = _DriverConn([[_row()], [], [_row()]])
+    driver = _DriverConn([[_row()], [], [_row()], [_row()]])
     monkeypatch.setitem(sys.modules, "psycopg", _FakePsycopg(driver))
     conn = PsycopgConnection("postgresql://u@127.0.0.1:1/quanauto")
 
@@ -509,3 +654,8 @@ def test_store_and_ingestor_over_the_driver_seam_end_to_end(monkeypatch):
     assert (report.inserted, report.skipped) == (1, 0), report
     assert len(driver.calls) == 3, [c[0][:40] for c in driver.calls]
     assert driver.exits == ["commit"], "整批一个事务，正常退出必须提交：%r" % driver.exits
+    assert driver.closed is False, (
+        "入库之后连接必须是活的 —— 这条端到端用例就是旧版 `with conn:` 缺陷的离线复现（B18）"
+    )
+    bars_again = PgBarStore(conn, VERSION).select_bars(SYMBOL, DAY, DAY)
+    assert len(bars_again) == 1, "写完之后再读一次同一条连接：这就是真库上炸过的那一步"

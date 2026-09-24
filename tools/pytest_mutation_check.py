@@ -17,8 +17,8 @@
   * `MUTATION` 触发出来的失败必须是**断言/异常**，不能是 `ImportError`/语法错
     （收集阶段就炸掉，等于测试根本没跑）。
 
-**它不进 `run_all_gates.py` 的注册表**：每条样本要跑一次 pytest（2026-09-24 实测 28 条样本：
-24 条变异 + 3 条 CONTROL + 1 条 ENV-LIMIT），慢，且它验证的对象是测试而不是产物契约。
+**它不进 `run_all_gates.py` 的注册表**：每条样本要跑一次 pytest（2026-09-24 实测 30 条样本：
+26 条变异 + 3 条 CONTROL + 1 条 ENV-LIMIT），慢，且它验证的对象是测试而不是产物契约。
 手动跑，或改完测试后跑一次。
 
 **`env_limit`（一条变异的出口）**：有的缺陷在**本机环境里根本不可能被断言抓住**
@@ -234,6 +234,48 @@ MUTATIONS = [
         "old": "# ── SQL ──",
         "new": "# ── SQL（MUTATION：只改注释，必须抓不到） ──",
         "expect": CONTROL,
+    },
+    {
+        # 2026-09-24 追补，样本来自**真跑出来的**缺陷（契约附录 B18）：
+        # `transaction()` 原先写 `with conn:`。psycopg 3 的 `Connection.__exit__` 在提交/回滚
+        # 之后还会 `close()`（无 pool 时），于是「先入库、再读回」在真库上报
+        # `the connection is closed`，而当时的离线套件全绿 —— 假驱动的 `__exit__`
+        # 只记 commit/rollback、不关连接，它证明的只是「实现等于它自己」。
+        # 现在假驱动照实测重写（关连接 + 关掉后再 execute 就抛），这条变异用来钉住这件事。
+        "tag": "S12a-transaction-uses-the-connection-context-manager",
+        "tests": TESTS_STORE,
+        "path": "quanauto/pgstore.py",
+        "old": (
+            "        conn = self._connect()\n"
+            "        with conn.transaction():\n"
+            "            yield self"
+        ),
+        "new": (
+            "        conn = self._connect()\n"
+            "        with conn:\n"
+            "            yield self"
+        ),
+        "expect": [
+            "test_psycopg_transaction_is_the_drivers_commit_and_rollback",
+            "test_store_and_ingestor_over_the_driver_seam_end_to_end",
+        ],
+    },
+    {
+        # 2026-09-24 追补，同一条真库探针带出来的**第二个**缺陷（契约附录 B18.3）：
+        # 入库报告 inserted=86 之后重跑同一批，第 2 行就抛 DATA_007：
+        #   amount 库内 842270400.0000 / 本批 842270399.9999999
+        # 尾巴来自源侧「万元」× 10000 走 float64；库按 numeric(20,4) 存的就是
+        # 842270400.0000。不量化到同一标度 ⇒ D10「重跑 == 跑一次」当场破裂。
+        # 修法是 `_as_decimal` 末尾 quantize，这条变异把 quantize 拿掉。
+        "tag": "S12b-quantize-dropped-before-compare-and-bind",
+        "tests": TESTS_STORE,
+        "path": "quanauto/pgstore.py",
+        "old": "        return number.quantize(_VALUE_QUANTUM, rounding=ROUND_HALF_UP)",
+        "new": "        return number  # MUT：不量化，拿浮点尾巴去比",
+        "expect": [
+            "test_upsert_ignores_a_float_tail_below_the_table_scale",
+            "test_upsert_binds_values_already_quantized_to_the_table_scale",
+        ],
     },
     # ── I2 S3 后半：引擎接 `as_of()` 产出的 feed（↔ tests/test_backtest_db_feed.py） ──
     {
