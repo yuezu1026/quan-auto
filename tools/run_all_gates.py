@@ -497,9 +497,20 @@ def write_report(rows, registry, report_path=REPORT_PATH):
         lines.append('-' * 78)
         lines.append(r['output'].rstrip())
         lines.append('')
+    text = '\n'.join(lines)
     with open(report_path, 'w', encoding='utf-8', newline='\n') as f:
-        f.write('\n'.join(lines))
-    return len(lines)
+        f.write(text)
+    # PHYSICAL lines, not list elements. `lines` holds one element per *field*, and
+    # `r['output']` is a single element carrying a gate's entire multi-line log, so
+    # len(lines) undercounted by ~2.5x: the printed '(79 lines)' described a 201-line
+    # file. A wrong number in the harness' own summary of its own evidence is the same
+    # defect family as a scope line that lies -- the reader cannot tell it is wrong.
+    # Definition: what a reader counting the file sees, i.e. `f.readlines()` semantics --
+    # a trailing newline terminates the last line instead of inventing an empty one.
+    # (`text.count('\n') + 1` double-counts that trailing newline; the first version of
+    # this fix did, and the sample below caught it: claimed=13 physical=12.)
+    n_newlines = text.count('\n')
+    return n_newlines if text.endswith('\n') else n_newlines + 1
 
 
 def print_table(rows):
@@ -600,6 +611,27 @@ def selftest():
     ok = ok and hit
     try:
         os.remove(tmp_report)
+    except OSError:
+        pass
+
+    # '(N lines)' must be the number of physical lines in the file, checked against the
+    # bytes on disk rather than against the formula -- a refactor of the join must not be
+    # able to keep this green while the number drifts again. `readlines()` is a different
+    # stdlib path from the count-and-join above, so it is an independent witness. The
+    # sample row's output holds embedded newlines on purpose: that is the shape
+    # len(lines) miscounted, and the trailing-newline shape that broke the first fix.
+    tmp_lines = os.path.join(tempfile.gettempdir(), 'gates-selftest-lines.txt')
+    fake_row = {'name': 'a', 'tier': 'A', 'selftest': 'PASS', 'verdict': 'PASS',
+                'detail': 'x', 'problems': [], 'output': 'l1\nl2\nl3\nl4\nl5'}
+    claimed = write_report([fake_row], [ga], tmp_lines)
+    with open(tmp_lines, encoding='utf-8-sig') as f:
+        physical = len(f.readlines())
+    hit = claimed == physical
+    print('  [report-line-count-honest] claimed=%d physical=%d %s'
+          % (claimed, physical, 'OK' if hit else 'MISSED'))
+    ok = ok and hit
+    try:
+        os.remove(tmp_lines)
     except OSError:
         pass
 
