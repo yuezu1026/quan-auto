@@ -4,18 +4,20 @@
 CI 自 2026-09-24 起在 GitHub 上真跑（`origin` 公开；首次真跑判红、修复后第二次 success）；
 下面这份是**本地等价**：它给的是本机解释器的口径，和 GitHub 上那次真跑不能互相替代。
 
-generated: 2026-09-24 08:46:43
+generated: 2026-09-24 19:37:44
 python:    D:\project-quan\quan-auto\.venv\Scripts\python.exe  (.venv/Scripts/python.exe)
 version:   Python 3.13.9
-commit:    1cb31d266dfac08453cf76d44b3215494da7dcff
+commit:    0be919256a4034d3d946bf9c00ca78f18c49705c
 dirty:     0 项未提交改动
-pycache:   启动时清掉 0 个 __pycache__（陈旧字节码会让结论与磁盘源码无关）
+pycache:   启动时清掉 3 个 __pycache__（陈旧字节码会让结论与磁盘源码无关）
 
 ## 1. python -m pytest -q
 exit: 0
-  | ........................................................................ [ 96%]
-  | ...                                                                      [100%]
-  | 75 passed in 0.57s
+  | ........................................................................ [ 26%]
+  | ........................................................................ [ 53%]
+  | ........................................................................ [ 80%]
+  | ......................................................                   [100%]
+  | 270 passed in 20.99s
 
 ## 2. 红→绿往返（I0 触发测试的证据：两个关键的东西各红一次）
 
@@ -26,13 +28,13 @@ exit: 0
   红: pytest exit=1
     | =========================== short test summary info ===========================
     | FAILED tests/test_skeleton.py::test_version_matches_pyproject - AssertionErro...
-    | 1 failed, 74 passed in 0.67s
+    | 1 failed, 269 passed in 20.27s
   还原: 与原始字节逐字节一致
   解释器读回: 还原后 0.1.0
   绿: pytest exit=0
-    | ........................................................................ [ 96%]
-    | ...                                                                      [100%]
-    | 75 passed in 0.57s
+    | ........................................................................ [ 80%]
+    | ......................................................                   [100%]
+    | 270 passed in 19.89s
 
 ### ci-drops-gates -- 把 CI 里那一行门禁命令换成单跑一个子门禁
   靶子: .github/workflows/ci.yml  'python tools/run_all_gates.py' -> 'python tools/verify_risk_config.py'
@@ -49,16 +51,16 @@ exit: 0
 
 ## 3. python tools/run_all_gates.py
 exit: 0
-  | iteration-plan       A     PASS      PASS       0 finding(s)   迭代计划里每个标「已交付」的迭代都引用了一条真实存在的证据路径
-  | skeleton             A     PASS      PASS       0 finding(s)   I0 骨架还在：pyproject / 包 / 测试 / CI 接线（不跑 pytest
-  | backtest-reproducibility A     PASS      PASS       0 finding(s)   同种子两次回测的报告 deterministic 段逐字节相同，换种子必须真的变
-  | contract-signature   A     PASS      PASS       0 finding(s)   契约侧与实现侧的签名/字段一致，多出来的公有成员必须在清单里登记
-  | core-contract-refs   B     PASS      RATCHET    39/39          主契约引用的类型/异常是否都有定义（B7 欠账，受棘轮约束）
-  | report: tools\gates-report.txt (72 lines) -- read this instead of re-running the gates
-  | verdict: PASS (10/10 gate(s) green)
-  | NOTE: these 10 gates execute no SQL -- they prove the constraints are still WRITTEN, not that they REJECT.
+  | report: tools\gates-report.txt (200 lines) -- read this instead of re-running the gates
+  | verdict: PASS (11/11 gate(s) green)
+  | NOTE: these 11 gates execute no SQL -- they prove the constraints are still WRITTEN, not that they REJECT.
   | NOTE: the runtime evidence lives in tools\sql-smoke-report.txt (produced by tools\run_sql_smoke.py).
-  |       That file is a SNAPSHOT: read its verdict together with the image digest recorded inside it, and re-run it after any db/*.sql edit.
+  |       That path is the DEFAULT snapshot; `--report=` writes a sibling without touching it,
+  |       which is how the version ladder was recorded (tools/sql-smoke-report-pg1*.txt -- postgres:14/15/16).
+  |       A snapshot is evidence only together with the image digest recorded inside it,
+  |       and re-running after any db/*.sql edit overwrites it -- so save to a new path.
+  | NOTE: these 11 gates DO read those snapshots, but only to compare the image names 
+  |       against each DDL's PG-VERIFIED-ON stamp (in both directions); they do not re-run SQL.
   | NOTE: proof that the runtime green has teeth lives in tools\falsify-report.txt (produced by tools\falsify_smoke.py).
   |       One case per named CHECK; every case must turn exactly one sample red.
 
