@@ -205,6 +205,21 @@ class IngestConflictError(DataCenterError):
     code = "DATA_007"
 
 
+class DataStoreError(DataCenterError):
+    """落库层的操作失败（连接断了、事务被回滚、CHECK 约束被违反）。
+
+    数据中心契约 §3.9 的七档错误码里**没有**「存储层失败」这一档 —— 那是契约的疏漏，
+    不是可以省掉的东西：一旦不定义它，驱动自己的异常（`psycopg.OperationalError` …）
+    就会裸逃到调用方，而调用方是策略/回测代码，不该知道 psycopg 的存在（D9：上层不感知
+    数据源差异，存储同理）。所以本类按「实现侧补齐」建档，码值顺延 `DATA_008`。
+
+    与 `DataQualityError`（DATA_003）的分工：CHECK 约束被违反说明**上游 `validate()`
+    放行了不该放行的行**，那是 bug 不是数据质量问题，所以落库层不把它映射成 DATA_003。
+    """
+
+    code = "DATA_008"
+
+
 # ── 回测类 ────────────────────────────────────────────────────────────────
 class BacktestError(QuanAutoError):
     """回测相关异常的共同根。"""
