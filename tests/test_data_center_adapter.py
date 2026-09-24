@@ -18,6 +18,7 @@ import json
 import socket
 import threading
 import urllib.error
+import urllib.parse
 
 import pandas as pd
 import pytest
@@ -26,8 +27,9 @@ from quanauto import datasources as ds
 from quanauto.datasources import (
     AKSHARE_DAILY_BAR,
     DAILY_BAR_COLUMNS,
-    EASTMONEY_FINANCIAL,
+    EASTMONEY_BALANCE_FINANCIAL,
     EASTMONEY_INDEX_MEMBER,
+    EASTMONEY_INCOME_FINANCIAL,
     EASTMONEY_REPORT_TYPE,
     FINANCIAL_COLUMNS,
     FINANCIAL_REQUIRED_COLUMNS,
@@ -85,17 +87,33 @@ def _akshare_raw(**overrides):
     return pd.DataFrame(frame)
 
 
-def _eastmoney_financial_raw(**overrides):
+def _eastmoney_income_raw(**overrides):
+    """东财**利润表**：列名照 2026-09-24 实测拄，关键是 `REPORTDATE` 没有下划线。
+
+    两张表分开做夹具是刻意的：实测没有任何单一 `reportName` 同时含收入类与资产
+    负债类科目，而两者的日期列名还不一样（附录 B12）。夹具若不分开，就会把一个
+    实测中不存在的响应形状当成基线。
+    """
+    frame = {
+        "SECURITY_CODE": ["600000"],
+        "REPORTDATE": ["2026-06-30"],
+        "NOTICE_DATE": ["2026-08-28"],
+        "TOTAL_OPERATE_INCOME": [1.0e10],
+        "PARENT_NETPROFIT": [2.0e9],
+        "WEIGHTAVG_ROE": [12.5],   # 单位：百分数
+    }
+    frame.update(overrides)
+    return pd.DataFrame(frame)
+
+
+def _eastmoney_balance_raw(**overrides):
+    """东财**资产负债表**：另一张报表，日期列名是 `REPORT_DATE`（带下划线）。"""
     frame = {
         "SECURITY_CODE": ["600000"],
         "REPORT_DATE": ["2026-06-30"],
         "NOTICE_DATE": ["2026-08-28"],
-        "REPORT_TYPE": ["利润表"],
-        "TOTAL_OPERATE_INCOME": [1.0e10],
-        "PARENT_NETPROFIT": [2.0e9],
         "TOTAL_ASSETS": [3.0e11],
         "TOTAL_EQUITY": [1.5e11],
-        "WEIGHTAVG_ROE": [12.5],   # 单位：百分数
     }
     frame.update(overrides)
     return pd.DataFrame(frame)
@@ -184,28 +202,55 @@ def test_normalize_financial_refuses_to_substitute_period_end_for_announce_date(
     这是最经典的一类未来函数：一份 3 个月后才公开的报表，会在报告期当天就"可见"。
     它不报错，只让回测收益变漂亮。
     """
-    raw = _eastmoney_financial_raw().drop(columns=["NOTICE_DATE"])
+    raw = _eastmoney_income_raw().drop(columns=["NOTICE_DATE"])
     with pytest.raises(SourceAdapterError) as caught:
-        normalize_financial(raw, EASTMONEY_FINANCIAL, symbol="600000",
-                            report_type_map=EASTMONEY_REPORT_TYPE,
-                            roe_is_percent=True)
+        normalize_financial(raw, EASTMONEY_INCOME_FINANCIAL, symbol="600000",
+                            report_type="INCOME", roe_is_percent=True)
     assert "announce_date" in str(caught.value)
 
 
-def test_normalize_financial_maps_report_type_and_rescales_roe() -> None:
-    """报表名要映射进 `ck_dc_fin_report_type` 的取值域；ROE 要从小数比率口径对齐。
+def test_normalize_financial_takes_report_type_from_the_request() -> None:
+    """`report_type` 由**请求参数**给（东财响应里根本没有这一列，实测只给 `REPORT_TYPE_CODE`）。
+
+    它同时是 `dc_financial` 主键的一部分 —— “没给且帧里也没有”必须抛，不许猜一个默认值：
+    猜错不会报错，只会让一批数据挂到错误的报表名上。
+    """
+    frame = normalize_financial(_eastmoney_income_raw(), EASTMONEY_INCOME_FINANCIAL,
+                                symbol="600000", report_type="INCOME",
+                                roe_is_percent=True)
+    assert frame["report_type"].iloc[0] == "INCOME"
+    assert "SECURITY_CODE" not in frame.columns, "源字段名泄漏"
+
+    with pytest.raises(SourceAdapterError) as caught:
+        normalize_financial(_eastmoney_income_raw(), EASTMONEY_INCOME_FINANCIAL,
+                            symbol="600000")
+    assert "report_type" in str(caught.value)
+
+
+def test_normalize_financial_rejects_a_report_type_outside_the_contract_enum() -> None:
+    """`ck_dc_fin_report_type` 只认 4 个取值。传错取值必须在归一化这层就炸。
+
+    放行的话，入库时才被 CHECK 拒 —— 错误地点从「调用方写了一个字符串」
+    变成「数据中心的写入失败」，排查方向完全不同。
+    """
+    with pytest.raises(SourceAdapterError) as caught:
+        normalize_financial(_eastmoney_income_raw(), EASTMONEY_INCOME_FINANCIAL,
+                            symbol="600000", report_type="INCOME_STATEMENT")
+    assert "INCOME_STATEMENT" in str(caught.value)
+
+
+def test_normalize_financial_rescales_roe_from_percent_to_ratio() -> None:
+    """ROE 要从小数比率口径对齐。
 
     契约 §2.3 的 `roe` 是**小数比率、可为负、区间 [-1, 5]**，不是百分数；
     源给 12.5 表示 12.5%，不换算就是 12.5 —— 越过 `ck_dc_fin_roe_range` 的上界，
     入库会直接被 CHECK 拒掉（届时错误地点跑到数据库那一层）。
     """
-    frame = normalize_financial(_eastmoney_financial_raw(), EASTMONEY_FINANCIAL,
-                                symbol="600000", report_type_map=EASTMONEY_REPORT_TYPE,
+    frame = normalize_financial(_eastmoney_income_raw(), EASTMONEY_INCOME_FINANCIAL,
+                                symbol="600000", report_type="INCOME",
                                 roe_is_percent=True)
     assert set(FINANCIAL_REQUIRED_COLUMNS) <= set(frame.columns)
-    assert "SECURITY_CODE" not in frame.columns, "源字段名泄漏"
     assert frame["report_type"].iloc[0] in REPORT_TYPES
-    assert frame["report_type"].iloc[0] == "INCOME"
     assert frame["roe"].iloc[0] == pytest.approx(0.125)
     assert frame["period_end"].iloc[0] == date(2026, 6, 30)
     assert frame["announce_date"].iloc[0] == date(2026, 8, 28)
@@ -213,10 +258,9 @@ def test_normalize_financial_maps_report_type_and_rescales_roe() -> None:
 
 def test_normalize_financial_keeps_all_standard_subject_columns() -> None:
     """源缺科目的补 NaN 而不是消失：列形状稳定，缺失由 `missing_ratio` 显式报出来。"""
-    raw = _eastmoney_financial_raw().drop(columns=["TOTAL_EQUITY"])
-    frame = normalize_financial(raw, EASTMONEY_FINANCIAL, symbol="600000",
-                                report_type_map=EASTMONEY_REPORT_TYPE,
-                                roe_is_percent=True)
+    raw = _eastmoney_balance_raw().drop(columns=["TOTAL_EQUITY"])
+    frame = normalize_financial(raw, EASTMONEY_BALANCE_FINANCIAL, symbol="600000",
+                                report_type="BALANCE")
     assert list(frame.columns) == list(FINANCIAL_COLUMNS)
     assert pd.isna(frame["total_equity"].iloc[0])
 
@@ -307,7 +351,7 @@ def test_validate_rejects_roe_outside_the_contract_range() -> None:
 
     12.5 = 忘了把百分数换算成小数比率的典型后果。
     """
-    raw = _eastmoney_financial_raw()
+    raw = _eastmoney_income_raw()
     frame = pd.DataFrame({
         "symbol": ["600000.SH"],
         "report_type": ["INCOME"],
@@ -704,3 +748,189 @@ def test_a_closed_port_is_unreachable_and_retryable() -> None:
         adapter.fetch_index_members('000300.SH', date(2026, 9, 24))
     assert caught.value.kind == 'SOURCE_UNREACHABLE'
     assert caught.value.retryable is True
+
+
+# ── 东财取数：两报表 × 逐页（离线，本机 HTTP 服务） ───────────────────────────
+# `_default_fetch` 是**真实会被跑的默认实现**（不像 akshare/baostock 那两个从没被调用
+# 验证过），所以它的形状必须有行为测试兜着。这里刻意用本机 HTTP 服务而不是打真接口：
+# 「本机断网就变红」的测试最后一定会被跳过，然后就没有人再看它了。
+#
+# 实测到的响应形状（`tools/eastmoney-transport-smoke-report.txt`）：
+#   {'success': bool, 'code': int, 'message': str, 'result': {'data': [...], 'pages': int}}
+
+
+def _eastmoney_envelope(rows, pages=1, **overrides):
+    envelope = {'success': True, 'code': 0, 'message': 'ok',
+                'result': {'data': list(rows), 'pages': pages}}
+    envelope.update(overrides)
+    return json.dumps(envelope)
+
+
+def _open_against(monkeypatch, server):
+    """把模块级端点指到本机服务上 —— 生产 URL 只在一处，替换也只做一处。"""
+    monkeypatch.setattr(ds, 'EASTMONEY_DATA_API', server.url)
+    return server.url
+
+
+def _documented_request_params(report_name):
+    """生产实现该发的参数。写成一份期望值，是为了让「悄悄少发一个参数」变红。"""
+    return {'reportName': report_name, 'columns': 'ALL',
+            'filter': '(SECURITY_CODE="600000")',
+            'pageSize': str(ds.EASTMONEY_PAGE_SIZE),
+            'source': 'WEB', 'client': 'WEB'}
+
+
+def test_default_fetch_pages_through_the_envelope_and_normalises_the_code(
+        monkeypatch) -> None:
+    """逐页取回、按页号顺序拼起来；发出去的过滤条件用的是**裸代码**。
+
+    `sh.600000` → `(SECURITY_CODE="600000")` 这一条是重点：源只认裸代码，把带后缀
+    的写法发过去会得到一个「查无此股」的正常响应，然后这份数据就静默地缺失了。
+    """
+    rows = [{'SECURITY_CODE': '600000', 'REPORTDATE': '2026-06-30'}]
+    with _LocalHTTP(body=_eastmoney_envelope(rows, pages=2)) as server:
+        _open_against(monkeypatch, server)
+        frame = EastMoneyAdapter._default_fetch(
+            symbol='sh.600000', report_name='RPT_LICO_FN_CPD')
+        requests = list(server.requests)
+
+    assert len(requests) == 2, 'pages=2 必须真的走两页；只取第一页会静默丢数据'
+    assert list(frame['SECURITY_CODE']) == ['600000', '600000'], '两页都要进结果'
+    for index, (path, headers) in enumerate(requests, start=1):
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)
+        for key, value in _documented_request_params('RPT_LICO_FN_CPD').items():
+            assert query.get(key) == [value], '请求参数 %s 发出去了没：%r' % (key, query)
+        assert query.get('pageNumber') == [str(index)], '页号必须递增：%r' % (query,)
+        assert headers.get('User-Agent') == ds.HTTP_USER_AGENT
+
+
+def test_default_fetch_raises_instead_of_truncating_past_the_page_cap(
+        monkeypatch) -> None:
+    """页数超过上限时**报错**，不是「取满 200 页就收手」。
+
+    截断的后果是数据静默缺失（少掉的那部分看起来和「源本来就没有」一模一样），
+    而这类缺失在回测里表现为「某些票在某些报告期没有财报」，查不出来。
+    """
+    body = _eastmoney_envelope([{'SECURITY_CODE': '600000'}],
+                               pages=ds.EASTMONEY_MAX_PAGES + 1)
+    with _LocalHTTP(body=body) as server:
+        _open_against(monkeypatch, server)
+        with pytest.raises(SourceAdapterError) as caught:
+            EastMoneyAdapter._default_fetch(symbol='600000',
+                                            report_name='RPT_LICO_FN_CPD')
+        requests = list(server.requests)
+
+    assert caught.value.kind == 'SOURCE_SCHEMA_MISMATCH'
+    assert str(ds.EASTMONEY_MAX_PAGES) in str(caught.value)
+    assert len(requests) == 1, '发现超限就该停在第 1 页，而不是先乖乖取 200 页'
+
+
+def test_default_fetch_treats_an_in_band_rejection_as_a_schema_mismatch(
+        monkeypatch) -> None:
+    """HTTP 200 + `success=false`（错误码在信封里）—— 这是**参数不合法**，不是网络故障。
+
+    重试它一万次也不会让参数变合法；类别必须不可重试，动作才写得成「改请求」。
+    这也是唯一能解释「接口通着、状态码 200，却一直失败」的线索 —— 当成网络问题查，
+    会一路查到怀疑自己的网线。
+    """
+    body = _eastmoney_envelope([], success=False, code=9501, message='报表不存在')
+    with _LocalHTTP(body=body) as server:
+        _open_against(monkeypatch, server)
+        with pytest.raises(SourceAdapterError) as caught:
+            EastMoneyAdapter._default_fetch(symbol='600000',
+                                            report_name='RPT_LICO_FN_CPD')
+
+    assert caught.value.kind == 'SOURCE_SCHEMA_MISMATCH', \
+        '带内拒绝不是网络故障，更不是「本适配器不覆盖」'
+    assert caught.value.retryable is False
+    assert '9501' in str(caught.value), '错误码不许丢：那是给人去查源文档的唯一线索'
+
+
+def test_default_fetch_refuses_an_unregistered_report_name_before_any_request(
+        monkeypatch) -> None:
+    """未登记的 `reportName` 直接 `UNSUPPORTED`，且**一个请求都不发**。
+
+    取回来也归一化不了（`report_type` 是主键的一部分，猜一个值比不取更坏），
+    所以这里在发请求之前就拦住 —— 白跑一趟网络只会让人以为「是源那边没数据」。
+    """
+    with _LocalHTTP(body=_eastmoney_envelope([])) as server:
+        _open_against(monkeypatch, server)
+        with pytest.raises(SourceAdapterError) as caught:
+            EastMoneyAdapter._default_fetch(symbol='600000', report_name='RPT_NOPE')
+        requests = list(server.requests)
+
+    assert caught.value.kind == 'UNSUPPORTED'
+    assert caught.value.retryable is False
+    assert requests == [], '未登记的报表名不该产生任何网络调用'
+
+
+def test_default_fetch_returns_an_empty_frame_when_the_source_has_no_rows(
+        monkeypatch) -> None:
+    """源正常回复但没有数据 ⇒ 空帧，**不抛**。
+
+    `errors.py` 的分类表刻意没有「源没给数据」这一类（见 `SOURCE_FAILURE_KINDS`
+    上方的注释）：空结果不是失败，是「这一期确实没有」。把它做成异常，调用方就
+    分不出「没有数据」和「取数坏了」。
+    """
+    with _LocalHTTP(body=_eastmoney_envelope([], pages=1)) as server:
+        _open_against(monkeypatch, server)
+        frame = EastMoneyAdapter._default_fetch(symbol='600000',
+                                                report_name='RPT_DMSK_FN_BALANCE')
+
+    assert frame.shape[0] == 0
+
+
+def test_fetch_financial_returns_one_row_per_report_for_the_same_period() -> None:
+    """一个报告期出**两行**（`INCOME` + `BALANCE`），不是把两张报表拼成一行。
+
+    `report_type` 是 `dc_financial` 主键的一部分：拼成一行的话，资产负债类科目会
+    挂在一行 `report_type='INCOME'` 上 —— 那行不属于任何真实报表，而账面上
+    「字段都填满了」，看起来比两行还完整。
+    """
+    seen = []
+
+    def fetch(**kwargs):
+        seen.append(kwargs['report_name'])
+        if kwargs['report_name'] == 'RPT_LICO_FN_CPD':
+            return _eastmoney_income_raw()
+        return _eastmoney_balance_raw()
+
+    adapter = EastMoneyAdapter(fetch=fetch)
+    frame = adapter.fetch_financial(['600000.SH'], date(2026, 6, 30))
+
+    assert seen == ['RPT_LICO_FN_CPD', 'RPT_DMSK_FN_BALANCE'], \
+        '两张报表都要取，且顺序固定（页面/日志里的行顺序才可复现）'
+    assert len(frame) == 2
+    assert sorted(frame['report_type']) == ['BALANCE', 'INCOME']
+    assert frame['revenue'].notna().sum() == 1, '收入类科目只该出现在 INCOME 行上'
+    assert frame['total_assets'].notna().sum() == 1, '资产负债类科目只该出现在 BALANCE 行上'
+    assert frame['roe'].iloc[0] == pytest.approx(0.125), 'ROE 只在利润表那张表上'
+
+    # 报告期筛在**归一化之后**做：别的报告期不是「报错」，是这一期没有数据。
+    other = adapter.fetch_financial(['600000.SH'], date(2026, 3, 31))
+    assert other.shape[0] == 0
+    assert list(other.columns) == list(FINANCIAL_COLUMNS), '空帧也得带标准列'
+
+
+def test_fetch_financial_refuses_a_report_whose_type_is_not_registered(
+        monkeypatch) -> None:
+    """`_FINANCIAL_REPORTS` 与 `EASTMONEY_REPORT_TYPE` 漂移时必须炸，且不发请求。
+
+    这两处是同一件事的两半（哪张报表 / 归到哪个 `report_type`），漂移的后果是
+    取回来的数据没有 `report_type` 可用 —— 于是要么猜一个值，要么整批丢掉。
+    两条都是静默的，所以这里必须硬拦。
+    """
+    called = []
+
+    def fetch(**kwargs):
+        called.append(kwargs)
+        return _eastmoney_income_raw()
+
+    adapter = EastMoneyAdapter(fetch=fetch)
+    monkeypatch.setattr(EastMoneyAdapter, '_FINANCIAL_REPORTS',
+                        (('RPT_NOPE', EASTMONEY_INCOME_FINANCIAL),))
+    with pytest.raises(SourceAdapterError) as caught:
+        adapter.fetch_financial(['600000.SH'], date(2026, 6, 30))
+
+    assert caught.value.kind == 'UNSUPPORTED'
+    assert called == [], '报表类型登记不上时不该去取数'

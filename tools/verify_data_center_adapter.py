@@ -73,9 +73,11 @@ Detector（每个都独立跑、互不 return；`--selftest` 每个探测器一�
 
 **这个门禁证明不了什么**（写在正文里，避免被读成更多）：它只看形状，看不到内容。
 映射表里的源列名是从各源文档抄来的、**从未联网核对过**（akshare/baostock 都没装），
-所以「映射方向对、单位对、列名对」这三件事它一概不保证。那条欠账登记在数据中心契约
-附录 B。运行时行为由 `tests/test_data_center_adapter.py` 负责（分类的**判定顺序**也在
-那里有专门用例，那是这张表最容易被写反、而且写反了不报错的地方）。
+所以「映射方向对、单位对、列名对」这三件事它一概不保证 —— **一个例外是东财**：
+它的两张财务表是照 2026-09-24 的实测重新排的（契约附录 B12，原本那 9 列的一张大表
+已被实测证伪）。但那是人工冒烟的结论，**不是本门禁的结论**，也不要读成「映射表已验证」。
+那条欠账登记在数据中心契约附录 B。运行时行为由 `tests/test_data_center_adapter.py` 负责
+（分类的**判定顺序**也在那里有专门用例，那是这张表最容易被写反、而且写反了不报错的地方）。
 
 用法：
     python tools/verify_data_center_adapter.py             # 检查仓库
@@ -101,8 +103,10 @@ SOURCE_RELS = (ADAPTER_REL, ROWCLASS_REL, ERRORS_REL, CONTRACT_REL)
 
 # 列名映射表：{源列名: 标准列名}。**新增数据源的映射表必须登记在这里**，否则它既不算
 # 对也不算错（A3 会因此报错，而不是静默放行）。
-COLUMN_MAPS = ('AKSHARE_DAILY_BAR', 'BAOSTOCK_DAILY_BAR', 'EASTMONEY_FINANCIAL',
-               'EASTMONEY_INDEX_MEMBER')
+# 东财两张：一个 `reportName` 一张表（契约附录 B12 实测，不是选择）——
+# 它们到底分别是哪张报表，写在 `datasources.py` 的 `_FINANCIAL_REPORTS` 里。
+COLUMN_MAPS = ('AKSHARE_DAILY_BAR', 'BAOSTOCK_DAILY_BAR', 'EASTMONEY_INCOME_FINANCIAL',
+               'EASTMONEY_BALANCE_FINANCIAL', 'EASTMONEY_INDEX_MEMBER')
 # 取值域映射表：{源取值: 标准取值}。键不是列名，所以不参与 A1/A2 的列名判定。
 VALUE_MAPS = ('EASTMONEY_REPORT_TYPE',)
 # 定义标准 schema 的四个元组。A1 的「标准列名集合」由它们拼出来（不读
@@ -148,8 +152,8 @@ STAT_KEYS = ('scanned_modules', 'str_maps', 'column_maps', 'value_maps',
 # A10 的下限：必须是「这个仓库当前实测到的东西」的最小值，不是愿望值。
 # 阈值定高一点是刻意的 —— 提取器一旦失配，这些数会整体掉到 0，而 0 必须红。
 MIN_STATS = (
-    ('str_maps', 5, '模块级 str->str 映射表（4 张列名表 + 1 张取值表）'),
-    ('column_maps', 4, '解析到的列名映射表'),
+    ('str_maps', 6, '模块级 str->str 映射表（5 张列名表 + 1 张取值表）'),
+    ('column_maps', 5, '解析到的列名映射表'),
     ('value_maps', 1, '解析到的取值域映射表'),
     ('schema_bindings', 4, '标准 schema 列名元组'),
     ('module_imports', 1, '模块级 import'),
@@ -630,7 +634,7 @@ import re
 DAILY_BAR_COLUMNS = ('symbol', 'trade_date', 'open', 'high', 'low', 'close',
                      'volume', 'amount')
 FINANCIAL_REQUIRED_COLUMNS = ('symbol', 'report_type', 'period_end', 'announce_date')
-FINANCIAL_SUBJECT_COLUMNS = ('revenue',)
+FINANCIAL_SUBJECT_COLUMNS = ('revenue', 'total_assets')
 INDEX_MEMBER_COLUMNS = ('index_code', 'symbol', 'effective_from', 'effective_to',
                         'weight')
 STANDARD_COLUMNS = (DAILY_BAR_COLUMNS + FINANCIAL_REQUIRED_COLUMNS
@@ -644,14 +648,17 @@ AKSHARE_DAILY_BAR = {
 BAOSTOCK_DAILY_BAR = {
     'volume': 'volume',
 }
-EASTMONEY_FINANCIAL = {
+EASTMONEY_INCOME_FINANCIAL = {
     'SECURITY_CODE': 'symbol',
+}
+EASTMONEY_BALANCE_FINANCIAL = {
+    'TOTAL_ASSETS': 'total_assets',
 }
 EASTMONEY_INDEX_MEMBER = {
     'WEIGHT': 'weight',
 }
 EASTMONEY_REPORT_TYPE = {
-    '利润表': 'INCOME',
+    'RPT_LICO_FN_CPD': 'INCOME',
 }
 
 
@@ -813,8 +820,8 @@ def selftest():
 
     # A4：取值映射表产出了报告类型枚举之外的取值（写库才报错的经典来源）。
     bad = _mutate(adapter,
-                  "EASTMONEY_REPORT_TYPE = {\n    '资产负债表': 'BALANCE',\n",
-                  "EASTMONEY_REPORT_TYPE = {\n    '资产负债表': 'BALANCE_SHEET',\n",
+                  "EASTMONEY_REPORT_TYPE = {\n    'RPT_LICO_FN_CPD': 'INCOME',\n",
+                  "EASTMONEY_REPORT_TYPE = {\n    'RPT_LICO_FN_CPD': 'INCOME_STATEMENT',\n",
                   'NEG4-report-type-outside-enum')
     if bad is None:
         ok = False
@@ -882,7 +889,8 @@ def selftest():
     empty_adapter = ("DAILY_BAR_COLUMNS = ()\nFINANCIAL_REQUIRED_COLUMNS = ()\n"
                      "FINANCIAL_SUBJECT_COLUMNS = ()\nINDEX_MEMBER_COLUMNS = ()\n"
                      "REPORT_TYPES = ()\nAKSHARE_DAILY_BAR = {}\n"
-                     "BAOSTOCK_DAILY_BAR = {}\nEASTMONEY_FINANCIAL = {}\n"
+                     "BAOSTOCK_DAILY_BAR = {}\nEASTMONEY_INCOME_FINANCIAL = {}\n"
+                     "EASTMONEY_BALANCE_FINANCIAL = {}\n"
                      "EASTMONEY_INDEX_MEMBER = {}\nEASTMONEY_REPORT_TYPE = {}\n")
     scenario('NEG10-extraction-empty', empty_adapter, rows, contract, 'A10')
 
@@ -902,9 +910,11 @@ def selftest():
 
     # (b) 抛了没声明：适配器用了一个声明表里没有的类别。这个方向最坏 —— 它到
     # **运行时**才 ValueError，而那时告警已经发生在生产取数里。
+    # 锚是 `_default_fetch` 里那句 raise 的**整行（含 16 空格缩进）**：它必须唯一 ——
+    # 缩进写少两格就会变成「匹配到某行的中部」，而 `_mutate` 只数出现次数，看不出这个区别。
     bad = _mutate(adapter,
-                  "            source='eastmoney', kind='UNSUPPORTED')\n",
-                  "            source='eastmoney', kind='SOURCE_FLUX_CAPACITOR')\n",
+                  "                source='eastmoney', kind='UNSUPPORTED')\n",
+                  "                source='eastmoney', kind='SOURCE_FLUX_CAPACITOR')\n",
                   'NEG11b-undeclared-kind-produced')
     if bad is None:
         ok = False
@@ -976,6 +986,7 @@ def main():
     print('NOTE: 这个门禁只解析源码、从不执行、不导入 pandas、不跑 pytest。它证明的是'
           '「结构上没被绕过」，**不是**「映射表的内容是对的」—— 源列名是从各源文档抄来的，'
           '从未联网核对（akshare/baostock 都没装），那条欠账登记在数据中心契约附录 B。'
+          '东财两张财务表是照实测重排的（附录 B12），但那是**人工冒烟**的结论，不是这里出来的。'
           '运行时行为由 tests/test_data_center_adapter.py 负责。')
     return 0 if not issues else 1
 

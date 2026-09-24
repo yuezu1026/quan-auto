@@ -8,9 +8,15 @@
 
 1. 证明 **唯一网络出口** `quanauto.datasources._http_get_json` 在真实 HTTPS 上可用
    （参数拼装、UA、解帧、envelope 形状）；
-2. 把四个已知端点的**响应形状**（列名集合、`success` 标志、分页字段）写进
+2. 把每个端点的**响应形状**（列名集合、`success` 标志、分页字段）写进
    `tools/eastmoney-transport-smoke-report.txt`，让「映射表与真实返回对不对得上」
    这件事有个**可复查**的记录，而不是我口头说试过了。
+
+2026-09-24 的实测把第 2 件事的结论改了形状：**没有任何单一 `reportName` 能同时喂满
+收入类与资产负债类科目**（附录 B12）。所以本工具不再比对「9 列并集」，而是**逐表比**：
+`EASTMONEY_INCOME_FINANCIAL` 对 `RPT_LICO_FN_CPD`、`EASTMONEY_BALANCE_FINANCIAL` 对
+`RPT_DMSK_FN_BALANCE` —— 哪张表缺哪一列，直接点名列出来。
+（注意：`EASTMONEY_FINANCIAL` 这个单表名字已经不在了，它被拆成了上面两张。）
 
 判定规则：**只看数据中心通路**（`datacenter-web`）—— 那才是适配器要用的端点。
 kline 探测只为了记录字段顺序，它的成败不影响适配器（契约 §3.2 的表里东财**不**
@@ -24,8 +30,9 @@ kline 探测只为了记录字段顺序，它的成败不影响适配器（契�
     python tools/eastmoney_transport_smoke.py            # 真联网，写报告
     python tools/eastmoney_transport_smoke.py --report=PATH
 
-退出码：0 = 传输通路可用且报告已写出；1 = 通路不可用或**提取为空**（提取为空时报告
-本身就没有内容，此时报 PASS 就是最典型的假绿，所以直接判 FAIL）。
+退出码：0 = 传输通路可用**且**两张映射表都在各自 report 上拿全了；1 = 通路不可用 /
+**提取为空** / **映射表与真实返回对不上**这几种情况之一。后两种都是最容易变成假绿的
+地方：报告本身没有内容时打印 PASS、或者「一张表都没比对上」而被当成「都对上了」。
 控制台只打 ASCII —— 本机是 GBK 代码页，非 GBK 字符会让 Python 抛 UnicodeEncodeError。
 """
 
@@ -42,8 +49,9 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from quanauto.datasources import (  # noqa: E402  （必须在 sys.path 调整之后）
+    EASTMONEY_BALANCE_FINANCIAL,
     EASTMONEY_DATA_API,
-    EASTMONEY_FINANCIAL,
+    EASTMONEY_INCOME_FINANCIAL,
     HTTP_TIMEOUT_SECONDS,
     _http_get_json,
 )
@@ -61,12 +69,17 @@ KLINE_PARAMS = {
     'end': '20240110',
 }
 
-# 数据中心三个 report。前两个是**已实测的响应形状**，第三个是**预期被拒**的对照：
-# `RPT_INDEX_TS_COMPONENT` 实测返回 `success=false`，正好用来说明「HTTP 200 也可能是失败」。
+# 数据中心三个 report。每个带**它对应的列名映射表**（与 `EastMoneyAdapter._FINANCIAL_REPORTS`
+# 是同一件事），因为 2026-09-24 的实测结论就是「没有任何单一 report 能同时喂满收入类与
+# 资产负债类科目」（附录 B12）：比对一个 9 列并集从这里开始就没有意义了，只能逐表比。
+# 第三个是**预期被拒**的对照（`RPT_INDEX_TS_COMPONENT` 实测 `success=false`），没有映射表，
+# 用来说明「HTTP 200 也可能是失败」。
 DATACENTER_PROBES = (
-    ('RPT_LICO_FN_CPD', '(SECURITY_CODE="600000")'),
-    ('RPT_DMSK_FN_BALANCE', '(SECURITY_CODE="600000")'),
-    ('RPT_INDEX_TS_COMPONENT', '(INDEX_CODE="000300")'),
+    ('RPT_LICO_FN_CPD', '(SECURITY_CODE="600000")',
+     'EASTMONEY_INCOME_FINANCIAL', EASTMONEY_INCOME_FINANCIAL),
+    ('RPT_DMSK_FN_BALANCE', '(SECURITY_CODE="600000")',
+     'EASTMONEY_BALANCE_FINANCIAL', EASTMONEY_BALANCE_FINANCIAL),
+    ('RPT_INDEX_TS_COMPONENT', '(INDEX_CODE="000300")', None, None),
 )
 
 
@@ -109,7 +122,7 @@ def _probe_kline(label, opener, lines):
     return len(rows)
 
 
-def _probe_datacenter(index, report, filter_expr, lines):
+def _probe_datacenter(index, report, filter_expr, table_name, column_map, lines):
     params = {
         'reportName': report,
         'columns': 'ALL',
@@ -120,8 +133,8 @@ def _probe_datacenter(index, report, filter_expr, lines):
         'client': 'WEB',
     }
     payload = _http_get_json(EASTMONEY_DATA_API, params)
-    lines.append('[%d] datacenter  reportName=%s  filter=%s'
-                 % (index, report, filter_expr))
+    lines.append('[%d] datacenter  reportName=%s  filter=%s  table=%s'
+                 % (index, report, filter_expr, table_name or '(none)'))
     lines.append('    params: pageNumber=1 pageSize=2 columns=ALL source=WEB client=WEB')
     lines.append('    success=%s  code=%s  message=%s'
                  % (payload.get('success'), payload.get('code'), payload.get('message')))
@@ -133,11 +146,17 @@ def _probe_datacenter(index, report, filter_expr, lines):
         return None
     lines.append('    keys=%d' % len(keys))
     lines.append('    keys: %s' % ', '.join(keys))
-    present = [k for k in EASTMONEY_FINANCIAL if k in set(keys)]
-    missing = [k for k in EASTMONEY_FINANCIAL if k not in set(keys)]
-    lines.append('    EASTMONEY_FINANCIAL 命中 %d/%d' % (len(present), len(EASTMONEY_FINANCIAL)))
+    if column_map is None:
+        lines.append('    (本 probe 不比对映射表：它是预期被拒的对照组)')
+        return set(keys)
+    present = [k for k in column_map if k in set(keys)]
+    missing = [k for k in column_map if k not in set(keys)]
+    lines.append('    %s 命中 %d/%d' % (table_name, len(present), len(column_map)))
     lines.append('    present: %s' % (', '.join(present) or '(none)'))
     lines.append('    missing: %s' % (', '.join(missing) or '(none)'))
+    if missing:
+        lines.append('    !! 映射表 %s 有 %d 列在这张 report 的返回里**没有**：%s'
+                     % (table_name, len(missing), ', '.join(missing)))
     return set(keys)
 
 
@@ -188,11 +207,15 @@ def main(argv):
     lines.append('  这是**人工交叉核对**（不是本工具测量）—— 别把它的失败当成映射表的问题。')
     lines.append('')
 
-    key_sets = {}
-    for index, (report, filter_expr) in enumerate(DATACENTER_PROBES, start=2):
+    tables = {name: column_map for _, _, name, column_map in DATACENTER_PROBES if name}
+    got_by_table = {}
+    mismatched = []
+    for index, (report, filter_expr, table_name, column_map) \
+            in enumerate(DATACENTER_PROBES, start=2):
         lines.append('')
         try:
-            keys = _probe_datacenter(index, report, filter_expr, lines)
+            keys = _probe_datacenter(index, report, filter_expr, table_name,
+                                     column_map, lines)
         except Exception as exc:  # noqa: BLE001
             ok = False
             failures.append('%s 传输失败：%s: %s' % (report, type(exc).__name__, exc))
@@ -200,32 +223,41 @@ def main(argv):
                          % (index, report, type(exc).__name__, exc))
             continue
         if keys is None:
-            if report == 'RPT_INDEX_TS_COMPONENT':
+            if table_name is None:
                 lines.append('    (该 report 预期被源拒绝，这里不记为失败)')
                 continue
             ok = False
             failures.append('%s 提取为空' % report)
             continue
-        key_sets[report] = keys
+        if table_name is not None:
+            got_by_table[table_name] = (report, keys)
 
     lines.append('')
-    lines.append('[汇总] EASTMONEY_FINANCIAL 的 9 列在各 report 上的可得性')
-    for report, keys in key_sets.items():
-        got = [k for k in EASTMONEY_FINANCIAL if k in keys]
-        lines.append('    %s: %d/%d' % (report, len(got), len(EASTMONEY_FINANCIAL)))
-    if len(key_sets) >= 2:
-        union = set()
-        for keys in key_sets.values():
-            union |= keys
-        lines.append('    并集覆盖 %d/%d：%s'
-                     % (len([k for k in EASTMONEY_FINANCIAL if k in union]),
-                        len(EASTMONEY_FINANCIAL),
-                        ', '.join(k for k in EASTMONEY_FINANCIAL if k in union) or '(none)'))
-        single = [r for r, keys in key_sets.items()
-                  if all(k in keys for k in EASTMONEY_FINANCIAL)]
-        lines.append('    单一 report 覆盖全部 9 列的：%s' % (', '.join(single) or '(none)'))
-        lines.append('    ⇒ 若为 (none)：EASTMONEY_FINANCIAL 无法由一个 report 喂满，'
-                     '映射表与真实返回**对不上**（不是「未验证」，是已证伪）。')
+    lines.append('[汇总] 每张映射表在**它自己那张 report** 上的可得性')
+    for table_name, column_map in tables.items():
+        if table_name not in got_by_table:
+            continue
+        report, keys = got_by_table[table_name]
+        hit = [k for k in column_map if k in keys]
+        lines.append('    %s -> %s: %d/%d' % (report, table_name, len(hit), len(column_map)))
+        if len(hit) != len(column_map):
+            mismatched.append('%s / %s 缺 %d 列'
+                              % (report, table_name, len(column_map) - len(hit)))
+    if not got_by_table:
+        # 提取为空时下面每条比对都在空转 —— 那是最隐蔽的假绿，直接判 FAIL。
+        ok = False
+        failures.append('一张表都没比对上（提取为空），汇总段落形同虚设')
+        lines.append('    !! 没有任何一张映射表被比对：这是**提取为空**，不是「都对上了」')
+    else:
+        lines.append('    两张表分开比是 2026-09-24 实测拍板的（附录 B12）：没有任何单一')
+        lines.append('    report 能同时喂满收入类与资产负债类科目，比 9 列并集从此没有意义。')
+        if mismatched:
+            ok = False
+            failures.extend(mismatched)
+            lines.append('    ⇒ 有表对不上：映射表与真实返回**不一致**（不是「未验证」，是已证伪）。')
+        else:
+            lines.append('    ⇒ 两张表都在各自 report 上拿全了：这是**本工具测量**的结论，')
+            lines.append('    仍不足以说「映射表已验证」—— 只测了一个时点的单份样本。')
 
     lines.append('')
     lines.append('verdict: %s%s' % ('SMOKE OK' if ok else 'SMOKE FAIL',
@@ -239,8 +271,14 @@ def main(argv):
         if line.startswith('verdict') or line.startswith('[') or 'FAILED' in line \
                 or line.strip().startswith('!!'):
             print(line.encode('ascii', 'replace').decode('ascii'))
-    print('report: %s'
-          % os.path.relpath(report_path, ROOT).encode('ascii', 'replace').decode('ascii'))
+    try:
+        shown_path = os.path.relpath(report_path, ROOT)
+    except ValueError:
+        # 跨盘符时 os.path.relpath 抛 ValueError（如 --report=%TEMP%\x.txt，D: → C:）。
+        # 触发测试当场撞上了这个：报告已经写好了，却在最后一行打印时崩掉、退出码变成 1。
+        # 工具既然广告了 --report=，就得让它对任何盘符都能用 —— 失败就要说清是「哪一步」失败。
+        shown_path = report_path
+    print('report: %s' % shown_path.encode('ascii', 'replace').decode('ascii'))
     print('EXIT=%d' % (0 if ok else 1))
     return 0 if ok else 1
 

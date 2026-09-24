@@ -51,15 +51,24 @@
 **东财一源已经不同了（2026-09-24）**：传输层已落地（就是下面的 `_http_get_json`），并对真实
 端点跑过一次**人工**冒烟（`tools/eastmoney_transport_smoke.py`，证据
 `tools/eastmoney-transport-smoke-report.txt` —— **它是工具，不是门禁**）。实测结论不是
-「未验证」，而是**部分证伪**：`EASTMONEY_FINANCIAL` 的 9 列**没有任何单一 `reportName`
-能喂满**（`RPT_LICO_FN_CPD` 5/9、`RPT_DMSK_FN_BALANCE` 5/9，并集 8/9），且 `REPORT_TYPE`
+「未验证」，而是**部分证伪**：9 列**没有任何单一 `reportName` 能喂满**
+（`RPT_LICO_FN_CPD` 5/9、`RPT_DMSK_FN_BALANCE` 5/9，并集 8/9），且 `REPORT_TYPE`
 在真实返回里**没有生产者**（只有 `REPORT_TYPE_CODE`）—— 而 `EASTMONEY_REPORT_TYPE` 是按
-**中文报表名**建的，真实语义却是「一个 `reportName` 就是一种报表」。
+**中文报表名**建的，真实的对应关系却是「一个 `reportName` 就是一种报表」。
 
-这是**产品决策**（`dc_financial` 的收入类与资产负债类科目分两次请求再合并、还是砍掉一半科目），
-不是实现细节。所以本轮**没有**为了让冒烟「看起来通过」而改映射表、删列或改语义：
-`EastMoneyAdapter._default_fetch` 保持 `kind='UNSUPPORTED'` 存根。逐条证据、边界
-（「换一个 report 就能凑齐」未被排除、只是未被找到）登记在数据中心契约**附录 B12**。
+据此**改了取数形状**（这是产品决策，逐条证据与边界登记在数据中心契约**附录 B12**）：
+
+* 一个 `reportName` 一张映射表（`EASTMONEY_INCOME_FINANCIAL` /
+  `EASTMONEY_BALANCE_FINANCIAL`）——「一张大表」在真实返回里不存在；
+* `report_type` 改由**请求参数** `reportName` 决定（`EASTMONEY_REPORT_TYPE` 的键因此从
+  中文报表名换成 `reportName`）—— 响应里没有这一列，按响应列建的表没有生产者；
+* `fetch_financial` 一个报告期出**两行**（利润表一行、资产负债表一行），不把两张报表拼成
+  一行：`report_type` 是 `dc_financial` 主键的一部分，拼成一行等于让资产负债类科目挂在
+  一行不属于任何真实报表的数据上。缺的科目按契约留 NaN，`missing_ratio` 会报出来。
+
+**仍然没有实测过的**（不许读成「已验证」）：`pageSize` 的取值（实测过的只是「这个参数被
+接受」）、东财的**日期过滤语法**（所以 `period_end` 在归一化之后筛，不拼进请求）、日线端点
+（`push2his` 间歇性拒连），以及 akshare / baostock 两源的一切。
 
 ## 一处契约缺口（本切片不擅自补）
 
@@ -78,7 +87,7 @@ from datetime import date
 import json
 import re
 import socket
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -154,24 +163,34 @@ BAOSTOCK_VOLUME_IN_LOTS = True
 BAOSTOCK_DROPPED_MARKERS = ('tradestatus', 'isST', 'preclose', 'pctChg', 'turn', 'adjustflag')
 
 # 东方财富数据中心接口（财务）的列名。全大写是源自己的风格 —— 正是 D9 要防的那种
-# 「源字段名泄漏」的典型样本，所以它必须只出现在这张表的**键**里。
-EASTMONEY_FINANCIAL = {
+# 「源字段名泄漏」的典型样本，所以它必须只出现在这些表的**键**里。
+#
+# **一张报表一张表（2026-09-24 实测，契约附录 B12）**：东财的「财务」不是一次请求，
+# 一个 `reportName` 就是一种报表，两张报表的列名**互不相同** —— 而它们在 `dc_financial`
+# 里本来就是**两行**（`report_type` 是主键的一部分），不是一行。
+# 连报告期的**键名**都不一样，这是「不能把两张报表当成一张」最直接的证据：
+EASTMONEY_INCOME_FINANCIAL = {
+    'SECURITY_CODE': 'symbol',
+    'REPORTDATE': 'period_end',       # 没有下划线，与下面资产负债表的写法不同
+    'NOTICE_DATE': 'announce_date',
+    'TOTAL_OPERATE_INCOME': 'revenue',
+    'PARENT_NETPROFIT': 'net_profit',
+    'WEIGHTAVG_ROE': 'roe',
+}
+EASTMONEY_BALANCE_FINANCIAL = {
     'SECURITY_CODE': 'symbol',
     'REPORT_DATE': 'period_end',
     'NOTICE_DATE': 'announce_date',
-    'REPORT_TYPE': 'report_type',
-    'TOTAL_OPERATE_INCOME': 'revenue',
-    'PARENT_NETPROFIT': 'net_profit',
     'TOTAL_ASSETS': 'total_assets',
     'TOTAL_EQUITY': 'total_equity',
-    'WEIGHTAVG_ROE': 'roe',
 }
-# 源的 `REPORT_TYPE` 是中文报表名，必须先映射到 `ck_dc_fin_report_type` 的取值域。
+# 报表类型：真实返回里**没有这一列**（只有 `REPORT_TYPE_CODE`），它是**请求参数**
+# `reportName` 的属性 ⇒ 这张表的键是 `reportName`，值是 `ck_dc_fin_report_type` 的取值。
+# 键从「中文报表名」换成 `reportName` 是**实测结论**：按响应列建的表在真实返回里找不到
+# 生产者，那张表就是死代码 —— 而不是「改一改让冒烟好看点」。
 EASTMONEY_REPORT_TYPE = {
-    '资产负债表': 'BALANCE',
-    '利润表': 'INCOME',
-    '现金流量表': 'CASHFLOW',
-    '主要指标': 'INDICATOR',
+    'RPT_LICO_FN_CPD': 'INCOME',
+    'RPT_DMSK_FN_BALANCE': 'BALANCE',
 }
 # 该源的 ROE 是百分数（12.34 表示 12.34%），而契约 §2.3 要小数比率。
 EASTMONEY_ROE_IS_PERCENT = True
@@ -201,6 +220,14 @@ HTTP_USER_AGENT = 'quan-auto/0.1 (+https://github.com/yuezu1026/quan-auto)'
 # 证据 `tools/eastmoney-transport-smoke-report.txt`）；待验证的是各 `reportName` 的**列名**，
 # 那部分登记在数据中心契约附录 B10，**不要**把「端点可达」读成「映射表是对的」。
 EASTMONEY_DATA_API = 'https://datacenter-web.eastmoney.com/api/data/v1/get'
+
+# 分页：实测响应带 `result.pages`，而**一次请求只回一页** —— 不翻页就是静默截断
+# （B12 的探针用 `pageSize=2` 时看到 `pages=54`）。`pageSize` 的**取值**没有实测过，
+# 实测过的只是「这个参数存在且被接受」。
+EASTMONEY_PAGE_SIZE = 100
+# 翻页上限：源报出一个荒唐的页数时**宁可报错也不截断**。它是个防跑飞的闸门，不是数据
+# 口径 —— 调到多少都不改变「有没有取全」的判定。
+EASTMONEY_MAX_PAGES = 200
 
 EXCHANGES = ('SH', 'SZ', 'BJ')
 
@@ -310,7 +337,7 @@ def normalize_financial(
     column_map: Mapping[str, str],
     *,
     symbol: Optional[str] = None,
-    report_type_map: Optional[Mapping[str, str]] = None,
+    report_type: Optional[str] = None,
     roe_is_percent: bool = False,
 ) -> pd.DataFrame:
     """源财务帧 → 标准财务帧。
@@ -321,7 +348,12 @@ def normalize_financial(
     就「可见」—— 那是最经典的一类未来函数，而且它只表现为回测收益变漂亮。
 
     参数:
-        report_type_map: 源报表名 → `REPORT_TYPES` 取值的映射。
+        report_type: 报表类型**由请求参数决定**时直接给（东财就是这样：一个
+            `reportName` 一种报表，响应里没有报表名列，见契约附录 B12）。
+            这里**没有**「源报表名 → `REPORT_TYPES` 取值」的映射表参数：本切片的
+            三个源没有任何一家在响应里给报表名（B12 实测东财只给
+            `REPORT_TYPE_CODE`、没有 `REPORT_TYPE`），为一张没有生产者的映射表
+            留参数就是留一条走不到的分支。真遇到这样的源再加。
         roe_is_percent: 源的 ROE 是百分数时置 True（÷100）。契约 §2.3 的 `roe`
             是小数比率、可为负、区间 [-1, 5]，**不是**百分数。
     """
@@ -348,18 +380,23 @@ def normalize_financial(
     if roe_is_percent:
         # 契约 §2.3：roe 是小数比率（可为负，区间 [-1, 5]），源给百分数时 ÷100。
         frame['roe'] = frame['roe'] / 100.0
-    if report_type_map:
-        frame['report_type'] = frame['report_type'].map(lambda value: report_type_map.get(value, value))
+    if report_type is not None:
+        # 整列一个值：报表类型来自**请求**（东财），所以它不可能是「有的行有、有的行没有」。
+        frame['report_type'] = report_type
+    elif 'report_type' not in frame.columns:
+        raise SourceAdapterError(
+            '%s：帧里没有 report_type 列，也没有传 report_type= —— 它是 '
+            '`dc_financial` 主键的一部分，缺了它这一批数据不知道该归到哪张报表'
+            % context)
     unmapped = sorted(set(value for value in frame['report_type'] if value not in REPORT_TYPES))
     if unmapped:
         # `ck_dc_fin_report_type` 只认 4 个取值，而 `report_type` 是主键的一部分。
-        # 不映射就写进去，等于把一批行归到「未知报表类型」这一类里 —— 它不会报错，
+        # 不校验就写进去，等于把一批行归到「未知报表类型」这一类里 —— 它不会报错，
         # 只会让「同一报告期的三张表」少一张。所以这里必须炸，而不是放行让 CHECK 拒。
-        raise SourceAdapterError('%s：report_type 取值 %s 不在 %s 里'
-                                 '%s（映射表 %s）'
-                                 % (context, unmapped, list(REPORT_TYPES),
-                                    '' if report_type_map else '，且调用时没给 report_type_map=',
-                                    sorted(set((report_type_map or {}).keys()))))
+        # 这道守卫现在最可能的触发方式是**调用方把 report_type= 传错**（比如把
+        # `INCOME_STATEMENT` 当成取值），所以在归一化这一步就拦，别让它跑到数据库那层。
+        raise SourceAdapterError('%s：report_type 取值 %s 不在 %s 里' % (
+            context, unmapped, list(REPORT_TYPES)))
     return frame.loc[:, list(FINANCIAL_COLUMNS)]
 
 
@@ -803,6 +840,49 @@ def _http_get_json(url: str, params: Mapping[str, Any], *,
     return json.loads(body.decode('utf-8'))
 
 
+def _eastmoney_page(payload: Any, report_name: str) -> Tuple[List[Any], int]:
+    """解东财数据中心的统一信封 → `(rows, pages)`。
+
+    信封形状 `{'success': bool, 'code': int, 'message': str,
+    'result': {'data': [...], 'pages': int}}` 是 **2026-09-24 实测**的
+    （证据 `tools/eastmoney-transport-smoke-report.txt`），不是照文档写的。
+
+    两处刻意的判定：
+
+    * `success` 不为真 ⇒ 源**在带内**拒绝了这次请求（HTTP 200，而错误码和人话都在信封
+      里）。这和「源返回了一张网页」是同一类问题：重试一万次也不会让参数变合法 ⇒
+      归 `SOURCE_SCHEMA_MISMATCH`（动作是改请求/改映射表），**不是**可重试类。
+    * `result` 为空 ⇒ 源正常回复但没有数据。**不抛**：`errors.py` 的分类表刻意没有
+      「源没给数据」这一类（见 `SOURCE_FAILURE_KINDS` 上方的注释），空结果就是空帧。
+    """
+    if not isinstance(payload, Mapping):
+        raise SourceAdapterError(
+            '东财 %s 的响应不是 JSON 对象（收到 %s）'
+            % (report_name, type(payload).__name__),
+            source='eastmoney', kind='SOURCE_SCHEMA_MISMATCH')
+    if not payload.get('success'):
+        raise SourceAdapterError(
+            '东财 %s 在信封里拒绝了这次请求：code=%r message=%r —— 动作是改请求参数，'
+            '不是重试（HTTP 200 不代表这次查询合法）'
+            % (report_name, payload.get('code'), payload.get('message')),
+            source='eastmoney', kind='SOURCE_SCHEMA_MISMATCH')
+    result = payload.get('result') or {}
+    if not isinstance(result, Mapping):
+        raise SourceAdapterError(
+            '东财 %s 的 result 不是 JSON 对象（收到 %s）'
+            % (report_name, type(result).__name__),
+            source='eastmoney', kind='SOURCE_SCHEMA_MISMATCH')
+    rows = result.get('data') or ()
+    try:
+        pages = int(result.get('pages') or 0)
+    except (TypeError, ValueError) as exc:
+        raise SourceAdapterError(
+            '东财 %s 的 result.pages 不是整数：%r'
+            % (report_name, result.get('pages')),
+            source='eastmoney', kind='SOURCE_SCHEMA_MISMATCH') from exc
+    return list(rows), pages
+
+
 class _AdapterBase(SourceAdapter):
     """三个子类共用的管道。**不是契约类** —— 契约 §3.2 只画了基类与三个子类。
 
@@ -993,30 +1073,122 @@ class EastMoneyAdapter(_AdapterBase):
     _SOURCE = 'eastmoney'
     priority = SourcePriority.FALLBACK
 
+    #: 「本源的一次财务取数」= 两张报表（契约附录 B12：没有任何单一 `reportName` 能同时
+    #: 喂满收入类与资产负债类科目）。放类属性而不是模块级，是为了让它**不是一张映射表**：
+    #: 真正被静态检查的映射表是 `EASTMONEY_INCOME_FINANCIAL` /
+    #: `EASTMONEY_BALANCE_FINANCIAL`（两张都登记在门禁的 `COLUMN_MAPS` 里），报表类型取自
+    #: `EASTMONEY_REPORT_TYPE`（唯一真源，这里不复制一份）。
+    _FINANCIAL_REPORTS = (
+        ('RPT_LICO_FN_CPD', EASTMONEY_INCOME_FINANCIAL),
+        ('RPT_DMSK_FN_BALANCE', EASTMONEY_BALANCE_FINANCIAL),
+    )
+
     @staticmethod
     def _default_fetch(**kwargs: Any) -> pd.DataFrame:
-        """**未经调用验证**。东财数据中心接口没有官方 SDK，真实实现要自己拼 URL
-        与分页 —— 那部分属于「采集实现」，不属于本切片（契约只要求适配器存在且
-        形状正确）。"""
-        raise SourceAdapterError(
-            'EastMoneyAdapter 需要注入真实的东财数据中心取数函数'
-            '（无官方 SDK，未在本切片实现）',
-            source='eastmoney', kind='UNSUPPORTED')
+        """东财数据中心取数：**一个 `reportName` 一次请求，逐页取回拼成一帧**。
+
+        为什么签名是 `**kwargs` 而不是位置参数（`symbol, report_name, ...`）：
+        `tools/contract-signature-manifest.json` 把本函数的 `impl_params` 登记成
+        `**kwargs`，理由是取数函数的参数形状是**实现细节**（契约只规定
+        `fetch_financial(symbols, period_end)`）—— 写成位置参数会把这个测试注入点
+        （`opener=`，与 `_http_get_json` 同款）挤到无处安放，而那个点正是整条链路
+        能离线跑通的原因。
+
+        参数（全部走 kwargs）：
+            symbol: 标的，接受 `normalize_symbol` 的四种写法；发给源的是裸代码。
+            report_name: 东财报表名，必须登记在 `EASTMONEY_REPORT_TYPE` 里。
+            opener: 仅测试传（替换 `urllib.request.urlopen`）。生产路径不传。
+
+        `period_end` **刻意不作为请求参数**：东财的日期过滤语法没有实测过，不猜。
+        「只要哪一期」由调用方在归一化之后筛（见 `fetch_financial`）。
+        """
+        symbol = str(kwargs.get('symbol') or '')
+        report_name = str(kwargs.get('report_name') or '')
+        if not symbol:
+            # 缺参数是**调用方**写错了，不是源的问题 —— 用 ValueError 表达，免得被
+            # `_call` 翻译成 SourceAdapterError 之后被读成「这个源不可用」。
+            raise ValueError('EastMoneyAdapter._default_fetch 需要 symbol 参数')
+        if report_name not in EASTMONEY_REPORT_TYPE:
+            raise SourceAdapterError(
+                '东财 reportName %r 没有登记：本适配器只覆盖 %s —— 未登记的报表取回来也'
+                '归一化不了（`report_type` 是 `dc_financial` 主键的一部分，猜一个值'
+                '比不取更坏）'
+                % (report_name, sorted(EASTMONEY_REPORT_TYPE)),
+                source='eastmoney', kind='UNSUPPORTED')
+
+        code = code_digits(symbol)
+        opener = kwargs.get('opener')
+        rows: List[Any] = []
+        page = 1
+        while True:
+            payload = _http_get_json(
+                EASTMONEY_DATA_API,
+                {'reportName': report_name,
+                 'columns': 'ALL',
+                 # 过滤表达式用**裸代码**：实测 `(SECURITY_CODE="600000")` 有返回；
+                 # 带后缀的写法没有实测过，不猜。
+                 'filter': '(SECURITY_CODE="%s")' % code,
+                 'pageNumber': page,
+                 'pageSize': EASTMONEY_PAGE_SIZE,
+                 'source': 'WEB',
+                 'client': 'WEB'},
+                opener=opener)
+            page_rows, pages = _eastmoney_page(payload, report_name)
+            if pages > EASTMONEY_MAX_PAGES:
+                raise SourceAdapterError(
+                    '东财 %s 报出 %d 页，超过上限 %d：**不截断**，宁可报错 —— '
+                    '少取的页会变成静默缺失的数据'
+                    % (report_name, pages, EASTMONEY_MAX_PAGES),
+                    source='eastmoney', kind='SOURCE_SCHEMA_MISMATCH')
+            rows.extend(page_rows)
+            if page >= pages:
+                break
+            page += 1
+        if not rows:
+            return pd.DataFrame()
+        return pd.DataFrame(rows)
 
     def fetch_daily_bar(self, symbols: List[str], start: date, end: date) -> pd.DataFrame:
         raise SourceAdapterError('契约 §3.2 的表里东财不覆盖行情（行情走 AKShare/Baostock）',
                                  source=self._SOURCE, kind='UNSUPPORTED')
 
     def fetch_financial(self, symbols: List[str], period_end: date) -> pd.DataFrame:
+        """逐标的 × 逐报表取数，再按报告期筛。
+
+        三个「为什么」：
+
+        * **循环是接口形状逼出来的**：契约给的是 `(symbols, period_end)`，而源一次只吃
+          一个代码、一张报表。
+        * **一个报告期出两行，不是一行**：`report_type` 是 `dc_financial` 主键的一部分。
+          把利润表与资产负债表拼成一行，会让资产负债类科目挂在一行 `report_type='INCOME'`
+          的数据上 —— 那行不属于任何真实报表。
+        * **按报告期筛在归一化之后做**：东财的日期过滤语法没实测过（见 `_default_fetch`），
+          而在这里筛是能用本地帧测出来的行为。
+        """
         frames = []
         for symbol in symbols:
-            raw = self._call(symbol=symbol, period_end=period_end)
-            frames.append(normalize_financial(raw, EASTMONEY_FINANCIAL, symbol=symbol,
-                                              report_type_map=EASTMONEY_REPORT_TYPE,
-                                              roe_is_percent=EASTMONEY_ROE_IS_PERCENT))
+            for report_name, column_map in self._FINANCIAL_REPORTS:
+                # `_default_fetch` 里也拦同一个条件，但那是**取数函数**的守卫：
+                # 注入了自定义 fetch 时它不生效，所以这里在取数之前再拦一次。
+                report_type = EASTMONEY_REPORT_TYPE.get(report_name)
+                if report_type is None:
+                    raise SourceAdapterError(
+                        '东财报表 %r 没有登记在 EASTMONEY_REPORT_TYPE 里' % report_name,
+                        source=self._SOURCE, kind='UNSUPPORTED')
+                raw = self._call(symbol=symbol, report_name=report_name)
+                frames.append(normalize_financial(
+                    raw, column_map, symbol=symbol, report_type=report_type,
+                    # ROE 是百分数这个开关跟着**表**走，不跟着 reportName 走 ——
+                    # 换一张表时不会漏改（只有利润表有 roe）。
+                    roe_is_percent=(EASTMONEY_ROE_IS_PERCENT
+                                    and 'roe' in column_map.values())))
         if not frames:
             return _empty(*FINANCIAL_COLUMNS)
-        return pd.concat(frames, ignore_index=True)
+        combined = pd.concat(frames, ignore_index=True)
+        if combined.shape[0] == 0:
+            # 空 concat 结果的列形状不好赖，统一回标准空帧。
+            return _empty(*FINANCIAL_COLUMNS)
+        return combined.loc[combined['period_end'] == period_end].reset_index(drop=True)
 
     def fetch_index_members(self, index_code: str, as_of_date: date) -> pd.DataFrame:
         raw = self._call(index_code=index_code, as_of_date=as_of_date)

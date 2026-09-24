@@ -58,3 +58,19 @@ urlopen 实际会用的代理（urllib.request.getproxies()）：{'http': 'http:
     ⇒ 若为 (none)：EASTMONEY_FINANCIAL 无法由一个 report 喂满，映射表与真实返回**对不上**（不是「未验证」，是已证伪）。
 
 verdict: SMOKE OK  (datacenter 通路可用；kline 见 [1]/[1b]，不参与判定)
+
+---
+[2026-09-24 追加说明 · 上面任何数字都不改]
+
+本轮结论已按附录 B12 落地：既然**没有**单一 reportName 能喂满 9 列，那张
+EASTMONEY_FINANCIAL 就被拆成了两张表 ——
+  EASTMONEY_INCOME_FINANCIAL   对 RPT_LICO_FN_CPD   （日期列拼作 REPORTDATE）
+  EASTMONEY_BALANCE_FINANCIAL  对 RPT_DMSK_FN_BALANCE（日期列拼作 REPORT_DATE）
+
+本文件是**拆分之前**那一版工具跑出来的快照，所以 [汇总] 段里的表名、以及
+「命中 5/9」（分母是 9 列并集）都只能按当时的单表口径读。工具已改为**逐表比对**
+（各表只比它自己那张 report），重跑会写出一份新报告，届时这段说明仍然保留。
+
+注意 [2]/[3] 两行 `missing:` 里都出现 REPORT_TYPE：这不是映射表写错了列名 ——
+东财的**返回里根本没有**这个列，报表类型只能来自**请求**（一个 reportName 一张报表，
+契约附录 B12 实测的正是这一点）。
