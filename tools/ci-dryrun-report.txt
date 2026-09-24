@@ -1,21 +1,21 @@
 # ci-dryrun 报告（本地等价，不是 CI）
 
 这一份是**快照**：结论只对下面记录的解释器与 commit 成立，改完代码必须重跑。
-本仓库没有配置 git remote，因此 `.github/workflows/ci.yml` **从未在 GitHub 上真实运行过**；
-下面跑的是与它**相同的两条命令**。
+CI 自 2026-09-24 起在 GitHub 上真跑（`origin` 公开）；下面这份是**本地等价**：
+它给的是本机解释器的口径，和 GitHub 上那次真跑不能互相替代。
 
-generated: 2026-09-24 08:39:20
+generated: 2026-09-24 08:44:33
 python:    D:\project-quan\quan-auto\.venv\Scripts\python.exe  (.venv/Scripts/python.exe)
 version:   Python 3.13.9
-commit:    dc53ec85dcf3f013e62da3f0657ebe92961664d9
-dirty:     2 项未提交改动（快照与产物不同步）
+commit:    338bdb76f37f2d750e7175a576e14d4b30cb8f5b
+dirty:     0 项未提交改动
 pycache:   启动时清掉 0 个 __pycache__（陈旧字节码会让结论与磁盘源码无关）
 
 ## 1. python -m pytest -q
 exit: 0
   | ........................................................................ [ 96%]
   | ...                                                                      [100%]
-  | 75 passed in 0.55s
+  | 75 passed in 0.57s
 
 ## 2. 红→绿往返（I0 触发测试的证据：两个关键的东西各红一次）
 
@@ -32,7 +32,7 @@ exit: 0
   绿: pytest exit=0
     | ........................................................................ [ 96%]
     | ...                                                                      [100%]
-    | 75 passed in 0.55s
+    | 75 passed in 0.56s
 
 ### ci-drops-gates -- 把 CI 里那一行门禁命令换成单跑一个子门禁
   靶子: .github/workflows/ci.yml  'python tools/run_all_gates.py' -> 'python tools/verify_risk_config.py'
