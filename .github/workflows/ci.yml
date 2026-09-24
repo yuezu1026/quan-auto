@@ -10,7 +10,8 @@
 # ⚠️ 2026-09-24 起这份 workflow **真的在 GitHub 上跑**（remote `origin`，公开仓库）。
 #    首次真跑就在 `skeleton` 门禁上判红：本机有 `.venv/`、克隆里没有，同一个 commit
 #    两边结论不同 ⇒ 判据依赖环境，已修（`verify_skeleton._classify_ref`）。
-#    「跑过」不等于「跑通」，结论一律以那次运行的输出为准，别拿本注释当证据；
+#    修复后重推，第二次运行 success（2026-09-24，run 35939823649）—— 这才是「跑通」。
+#    结论一律以某次运行的输出为准，别拿本注释当证据；
 #    本机口径的等价证据仍是 `python tools/ci_dryrun.py`（`tools/ci-dryrun-report.txt`）。
 
 name: ci

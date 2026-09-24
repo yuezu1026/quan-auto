@@ -9,10 +9,11 @@ I0 §四 的「触发测试」一行要求一次真实的红→绿往返记录�
 
 它不是 CI
 ---------
-`.github/workflows/ci.yml` 到 2026-09-24 为止**只在这个工具里跑过**。2026-09-24 仓库推上
+2026-09-24 之前，`.github/workflows/ci.yml` **只在这个工具里跑过**。2026-09-24 仓库推上
 GitHub（公开仓库，remote `origin`），workflow 第一次真跑就在 `skeleton` 门禁上判红：
 本机有 `.venv/`、克隆里没有，同一个 commit、同一份判据两边结论不同 —— **判据依赖环境
-就是判据的缺陷**，已按「本机产物目录不是仓库地址」修掉（`verify_skeleton._classify_ref`）。
+就是判据的缺陷**，已按「本机产物目录不是仓库地址」修掉（`verify_skeleton._classify_ref`）；
+修完重推，第二次运行已 `success`（2026-09-24，run 35939823649）。
 本工具跑的是**同样的两条命令**，给的是本机解释器的口径，因此只能标成「本地等价」，
 和 GitHub 上那次真跑**不能互相替代**。报告里连这个措辞一起写进去，避免以后有人把
 这份快照当成 CI 的绿色。
@@ -364,8 +365,8 @@ def main(argv):
     say('# ci-dryrun 报告（本地等价，不是 CI）')
     say()
     say('这一份是**快照**：结论只对下面记录的解释器与 commit 成立，改完代码必须重跑。')
-    say('CI 自 2026-09-24 起在 GitHub 上真跑（`origin` 公开）；下面这份是**本地等价**：')
-    say('它给的是本机解释器的口径，和 GitHub 上那次真跑不能互相替代。')
+    say('CI 自 2026-09-24 起在 GitHub 上真跑（`origin` 公开；首次真跑判红、修复后第二次 success）；')
+    say('下面这份是**本地等价**：它给的是本机解释器的口径，和 GitHub 上那次真跑不能互相替代。')
     say()
     say('generated: %s' % time.strftime('%Y-%m-%d %H:%M:%S'))
     say('python:    %s  (%s)' % (py, py_label))

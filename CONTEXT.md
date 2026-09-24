@@ -27,7 +27,7 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 | C2 | `docs/` 下 3 个 `.md` 由 `.docx` 转换生成，**重新转换会覆盖** | 只能在其**之后追加**，禁止原地改已有段落。原地改 = 内容丢失 + md-fidelity 门禁失败。**追加的内容同样会被重新转换抹掉**，所以每个追加块（模块4 的「以契约为准」注、附录A）都登记在 `verify_md_coverage.py` 的 `ADDENDA` 清单里，被抹掉即 FAIL。⚠️ ADDENDA **只对「有 `.docx` 对应物」的文件成立**：`docs/智能量化交易平台-数据中心接口契约文档.md` 是**手写契约**（`docs/` 下没有同名 `.docx`），可以原地编辑，它的附录 A 也**不该**登记进去 —— 登记上去只会变成一条永远不会被检查的死条目 |
 | C3 | 控制台是 **cp936(GBK)** | stdout 出现 GBK 之外的字符（如 `↔`）会让 Python 抛 `UnicodeEncodeError` 并丢掉整段输出；PowerShell `>` 写的是 **UTF-16LE** 不是 UTF-8；含中文的 argv 会被破坏 |
 | C4 | `tools/` 下**只用标准库** | 不要引入任何第三方依赖 |
-| C5 | ~~本仓库不是 git 仓库~~ **已修完（2026-09-23）**：是 git 仓库（`main`，基线提交 `053f620`，一次迭代一个提交） | ~~没有配置 git remote~~ **也已修完（2026-09-24）**：remote `origin` 已接（公开仓库 yuezu1026/quan-auto），`main` 已推送 ⇒ `.github/workflows/ci.yml` **真的在 GitHub 上跑**。首次真跑就在 `skeleton` 门禁上判红：本机有 `.venv/`、克隆里没有 ⇒ 判据依赖环境，已修。CI 的本地等价证据仍是 `tools/ci-dryrun-report.txt`（快照，改完代码要重跑），两者**不能互相替代** |
+| C5 | ~~本仓库不是 git 仓库~~ **已修完（2026-09-23）**：是 git 仓库（`main`，基线提交 `053f620`，一次迭代一个提交） | ~~没有配置 git remote~~ **也已修完（2026-09-24）**：remote `origin` 已接（公开仓库 yuezu1026/quan-auto），`main` 已推送 ⇒ `.github/workflows/ci.yml` **真的在 GitHub 上跑**。首次真跑就在 `skeleton` 门禁上判红：本机有 `.venv/`、克隆里没有 ⇒ 判据依赖环境，已修；修复后第二次运行（2026-09-24，run 35939823649）**success**。CI 的本地等价证据仍是 `tools/ci-dryrun-report.txt`（快照，改完代码要重跑），两者**不能互相替代** |
 
 ## 3. 仓库地图
 
@@ -186,7 +186,10 @@ python tools/falsify_smoke.py            # 证伪那两份绿（逐条放宽约�
 **I2 仍远未完成**：S1 交付 PIT 边界层、S2 交付采集侧适配器；**PostgreSQL 写入与回测改读真实日线都还没写**，
 复权因子也仍恒为 1.0（已知缺口，DC 契约附录 A 记着、附录 B 复述并给出关闭条件）——
 `docs/迭代计划.md` 里 I2 的「产物」行留空是**如实**，不是漏填。
-CI 自 2026-09-24 起**在 GitHub 上真跑**（`origin` 公开，`main` 已推）；本地等价证据
+CI 自 2026-09-24 起**在 GitHub 上真跑**（`origin` 公开，`main` 已推）：**首次真跑判红**
+—— `skeleton` 抓到本文件里的 `.venv/` 在克隆里不存在（本机存在），同一个 commit、同一份判据
+两边结论不同 ⇒ 判据依赖环境，已修并补触发样本；修复后重推，第二次运行
+（2026-09-24，run 35939823649）**success**。本地等价证据
 `tools/ci-dryrun-report.txt`（含两次红→绿往返）给的是本机解释器的口径，改完代码要
 `python tools/ci_dryrun.py` 重跑 —— 两份证据**不能互相替代**。
 

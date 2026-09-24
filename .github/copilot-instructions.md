@@ -43,6 +43,6 @@
 - **本仓库是 git 仓库**（`main` 分支，2026-09-23 建立基线提交 `053f620`，此后一次迭代一个提交），
   2026-09-24 起已推上 GitHub（公开仓库，remote `origin`）⇒ `.github/workflows/ci.yml` **真的会跑**。
   首次真跑当场判红：`skeleton` 门禁抓到 `CONTEXT.md` 指向的 `.venv/` 在克隆里不存在（本机存在）
-  ⇒ **判据依赖环境就是判据的缺陷**，已修。本机口径的等价证据仍是 `tools/ci-dryrun-report.txt`
+  ⇒ **判据依赖环境就是判据的缺陷**，已修；修复后第二次运行已 **success**（2026-09-24）。本机口径的等价证据仍是 `tools/ci-dryrun-report.txt`
   （快照，改完代码要 `python tools/ci_dryrun.py` 重跑），两份证据不能互相替代。
   改文件前仍要想清楚。
