@@ -1,0 +1,60 @@
+东方财富传输层冒烟（人工执行，不是门禁）
+run at: 2026-09-24T11:32:42
+python: 3.13.9
+seam: quanauto.datasources._http_get_json (标准库 urllib，唯一网络出口)
+timeout: 10.0s
+EASTMONEY_DATA_API: https://datacenter-web.eastmoney.com/api/data/v1/get
+urlopen 实际会用的代理（urllib.request.getproxies()）：{'http': 'http://127.0.0.1:7890', 'https': 'http://127.0.0.1:7890', 'ftp': 'http://127.0.0.1:7890'}
+  ↑ Windows 上这个值来自**注册表**里的系统代理，curl 则只看环境变量。
+  两者不一致时，同一台机器上 curl 200 / python 0 是完全正常的，
+  不要据此说「端点不稳」。
+
+本文件能证明的：端点可达、参数形状可用、envelope 形状如上。
+本文件**不能**证明的：任何一条列名映射是对的 —— 相反，下面的比对就是
+「哪个映射对不上」的直接证据。
+
+[1] kline (default opener)
+    TRANSPORT FAILED: RemoteDisconnected: Remote end closed connection without response
+[1b] kline (direct opener, no proxy)
+    TRANSPORT FAILED: RemoteDisconnected: Remote end closed connection without response
+  注：kline **不参与判定** —— 契约 §3.2 的表里东财不覆盖行情，适配器不会调它，
+  这里只记录字段顺序。它的可取性也不稳：2026-09-24 同一时段先用 curl 直连
+  拿到过 200/589B，随后 curl 与 python 均 000／RemoteDisconnected。
+  这是**人工交叉核对**（不是本工具测量）—— 别把它的失败当成映射表的问题。
+
+
+[2] datacenter  reportName=RPT_LICO_FN_CPD  filter=(SECURITY_CODE="600000")
+    params: pageNumber=1 pageSize=2 columns=ALL source=WEB client=WEB
+    success=True  code=0  message=ok
+    pages=54  records=2
+    keys=37
+    keys: ASSIGNDSCRPT, BASIC_EPS, BOARD_CODE, BOARD_NAME, BPS, DATATYPE, DATAYEAR, DATEMMDD, DEDUCT_BASIC_EPS, EITIME, ISNEW, MGJYXJJE, NOTICE_DATE, ORG_CODE, ORI_BOARD_CODE, PARENT_NETPROFIT, PAYYEAR, PUBLISHNAME, QDATE, REPORTDATE, SECUCODE, SECURITY_CODE, SECURITY_NAME_ABBR, SECURITY_TYPE, SECURITY_TYPE_CODE, SJLHZ, SJLTZ, TOTAL_OPERATE_INCOME, TRADE_MARKET, TRADE_MARKET_CODE, TRADE_MARKET_ZJG, UPDATE_DATE, WEIGHTAVG_ROE, XSMLL, YSHZ, YSTZ, ZXGXL
+    EASTMONEY_FINANCIAL 命中 5/9
+    present: SECURITY_CODE, NOTICE_DATE, TOTAL_OPERATE_INCOME, PARENT_NETPROFIT, WEIGHTAVG_ROE
+    missing: REPORT_DATE, REPORT_TYPE, TOTAL_ASSETS, TOTAL_EQUITY
+
+[3] datacenter  reportName=RPT_DMSK_FN_BALANCE  filter=(SECURITY_CODE="600000")
+    params: pageNumber=1 pageSize=2 columns=ALL source=WEB client=WEB
+    success=True  code=0  message=ok
+    pages=54  records=2
+    keys=57
+    keys: ACCEPT_DEPOSIT, ACCEPT_DEPOSIT_RATIO, ACCOUNTS_PAYABLE, ACCOUNTS_PAYABLE_RATIO, ACCOUNTS_RECE, ACCOUNTS_RECE_RATIO, ADVANCE_PREMIUM, ADVANCE_PREMIUM_RATIO, ADVANCE_RECEIVABLES, ADVANCE_RECEIVABLES_RATIO, AGENT_TRADE_SECURITY, ASF_RATIO, ATS_RATIO, AVAILABLE_SALE_FINASSET, BORROW_FUND, BORROW_FUND_RATIO, CASH_DEPOSIT_PBC, CDP_RATIO, CURRENT_RATIO, DATA_STATE, DATE_TYPE_CODE, DEBT_ASSET_RATIO, FIXED_ASSET, INDUSTRY_CODE, INDUSTRY_NAME, INVENTORY, INVENTORY_RATIO, LOAN_ADVANCE, LOAN_ADVANCE_RATIO, LOAN_PBC, LOAN_PBC_RATIO, MARKET, MONETARYFUNDS, MONETARYFUNDS_RATIO, NOTICE_DATE, ORG_CODE, PREMIUM_RECE, PREMIUM_RECE_RATIO, REPORT_DATE, REPORT_TYPE_CODE, SECUCODE, SECURITY_CODE, SECURITY_NAME_ABBR, SECURITY_TYPE_CODE, SELL_REPO_FINASSET, SER_RATIO, SETTLE_EXCESS_RESERVE, SHORT_LOAN, SHORT_LOAN_RATIO, SRF_RATIO, TOTAL_ASSETS, TOTAL_ASSETS_RATIO, TOTAL_EQUITY, TOTAL_EQUITY_RATIO, TOTAL_LIABILITIES, TOTAL_LIAB_RATIO, TRADE_MARKET_CODE
+    EASTMONEY_FINANCIAL 命中 5/9
+    present: SECURITY_CODE, REPORT_DATE, NOTICE_DATE, TOTAL_ASSETS, TOTAL_EQUITY
+    missing: REPORT_TYPE, TOTAL_OPERATE_INCOME, PARENT_NETPROFIT, WEIGHTAVG_ROE
+
+[4] datacenter  reportName=RPT_INDEX_TS_COMPONENT  filter=(INDEX_CODE="000300")
+    params: pageNumber=1 pageSize=2 columns=ALL source=WEB client=WEB
+    success=False  code=9501  message=INDEX_CODE列不存在
+    pages=None  records=0
+    !! 提取为空：拿不到任何记录，后面的列名比对无法进行
+    (该 report 预期被源拒绝，这里不记为失败)
+
+[汇总] EASTMONEY_FINANCIAL 的 9 列在各 report 上的可得性
+    RPT_LICO_FN_CPD: 5/9
+    RPT_DMSK_FN_BALANCE: 5/9
+    并集覆盖 8/9：SECURITY_CODE, REPORT_DATE, NOTICE_DATE, TOTAL_OPERATE_INCOME, PARENT_NETPROFIT, TOTAL_ASSETS, TOTAL_EQUITY, WEIGHTAVG_ROE
+    单一 report 覆盖全部 9 列的：(none)
+    ⇒ 若为 (none)：EASTMONEY_FINANCIAL 无法由一个 report 喂满，映射表与真实返回**对不上**（不是「未验证」，是已证伪）。
+
+verdict: SMOKE OK  (datacenter 通路可用；kline 见 [1]/[1b]，不参与判定)

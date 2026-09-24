@@ -44,11 +44,22 @@
 
 ## 未验证的部分（诚实声明，不在代码里假装已验证）
 
-本轮**没有联网**，也**没有安装** akshare / baostock（它们在 `[datasources]` extra 里）。
-所以映射表的**键名**是照源文档的字段名写的，**未经真实调用验证**；`_default_*` 那几个
-真实取数函数同样未经调用。这属于「未验证的映射」，登记在数据中心契约**附录 B**。
-测试覆盖的是映射**机制**（喂进带源字段名的帧，输出必须是标准 schema），
-不是映射**内容**。
+`akshare` / `baostock` 仍**没有安装**（它们在 `[datasources]` extra 里），也**从未联网核对**
+⇒ 这两张映射表的**键名**仍是照源文档的字段名写的，`_default_*` 真实取数函数仍未被真实调用。
+测试覆盖的是映射**机制**（喂进带源字段名的帧，输出必须是标准 schema），不是映射**内容**。
+
+**东财一源已经不同了（2026-09-24）**：传输层已落地（就是下面的 `_http_get_json`），并对真实
+端点跑过一次**人工**冒烟（`tools/eastmoney_transport_smoke.py`，证据
+`tools/eastmoney-transport-smoke-report.txt` —— **它是工具，不是门禁**）。实测结论不是
+「未验证」，而是**部分证伪**：`EASTMONEY_FINANCIAL` 的 9 列**没有任何单一 `reportName`
+能喂满**（`RPT_LICO_FN_CPD` 5/9、`RPT_DMSK_FN_BALANCE` 5/9，并集 8/9），且 `REPORT_TYPE`
+在真实返回里**没有生产者**（只有 `REPORT_TYPE_CODE`）—— 而 `EASTMONEY_REPORT_TYPE` 是按
+**中文报表名**建的，真实语义却是「一个 `reportName` 就是一种报表」。
+
+这是**产品决策**（`dc_financial` 的收入类与资产负债类科目分两次请求再合并、还是砍掉一半科目），
+不是实现细节。所以本轮**没有**为了让冒烟「看起来通过」而改映射表、删列或改语义：
+`EastMoneyAdapter._default_fetch` 保持 `kind='UNSUPPORTED'` 存根。逐条证据、边界
+（「换一个 report 就能凑齐」未被排除、只是未被找到）登记在数据中心契约**附录 B12**。
 
 ## 一处契约缺口（本切片不擅自补）
 
@@ -64,10 +75,13 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import date
+import json
 import re
 import socket
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 import urllib.error
+import urllib.parse
+import urllib.request
 
 import pandas as pd
 
@@ -172,6 +186,21 @@ EASTMONEY_INDEX_MEMBER = {
 }
 # 该源的权重是百分数。
 EASTMONEY_WEIGHT_IS_PERCENT = True
+
+# ── 真实取数的传输层（只用标准库） ─────────────────────────────────────────────
+# 契约 §3.2 的三个源里，东财**没有官方 Python SDK** —— 于是「怎么发请求」这件事落在
+# 本模块里，而不是某个 SDK 里。这里只用标准库：`[datasources]` extra 装的是源 SDK，
+# 而 CI 只装 `[dev]`，任何一处 import 了第三方 HTTP 库都会让本模块在 CI 里直接不可导入。
+#
+# **网络出口只有 `_http_get_json` 一处**。这不是洁癖：出口唯一，测试把它换成假函数
+# 就能离线验完 URL、参数、分页与解帧，而被测代码一行也不用改。
+HTTP_TIMEOUT_SECONDS = 10.0
+HTTP_USER_AGENT = 'quan-auto/0.1 (+https://github.com/yuezu1026/quan-auto)'
+
+# 东财数据中心（财务 / 指数成分股）端点。**端点自身是实测可达的**（2026-09-24：直连 200，
+# 证据 `tools/eastmoney-transport-smoke-report.txt`）；待验证的是各 `reportName` 的**列名**，
+# 那部分登记在数据中心契约附录 B10，**不要**把「端点可达」读成「映射表是对的」。
+EASTMONEY_DATA_API = 'https://datacenter-web.eastmoney.com/api/data/v1/get'
 
 EXCHANGES = ('SH', 'SZ', 'BJ')
 
@@ -742,6 +771,36 @@ class SourceAdapter(ABC):
     def validate(self, frame: pd.DataFrame) -> ValidationReport:
         """校验归一化后的数据帧；`is_valid=False` 时 `DataCenter` 不得写入。"""
         raise NotImplementedError
+
+
+# ── 唯一网络出口 ─────────────────────────────────────────────────────────────
+def _http_get_json(url: str, params: Mapping[str, Any], *,
+                   timeout: float = HTTP_TIMEOUT_SECONDS,
+                   opener: Optional[Callable[..., Any]] = None) -> Any:
+    """GET `url?params` 并解成 JSON。**全模块只有这里碰网络。**
+
+    参数:
+    opener: 替换用的请求函数（签名同 `urllib.request.urlopen` 且被当作上下文管理器用）。
+        默认 None 即真实请求。测试传自己的实现就能对着本地 HTTP 服务跑完
+        整条链路（urlencode → 头 → 状态码 → 解帧），**不碰外网**。
+
+    **不在这里 try/except**。把 `HTTPError` / `socket.timeout` 就地译成一句人话，
+    会让 `classify_source_failure` 失去分类依据 —— 401 与 503 会长得一样，于是
+    「换凭证」和「过一会儿重试」这两种完全不同的动作就分不出来了。异常原样上抛，
+    由 `_AdapterBase._call` 这个唯一的翻译点分类。
+
+    JSON 解不出来时抛的是 `json.JSONDecodeError`（`ValueError` 的子类）——
+    它会落到 `SOURCE_SCHEMA_MISMATCH`：源返回了网页/公告而不是数据时，调用方
+    该做的是改请求或改解析，不是重试。
+    """
+    request = urllib.request.Request(
+        url + '?' + urllib.parse.urlencode(dict(params)),
+        headers={'User-Agent': HTTP_USER_AGENT},
+    )
+    real_opener = urllib.request.urlopen if opener is None else opener
+    with real_opener(request, timeout=timeout) as response:
+        body = response.read()
+    return json.loads(body.decode('utf-8'))
 
 
 class _AdapterBase(SourceAdapter):

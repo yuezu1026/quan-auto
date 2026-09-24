@@ -13,13 +13,16 @@ from __future__ import annotations
 
 import dataclasses
 from datetime import date
+import http.server
 import json
 import socket
+import threading
 import urllib.error
 
 import pandas as pd
 import pytest
 
+from quanauto import datasources as ds
 from quanauto.datasources import (
     AKSHARE_DAILY_BAR,
     DAILY_BAR_COLUMNS,
@@ -583,3 +586,121 @@ def test_every_declared_category_has_a_producer() -> None:
         '分类表与生产者对不上：声明了没人抛的有 %r；抛了没声明的有 %r'
         % (sorted(set(SOURCE_FAILURE_KINDS) - produced),
            sorted(produced - set(SOURCE_FAILURE_KINDS))))
+
+
+# ── 传输层：唯一网络出口（离线可测，不碰外网） ────────────────────────────────
+# 东财没有官方 Python SDK，「怎么发请求」这件事因此落在适配器里。它的正确性不能靠
+# 「跑一次线上看看报不报错」来证明 —— 那既不可重复，也会把「本机断网」变成红。
+# 做法是：起一个**本机** HTTP 服务，用真实 `urllib` 打过去，把
+# urlencode → 请求头 → 状态码 → 解帧 → 分类 整条链路验完。
+#
+# 这里刻意不 mock `urllib.request.urlopen`：被替换成假函数的传输层验不出
+# 「参数拼错了」「UA 没带」这类错误，而那正是这一段代码的**全部内容**。
+
+
+class _LocalHTTP:
+    """最小本机 HTTP 服务：每个请求都喂同一份预设响应，并记下收到的路径与请求头。"""
+
+    def __init__(self, status: int = 200, body: str = '{}',
+                 content_type: str = 'application/json') -> None:
+        self.requests = []
+        owner = self
+
+        class _Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802 —— 方法名由 BaseHTTPRequestHandler 约定
+                owner.requests.append((self.path, dict(self.headers)))
+                payload = body.encode('utf-8')
+                self.send_response(status)
+                self.send_header('Content-Type', content_type)
+                self.send_header('Content-Length', str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, *args):  # 别把每个请求都打进测试输出
+                pass
+
+        self._server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), _Handler)
+
+    def __enter__(self) -> "_LocalHTTP":
+        threading.Thread(target=self._server.serve_forever, daemon=True).start()
+        self.url = 'http://127.0.0.1:%d/api/data/v1/get' % self._server.server_address[1]
+        return self
+
+    def __exit__(self, *exc) -> bool:
+        self._server.shutdown()
+        self._server.server_close()
+        return False
+
+
+def test_http_get_json_encodes_the_query_and_parses_the_envelope() -> None:
+    """请求形状与解帧：参数进 query string，响应的 `result.data` 直接可用。
+
+    响应形状是 **2026-09-24 实测**的（`success` / `result.data` / `result.pages`），
+    见 `tools/eastmoney-transport-smoke-report.txt`。
+    """
+    payload = json.dumps({'success': True, 'result': {'data': [{'A': 1}], 'pages': 2}})
+    with _LocalHTTP(body=payload) as server:
+        got = ds._http_get_json(server.url, {'reportName': 'RPT_X', 'pageNumber': 2,
+                                             'pageSize': 100, 'columns': 'ALL'})
+    assert got['result']['data'] == [{'A': 1}]
+    path, headers = server.requests[0]
+    assert path.startswith('/api/data/v1/get?'), '路径被吃掉了：url + "?" + query 拼错'
+    assert 'reportName=RPT_X' in path and 'pageNumber=2' in path
+    assert headers.get('User-Agent') == ds.HTTP_USER_AGENT, (
+        '不带 UA 的请求会被源当爬虫挡掉 —— 返回的是 HTML，解帧报的是「JSON 解析失败」，'
+        '排查方向会被彻底带偏')
+
+
+@pytest.mark.parametrize("status,expected", [
+    (429, 'SOURCE_RATE_LIMITED'),
+    (401, 'SOURCE_AUTH'),
+    (403, 'SOURCE_AUTH'),
+    (503, 'SOURCE_UNREACHABLE'),
+])
+def test_transport_failures_reach_the_right_category(status, expected) -> None:
+    """真传输 → 真适配器 → 真分类器，全程不碰外网。
+
+    「限流」和「凭证错」都会返回非 200，如果传输层就地吞掉状态码写成一句人话，
+    这两类就再也分不开了 —— 而调用方对它们的动作**完全相反**（等一会儿 vs 换凭证）。
+    """
+    with _LocalHTTP(status=status, body='{}') as server:
+        url = server.url
+        adapter = EastMoneyAdapter(
+            fetch=lambda **kwargs: ds._http_get_json(url, {'reportName': 'RPT_X'}))
+        with pytest.raises(SourceAdapterError) as caught:
+            adapter.fetch_index_members('000300.SH', date(2026, 9, 24))
+    assert caught.value.kind == expected
+    assert caught.value.source == 'eastmoney'
+    assert caught.value.retryable is (expected in RETRYABLE_SOURCE_FAILURES)
+
+
+def test_a_non_json_body_is_a_schema_mismatch_not_a_retryable_failure() -> None:
+    """源返回公告页 / 风控页时给的是 HTML，不是 JSON。
+
+    把它当网络故障去重试，永远也等不到 JSON；类别必须落在「调用方该改请求」那一侧。
+    """
+    with _LocalHTTP(body='<html>系统繁忙</html>', content_type='text/html') as server:
+        url = server.url
+        adapter = EastMoneyAdapter(fetch=lambda **kwargs: ds._http_get_json(url, {}))
+        with pytest.raises(SourceAdapterError) as caught:
+            adapter.fetch_index_members('000300.SH', date(2026, 9, 24))
+    assert caught.value.kind == 'SOURCE_SCHEMA_MISMATCH'
+    assert caught.value.retryable is False
+
+
+def test_a_closed_port_is_unreachable_and_retryable() -> None:
+    """上面几条都是「连上了但被打回」，这条补上「根本没连上」。
+
+    端口取法是 bind 到 0 再关掉 —— 拿到的端口号必然没人监听，且**不需要外网**。
+    """
+    probe = socket.socket()
+    probe.bind(('127.0.0.1', 0))
+    port = probe.getsockname()[1]
+    probe.close()
+
+    adapter = EastMoneyAdapter(
+        fetch=lambda **kwargs: ds._http_get_json('http://127.0.0.1:%d/x' % port, {}))
+    with pytest.raises(SourceAdapterError) as caught:
+        adapter.fetch_index_members('000300.SH', date(2026, 9, 24))
+    assert caught.value.kind == 'SOURCE_UNREACHABLE'
+    assert caught.value.retryable is True
