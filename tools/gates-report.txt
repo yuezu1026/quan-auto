@@ -1,4 +1,4 @@
-SCOPE: FULL -- all 10 registered gate(s) ran.
+SCOPE: FULL -- all 11 registered gate(s) ran.
 
 ==============================================================================
 GATE md-fidelity (tier A) selftest=PASS verdict=PASS 0 finding(s)
@@ -134,6 +134,17 @@ samples=14
 [real] 在真实仓库上跑（自测通过不代表真实产物没问题）
 contract=docs/智能量化交易平台-核心模块接口契约文档.md issues=0
 verdict: PASS
+
+==============================================================================
+GATE appendix-refs (tier A) selftest=PASS verdict=PASS 0 finding(s)
+what: 契约文档里被引用的附录标签（含条目号、点名归属）都真实存在
+argv: tools/verify_appendix_refs.py
+------------------------------------------------------------------------------
+scan scope: git ls-files=77 file(s), read as text=74, skipped=3
+  skipped (binary/undecodable): docs/智能量化交易平台-数据中心数据源选型与接入规范.docx, docs/智能量化交易平台-核心模块接口契约文档.docx, docs/智能量化交易平台.docx
+appendix index: core=5L/8I dc=4L/58I prd=1L/0I risk=0L/0I
+citations: 124 total, 76 with an item label, 23 naming an owner, in 23 file(s)
+verdict: PASS (0 issue(s))
 
 ==============================================================================
 GATE core-contract-refs (tier B) selftest=PASS verdict=RATCHET 39/39

@@ -94,6 +94,7 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 | `tools/verify_md_coverage.py` | docx 的每一段（含表格单元）是否都出现在对应 md 中；另断言声明的追加段落（`ADDENDA`）未被重新转换抹掉 |
 | `tools/verify_risk_config.py` | 风控契约 §3.6 与 DDL 与 smoke.sql 三方一致 |
 | `tools/verify_contract_refs.py` | 契约引用的类型/异常是否有定义（B7 欠账所在） |
+| `tools/verify_appendix_refs.py` | ★ **新门禁**（`appendix-refs`）：**散文里的交叉引用**是否指向真实存在的附录条目。扫 `git ls-files` 的全部文本，把各契约/PRD 文档的附录字母与条目号建成索引，再核对每个「某契约 + 附录标签」的引用：字母不属于任何文档 ⇒ `APX-UNKNOWN-APPENDIX`、字母在但条目号不存在 ⇒ `APX-DANGLING-ITEM`、点名了文档而该文档没有这个附录 ⇒ `APX-WRONG-CONTRACT`（全字匹配；斜杠/波浪号连写与并列续写都展开）。**只读文本**：不执行被检代码、不联网；文件清单取自 `git ls-files`，拿不到就**拒判**而不是空转；另有一组空转守卫（引用为 0 / 索引为空 / 判据退化时一律拒判，而不是打印「0 问题」）。它的存在理由：附录被重编号或整段删掉后，文档里那句地址仍印着、其余门禁全绿，而**去取裁决的 agent 会落到空地址**。边界：只证明「这个标签存在」，**证明不了标签背后的裁决仍然成立** |
 | `tools/verify_data_center.py` | 数据中心契约 §3.6.1 与 DDL 约束清单双向一致（C1~C7）+ 对 `db/data_center.smoke.sql` 的触发测试覆盖核对（C7） |
 | `tools/verify_data_center_pit.py` | ★ **I2 S1 新门禁**：`DataFeed` 取数路径的 `as_of` **两层防线**（显式日期参数越界必须抛 / 经 guard 逐行登记）+ 回测会话下 `QFQ`/`BFILL` 必须被拒 + 只有 `DataCenter.as_of()` 能产出 `DataFeed`。「越界＝抛而非裁剪」这条语义的机器判据就在这里。**只解析 AST，从不执行被检代码、不跑 pytest** |
 | `tools/verify_data_center_adapter.py` | ★ **I2 S2 新门禁**（`data-center-adapter`）：采集侧适配器把源列名/取值翻成标准 schema（A1/A2/A4/A8）、采集层不含数据库驱动（A5）、源 SDK 只能惰性 import（A6）、行对象不暴露源字段名（A7）、新映射表/列名元组未登记即报错（A3/A9）、两个空转守卫（A0/A10）。**只解析源码文本**：不执行适配器、不联网、不 import pandas |
@@ -139,6 +140,9 @@ python tools/run_all_gates.py --selftest      # 证明这个 harness 自己会�
 | iteration-plan | `python tools/verify_iteration_plan.py` | 无参数（可选末尾跟一个文件路径，用于把守卫指向别的文件） |
 | core-contract-refs | `python tools/verify_contract_refs.py --extra=docs/智能量化交易平台-数据中心接口契约文档.md --extra=docs/智能量化交易平台-风控层接口契约文档.md` | **少一个 `--extra=` 就会把已定义的类型误报成缺失**，虚增基线、掩盖真实漂移 |
 | skeleton | `python tools/verify_skeleton.py` | 无参数（可选末尾跟一个目录，用于把守卫指向别的根）。**它不跑 pytest**，别把它当回归测试用 |
+| backtest-reproducibility | `python tools/verify_backtest_reproducibility.py` | 无参数（重录证据要显式 `--record`）。**默认只读**，跑门禁不会改 `.rounds/` 样本；它只证明**本机**可复现，不证明跨机器/跨版本 |
+| contract-signature | `python tools/verify_contract_signature.py` | 无参数。契约侧签名必须能在契约文档里**逐字**找到 ⇒ 它管的是「有人单边改了签名」，不是「三方都对」；**不比返回类型**（契约引用了大量本项目不存在的类型），只比参数列表与数据类字段名 |
+| appendix-refs | `python tools/verify_appendix_refs.py` | 无参数。**只读文本**：不执行被检代码、不联网；文件清单取自 `git ls-files`，**拿不到就拒判**（不在 git 仓库里跑会红）。边界：只证明标签存在，**证明不了标签背后的裁决仍然成立** |
 
 每个门禁都支持 `--selftest`。
 

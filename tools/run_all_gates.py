@@ -206,6 +206,21 @@ GATES = [
         'selftest': ['tools/verify_contract_signature.py', '--selftest'],
     },
     {
+        'name': 'appendix-refs',
+        'tier': 'A',
+        # 前两个契约侧门禁守的是签名与 ```python 块里的类型，**散文里的交叉引用没人管**。
+        # 「见数据中心契约附录标签 B12」这类句子是写给读契约的 agent 的地址；附录被重编号
+        # 或整段删掉之后，这句话仍印在文档里、其余门禁全绿，agent 去一个空地址取裁决 ——
+        # 要么自己编一份，要么把约束丢掉，两种都不报错。范围 = `git ls-files`（克隆里能
+        # 看到的文件），gitignored 的一次性探针不在其中；拿不到文件清单时它拒判，否则等于
+        # 审计一个未知子集。它自己的输出里不写「附录+标签」的形状：gates-report.txt 是
+        # tracked 文件，报告会被下一轮重新扫，一句悬挂引用会变成幻影 FINDING。
+        # 边界：只证明「这个标签存在」，**证明不了标签背后的裁决仍然成立**。
+        'what': '契约文档里被引用的附录标签（含条目号、点名归属）都真实存在',
+        'runner': ['tools/verify_appendix_refs.py'],
+        'selftest': ['tools/verify_appendix_refs.py', '--selftest'],
+    },
+    {
         'name': 'core-contract-refs',
         'tier': 'B',
         # The two supplements contribute definitions only. DataFeed/MarketStatus/
