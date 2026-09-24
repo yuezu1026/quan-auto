@@ -1,13 +1,13 @@
 # ci-dryrun 报告（本地等价，不是 CI）
 
 这一份是**快照**：结论只对下面记录的解释器与 commit 成立，改完代码必须重跑。
-CI 自 2026-09-24 起在 GitHub 上真跑（`origin` 公开）；下面这份是**本地等价**：
-它给的是本机解释器的口径，和 GitHub 上那次真跑不能互相替代。
+CI 自 2026-09-24 起在 GitHub 上真跑（`origin` 公开；首次真跑判红、修复后第二次 success）；
+下面这份是**本地等价**：它给的是本机解释器的口径，和 GitHub 上那次真跑不能互相替代。
 
-generated: 2026-09-24 08:44:33
+generated: 2026-09-24 08:46:43
 python:    D:\project-quan\quan-auto\.venv\Scripts\python.exe  (.venv/Scripts/python.exe)
 version:   Python 3.13.9
-commit:    338bdb76f37f2d750e7175a576e14d4b30cb8f5b
+commit:    1cb31d266dfac08453cf76d44b3215494da7dcff
 dirty:     0 项未提交改动
 pycache:   启动时清掉 0 个 __pycache__（陈旧字节码会让结论与磁盘源码无关）
 
@@ -32,7 +32,7 @@ exit: 0
   绿: pytest exit=0
     | ........................................................................ [ 96%]
     | ...                                                                      [100%]
-    | 75 passed in 0.56s
+    | 75 passed in 0.57s
 
 ### ci-drops-gates -- 把 CI 里那一行门禁命令换成单跑一个子门禁
   靶子: .github/workflows/ci.yml  'python tools/run_all_gates.py' -> 'python tools/verify_risk_config.py'
