@@ -23,7 +23,7 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 
 | # | 约束 | 后果 |
 |---|---|---|
-| C1 | 本机**没有本地 PostgreSQL 实例**：`psql` 不在 PATH、无服务、无安装目录。容器通道**可用**（Docker Desktop 已跑起来） | 不要再说「从未执行」—— 2026-09-23 起 `db/*.sql` 已在容器 `postgres:17` 上执行过（触测 23/0 与 42/0 PASS）。但也**不能反过来说「约束已验证」**：只覆盖那一个镜像，「PostgreSQL 14+」仍未证实，改过 SQL 后结论即作废 |
+| C1 | 本机**没有本地 PostgreSQL 实例**：`psql` 不在 PATH、无服务、无安装目录。容器通道**可用**（Docker Desktop 已跑起来） | 不要再说「从未执行」—— 2026-09-23 起 `db/*.sql` 已在容器上执行过（触测 23/0 与 42/0 PASS），2026-09-24 又在 `postgres:14` / `15` / `16` 上各跑一遍，四份快照 `tools/sql-smoke-report-pg14.txt` / `tools/sql-smoke-report-pg15.txt` / `tools/sql-smoke-report-pg16.txt` / `tools/sql-smoke-report.txt`。但也**不能反过来说「约束已验证」**：只覆盖这四个 tag，「PostgreSQL 14+」仍未证实；逐条证伪（`falsify_smoke.py` 31/31）仍只在 `postgres:17` 上做过；改过 SQL 后结论即作废 |
 | C2 | `docs/` 下 3 个 `.md` 由 `.docx` 转换生成，**重新转换会覆盖** | 只能在其**之后追加**，禁止原地改已有段落。原地改 = 内容丢失 + md-fidelity 门禁失败。**追加的内容同样会被重新转换抹掉**，所以每个追加块（模块4 的「以契约为准」注、附录A）都登记在 `verify_md_coverage.py` 的 `ADDENDA` 清单里，被抹掉即 FAIL。⚠️ ADDENDA **只对「有 `.docx` 对应物」的文件成立**：`docs/智能量化交易平台-数据中心接口契约文档.md` 是**手写契约**（`docs/` 下没有同名 `.docx`），可以原地编辑，它的附录 A 也**不该**登记进去 —— 登记上去只会变成一条永远不会被检查的死条目 |
 | C3 | 控制台是 **cp936(GBK)** | stdout 出现 GBK 之外的字符（如 `↔`）会让 Python 抛 `UnicodeEncodeError` 并丢掉整段输出；PowerShell `>` 写的是 **UTF-16LE** 不是 UTF-8；含中文的 argv 会被破坏 |
 | C4 | `tools/` 下**只用标准库** | 不要引入任何第三方依赖 |
@@ -72,16 +72,26 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 
 | 文件 | 规模 | 状态 |
 |---|---|---|
-| `db/risk_control.sql` | 9 表 / 14 CHECK / 幂等种子 | ✅ **已执行**（2026-09-23，postgres:17） |
-| `db/risk_control.smoke.sql` | 18 KB 约束触发测试 | ✅ **已执行**：23 passed / 0 failed |
-| `db/data_center.sql` | 9 表 / 16 CHECK / 1 部分唯一索引 | ✅ **已执行**（2026-09-23，postgres:17） |
-| `db/data_center.smoke.sql` | 38 KB 约束触发测试（A 前置 / B 16 条必须拒绝 / C 枚举与边界必须接受） | ✅ **已执行**：42 passed / 0 failed |
+| `db/risk_control.sql` | 9 表 / 14 CHECK / 幂等种子 | ✅ **已执行**（2026-09-24 起四个镜像：14.24 / 15.18 / 16.15 / 17.11） |
+| `db/risk_control.smoke.sql` | 18 KB 约束触发测试 | ✅ **已执行**：23 passed / 0 failed（四个镜像各一次） |
+| `db/data_center.sql` | 9 表 / 16 CHECK / 1 部分唯一索引 | ✅ **已执行**（2026-09-24 起四个镜像：14.24 / 15.18 / 16.15 / 17.11） |
+| `db/data_center.smoke.sql` | 38 KB 约束触发测试（A 前置 / B 16 条必须拒绝 / C 枚举与边界必须接受） | ✅ **已执行**：42 passed / 0 failed（四个镜像各一次） |
 
-> 两份 `*.smoke.sql` 都已在**容器 PostgreSQL** 上跑过（`postgres:17` / PostgreSQL 17.11，
-> 证据 `tools/sql-smoke-report.txt` 含镜像 digest），30 条 CHECK 不再是纸面防线。
+> 两份 `*.smoke.sql` 都已在**容器 PostgreSQL** 上跑过：`postgres:14`(14.24) / `15`(15.18) /
+> `16`(16.15) / `17`(17.11)，每版一份快照 `tools/sql-smoke-report-pg14.txt` /
+> `tools/sql-smoke-report-pg15.txt` / `tools/sql-smoke-report-pg16.txt` /
+> `tools/sql-smoke-report.txt`（均含镜像 digest），30 条 CHECK 不再是纸面防线。
+> 注意：地图里写路径必须写成**能落到文件上的**形式。上面这几行原本用的是花括号速记
+> （pg1 + 花括号 4,5,6 + .txt）与斜杠速记（postgres:14/15/16），被 skeleton 门禁的
+> MAP-PATHS 当场判红：花括号不是文件系统通配、`postgres:14` 也不是目录 —— 是**地图**
+> 写错了而不是门禁太严。这两个速记形式在本文里**故意不加反引号**（MAP-PATHS 只扫反引号里的
+> 内容，加了就等于把坏地址重新递给它）。
 > 但要分清两件事：**绿色本身不会告诉你有牙** —— 那要靠 `tools/falsify_smoke.py` 去证伪
-> （逐条放宽 CHECK 表达式，看它是否变红；现已覆盖 **31/31**）。同时记住边界：只跑过**那一个镜像**，
-> DDL 标题里的「PostgreSQL 14+」仍未证实，改过 `db/*.sql` 后那轮结论即作废。
+> （逐条放宽 CHECK 表达式，看它是否变红；现已覆盖 **31/31**，但**只在 `postgres:17` 上做过**）。
+> 同时记住边界：只跑过**这四个 tag**，其余 tag / 发行版从未跑过，改过 `db/*.sql` 后那轮结论即作废。
+> 每个 DDL 头部有一行 `-- PG-VERIFIED-ON:` 声明验过哪些版本，它由 `verify_data_center.py` 的 C6
+> 与 `verify_risk_config.py` 的 C17 拿 `tools/sql-smoke-report*.txt` 里的镜像名**双向**核对 ——
+> 多写一个没跑过的版本会红，少写一个跑过的也红。
 
 ### E. 门禁与工具
 
@@ -112,8 +122,9 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 | `tools/dump_docx_paras.py` | 定位 docx 段落，排查 md-fidelity 差异时的取证工具 |
 | `docker-compose.smoke.yml` | 一次性 PostgreSQL 容器（无 `ports:`、无命名卷 ⇒ `down -v` 必得空库） |
 | `tools/run_sql_smoke.py` | ★ **运行时验证通道**：起库 → 验空 → 两份 DDL+触发测试 → 落报告 |
-| `tools/falsify_smoke.py` | 证伪器：逐条放宽 CHECK 表达式，确认触测会变红（目前 31/31 CAUGHT / 30 条约束） |
-| `tools/sql-smoke-report.txt` | 运行时证据（含镜像 digest）—— **快照**，改 `db/*.sql` 后作废 |
+| `tools/falsify_smoke.py` | 证伪器：逐条放宽 CHECK 表达式，确认触测会变红（目前 31/31 CAUGHT / 30 条约束，**只在 `postgres:17` 上做过**） |
+| `tools/sql-smoke-report.txt` | 运行时证据（含镜像 digest）—— **快照**，改 `db/*.sql` 后作废；这份是默认路径那份 = `postgres:17`(17.11) |
+| `tools/sql-smoke-report-pg14.txt` / `tools/sql-smoke-report-pg15.txt` / `tools/sql-smoke-report-pg16.txt` | 版本阶梯的另三份证据（`postgres:14` 14.24 / `15` 15.18 / `16` 16.15，各 23/0 与 42/0）—— 由 `--report=` 另存，互不覆盖；同样是**快照** |
 | `tools/falsify-report.txt` | 上述证伪的逐案例证据 —— **快照**，改 `db/*.sql` 或 `*.smoke.sql` 后作废 |
 
 ## 4. 怎么跑门禁
@@ -205,9 +216,11 @@ CI 自 2026-09-24 起**在 GitHub 上真跑**（`origin` 公开，`main` 已推�
 门禁数量一律**现取**（`python tools/run_all_gates.py --list`），不在这里写死：
 tier-A 全绿；`core-contract-refs` 是 tier-B 欠账，基线 **39**（T1=2 / T2=19 / T3=18）。
 最大阻塞是 **B7**：主契约引用了 19 个类型和 18 个异常却从未定义，还有 2 个 python 块无法解析。
-**数据库侧已不再是「运行时未证实」**：2026-09-23 两份触发测试在容器 `postgres:17`（17.11）上
-分别是 **23/0** 与 **42/0** PASS，且这两份绿的**每一条命名 CHECK 都已被
-`tools/falsify_smoke.py` 单独证伪（31/31 CAUGHT）** —— 不再是抽样。
+**数据库侧已不再是「运行时未证实」**：两份触发测试 2026-09-23 先在容器 `postgres:17`（17.11）上
+各拿到 **23/0** 与 **42/0** PASS，2026-09-24 又在 `postgres:14`(14.24) / `15`(15.18) / `16`(16.15)
+上各跑一遍，同样是 **23/0** 与 **42/0** —— 即「四个 tag 上都通过」是实测的。
+这两份绿的**每一条命名 CHECK 都已被 `tools/falsify_smoke.py` 单独证伪（31/31 CAUGHT）** ——
+不再是抽样，但那次证伪**只在 `postgres:17` 上做过**，另三个镜像上只有冒烟层面的通过。
 细节与编号一律以 `docs/开工前缺口清单.md` 为准，不要在本文件里复制它。
 
 ## 7. 工作纪律（每条都对应一次真实踩坑）

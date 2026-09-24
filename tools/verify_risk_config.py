@@ -44,6 +44,7 @@ Usage:
   python verify_risk_config.py --selftest [workspace_root]
 """
 
+import glob
 import os
 import re
 import sys
@@ -172,6 +173,52 @@ RULE_SPECS_ENTRY_RE = re.compile(
 # | `risk_rule` | duty | writer |
 TABLE_LIST_ROW_RE = re.compile(r"^\|\s*`([a-z][a-z0-9_]*)`\s*\|", re.MULTILINE)
 
+# ---------------------------------------------------------------------------
+# C17 -- the file's own supported-version claim, tied to the smoke evidence.
+#
+# db/risk_control.sql's title says "PostgreSQL 14+". A static gate cannot prove a
+# version range; what it CAN do is force the file's claim and the recorded runs to
+# say the same thing, in BOTH directions. One direction ("every cited image has a
+# report") cannot see the drift where the artifact regenerates: run a fifth major and
+# the DDL keeps claiming four, every check stays green, and the next reader derives a
+# weaker claim than the evidence supports.
+STAMP_RE = re.compile(r'^[ \t]*--[ \t]*PG-VERIFIED-ON:[ \t]*(.*)$', re.M)
+PG_IMAGE_RE = re.compile(r'postgres:\d[\w.\-]*')
+REPORT_IMAGE_RE = re.compile(r'^[ \t]*image[ \t]*:[ \t]*(postgres:\d[\w.\-]*)[ \t]*$',
+                             re.M)
+
+# Sentinel for "the caller forgot to pass the evidence set". Not a usable default:
+# forgetting it must be a loud GATE failure, never a silent skip of C17.
+_NOT_SUPPLIED = object()
+
+
+def evidence_images(root):
+    """Returns (set of image names, list of problems) from tools/sql-smoke-report*.txt.
+
+    root is passed in rather than taken from __file__ so that --selftest and a run
+    against another checkout read the same tree as the files they were given.
+    Every report must yield at least one name: a report whose `image  :` line is gone
+    would otherwise contribute nothing and silently shrink the evidence side.
+    """
+    problems = []
+    files = sorted(glob.glob(os.path.join(root, 'tools', 'sql-smoke-report*.txt')))
+    if not files:
+        return set(), ['no file matched %s' % os.path.join(root, 'tools',
+                                                           'sql-smoke-report*.txt')]
+    found = set()
+    for path in files:
+        try:
+            text = read_text(path)
+        except OSError as exc:
+            problems.append('cannot read %s (%s)' % (path, exc))
+            continue
+        hits = set(REPORT_IMAGE_RE.findall(text))
+        if not hits:
+            problems.append('%s records no "image  : postgres:N" line'
+                            % os.path.basename(path))
+        found |= hits
+    return found, problems
+
 
 def read_text(path):
     """Read a file and normalise CRLF -> LF.
@@ -262,14 +309,17 @@ def extract_table_bodies(sql_text):
     return bodies
 
 
-def run_checks(sql_text, contract_text, smoke_text, specs_text):
+def run_checks(sql_text, contract_text, smoke_text, specs_text, evidence=_NOT_SUPPLIED):
     """Run every check independently. Returns (issues, stats).
 
     smoke_text is the content of db/risk_control.smoke.sql. It is a required
     argument, not an optional one: a defaulted argument would silently turn C15
     into a check that runs only in main() and never in --selftest, i.e. exactly the
     kind of detector that can never be seen to be broken. specs_text (the content of
-    quanauto/risk.py) is required for the same reason -- it feeds C16.
+    quanauto/risk.py) is required for the same reason -- it feeds C16. evidence (the
+    image names recorded in tools/sql-smoke-report*.txt) feeds C17 and defaults to the
+    _NOT_SUPPLIED sentinel, which fails loudly instead of skipping -- so that "the
+    caller forgot" is an observable GATE failure rather than a green result.
     """
     issues = []
     stats = {}
@@ -526,6 +576,45 @@ def run_checks(sql_text, contract_text, smoke_text, specs_text):
                         % untested)
         stats['smoke_constraints_tested'] = len(REQUIRED_CONSTRAINTS) - len(untested)
 
+    # ------------------------------------------------------------------
+    # C17: the file's own supported-version claim vs the recorded smoke runs.
+    # Both sides are computed independently and neither may be empty: an empty side
+    # would make the equality below pass over nothing at all.
+    # ------------------------------------------------------------------
+    if evidence is _NOT_SUPPLIED:
+        fail('GATE', 'run_checks() was called without the smoke-evidence image set -- '
+                     'C17 would have silently passed over whatever the DDL claims; pass '
+                     'evidence_images(root) instead of relying on a default')
+    elif not evidence:
+        fail('C17', 'the smoke-evidence image set is empty (no tools/sql-smoke-report*.txt '
+                    'yielded an image name) -- with nothing to compare against, the '
+                    'DDL version claim is a hand-written assertion again')
+    else:
+        stamp = STAMP_RE.search(sql_text)
+        if not stamp:
+            fail('C17', 'db/risk_control.sql carries no "-- PG-VERIFIED-ON: <images>" '
+                        'stamp -- the file claims a supported-version range, and a claim '
+                        'that does not say which images it was run on is not checkable')
+        else:
+            cited = set(PG_IMAGE_RE.findall(stamp.group(1)))
+            if not cited:
+                fail('C17', 'the "-- PG-VERIFIED-ON:" stamp names no image (%r) -- the '
+                            'line exists but asserts nothing'
+                            % stamp.group(1).strip())
+            else:
+                stats['verified_on'] = ' '.join(sorted(cited))
+                unevidenced = sorted(cited - evidence)
+                if unevidenced:
+                    fail('C17', 'the DDL claims verification on %s but no tools/'
+                                'sql-smoke-report*.txt records that image -- a cited '
+                                'version with no run behind it' % unevidenced)
+                hidden = sorted(evidence - cited)
+                if hidden:
+                    fail('C17', 'a smoke report records %s but the DDL stamp does not '
+                                'cite it -- the stamp understates what was actually run'
+                                % hidden)
+                stats['evidence_images'] = ' '.join(sorted(evidence))
+
     return issues, stats
 
 
@@ -557,13 +646,23 @@ def selftest(root):
     smoke = read_text(smoke_path)
     specs = read_text(specs_path)
 
+    # C17's evidence side. Read once here and passed to every run_checks() call: the
+    # samples below must be able to feed a DIFFERENT set to prove C17 compares rather
+    # than assumes, and a module-level constant would make that impossible.
+    evidence, ev_problems = evidence_images(root)
+    if ev_problems or not evidence:
+        print('  SELFTEST SETUP FAIL: smoke evidence unreadable (%s)'
+              % (ev_problems or 'empty set'))
+        return 1
+    print('  [evidence] %s' % ' '.join(sorted(evidence)))
+
     ok = True
 
     # ---- POSITIVE CONTROL: the real files must be clean. -------------------
-    issues, stats = run_checks(sql, contract, smoke, specs)
-    print('  [positive ] real files        -> issues=%d (extracted seed=%d ddl=%d spec=%d impl=%d)'
+    issues, stats = run_checks(sql, contract, smoke, specs, evidence)
+    print('  [positive ] real files        -> issues=%d (extracted seed=%d ddl=%d spec=%d impl=%d verified_on=%s)'
           % (len(issues), stats['seed_rows'], stats['ddl_tables'], stats['spec_rows'],
-             stats['rule_specs']))
+             stats['rule_specs'], stats.get('verified_on', '(none)')))
     if issues:
         ok = False
         for code, msg in issues:
@@ -578,7 +677,7 @@ def selftest(root):
         print('  SELFTEST SETUP FAIL: NEG1 could not strip the seed block')
         ok = False
     else:
-        issues, _ = run_checks(no_seed, contract, smoke, specs)
+        issues, _ = run_checks(no_seed, contract, smoke, specs, evidence)
         codes = set(c for c, _ in issues)
         hit = 'GATE' in codes and 'C3' in codes
         print('  [negative1] seed stripped     -> issues=%d codes=%s %s'
@@ -593,7 +692,7 @@ def selftest(root):
     if bad_unit is None:
         ok = False
     else:
-        issues, _ = run_checks(bad_unit, contract, smoke, specs)
+        issues, _ = run_checks(bad_unit, contract, smoke, specs, evidence)
         codes = set(c for c, _ in issues)
         hit = 'C4' in codes and 'C5' in codes
         print('  [negative2] ratio 0.10 -> 10  -> issues=%d codes=%s %s'
@@ -605,7 +704,7 @@ def selftest(root):
     if bad_gate is None:
         ok = False
     else:
-        issues, _ = run_checks(sql, bad_gate, smoke, specs)
+        issues, _ = run_checks(sql, bad_gate, smoke, specs, evidence)
         codes = set(c for c, _ in issues)
         hit = 'C5' in codes and 'C7' in codes
         print('  [negative3] contract 0.15->0.25 -> issues=%d codes=%s %s'
@@ -620,7 +719,7 @@ def selftest(root):
     if bad_global is None:
         ok = False
     else:
-        issues, _ = run_checks(bad_global, contract, smoke, specs)
+        issues, _ = run_checks(bad_global, contract, smoke, specs, evidence)
         codes = set(c for c, _ in issues)
         hit = 'C3' in codes
         print('  [negative4] GLOBAL -> STRATEGY -> issues=%d codes=%s %s'
@@ -635,7 +734,7 @@ def selftest(root):
     if bad_tbl is None:
         ok = False
     else:
-        issues, _ = run_checks(bad_tbl, contract, smoke, specs)
+        issues, _ = run_checks(bad_tbl, contract, smoke, specs, evidence)
         codes = set(c for c, _ in issues)
         hit = 'C10' in codes and 'C9' in codes
         print('  [negative5] peak table gone  -> issues=%d codes=%s %s'
@@ -652,7 +751,7 @@ def selftest(root):
     if bad_my is None:
         ok = False
     else:
-        issues, _ = run_checks(bad_my, contract, smoke, specs)
+        issues, _ = run_checks(bad_my, contract, smoke, specs, evidence)
         codes = set(c for c, _ in issues)
         hit = 'C13' in codes
         print('  [negative6] backtick back    -> issues=%d codes=%s %s'
@@ -667,7 +766,7 @@ def selftest(root):
     if bad_guard is None:
         ok = False
     else:
-        issues, _ = run_checks(bad_guard, contract, smoke, specs)
+        issues, _ = run_checks(bad_guard, contract, smoke, specs, evidence)
         codes = set(c for c, _ in issues)
         hit = 'C14' in codes
         print('  [negative7] ratio guard gone -> issues=%d codes=%s %s'
@@ -684,7 +783,7 @@ def selftest(root):
     if bad_other is None:
         ok = False
     else:
-        issues, _ = run_checks(bad_other, contract, smoke, specs)
+        issues, _ = run_checks(bad_other, contract, smoke, specs, evidence)
         codes = set(c for c, _ in issues)
         hit = 'C14' in codes
         print('  [negative8] breaker CHECK gone -> issues=%d codes=%s %s'
@@ -703,7 +802,7 @@ def selftest(root):
     if bad_smoke is None:
         ok = False
     else:
-        issues, _ = run_checks(sql, contract, bad_smoke, specs)
+        issues, _ = run_checks(sql, contract, bad_smoke, specs, evidence)
         codes = set(c for c, _ in issues)
         hit = 'C15' in codes
         print('  [negative9] smoke test gap -> issues=%d codes=%s %s'
@@ -721,7 +820,7 @@ def selftest(root):
     if bad_impl is None:
         ok = False
     else:
-        issues, _ = run_checks(sql, contract, smoke, bad_impl)
+        issues, _ = run_checks(sql, contract, smoke, bad_impl, evidence)
         codes = set(c for c, _ in issues)
         hit = 'C16' in codes
         print('  [negative10] risk.py 0.10->0.12 -> issues=%d codes=%s %s'
@@ -738,7 +837,7 @@ def selftest(root):
     if bad_impl_id is None:
         ok = False
     else:
-        issues, _ = run_checks(sql, contract, smoke, bad_impl_id)
+        issues, _ = run_checks(sql, contract, smoke, bad_impl_id, evidence)
         codes = set(c for c, _ in issues)
         hit = 'C16' in codes
         print('  [negative11] rule renamed   -> issues=%d codes=%s %s'
@@ -750,14 +849,83 @@ def selftest(root):
     # compare two empty registries it would print a perfect "0 issues" -- the exact
     # failure mode this whole gate exists to prevent, applied to the gate itself.
     no_specs = 'GLOBAL_RULE_IDS = ()\n'
-    issues, _ = run_checks(sql, contract, smoke, no_specs)
+    issues, _ = run_checks(sql, contract, smoke, no_specs, evidence)
     codes = set(c for c, _ in issues)
     hit = 'GATE' in codes
     print('  [negative12] no RULE_SPECS  -> issues=%d codes=%s %s'
           % (len(issues), sorted(codes), 'OK' if hit else 'MISSED'))
     ok = ok and hit
 
-    print('SELFTEST %s' % ('OK: all 12 negative controls fire, clean sample stays clean'
+    # ---- NEGATIVE CONTROL 13: the version claim with no stamp at all (C17). --
+    # The file's title says "PostgreSQL 14+". Without a machine-readable stamp that
+    # claim has no answer to "run on what?", which is exactly how it stayed
+    # unverifiable for as long as it did.
+    saved_stamp = [m.group(0) for m in STAMP_RE.finditer(sql)]
+    if len(saved_stamp) != 1:
+        print('  SELFTEST SETUP FAIL: NEG13 expected exactly 1 stamp line, got %d'
+              % len(saved_stamp))
+        ok = False
+    else:
+        no_stamp = sql.replace(saved_stamp[0], '-- (' + saved_stamp[0][3:] + ')')
+        issues, _ = run_checks(no_stamp, contract, smoke, specs, evidence)
+        codes = set(c for c, _ in issues)
+        hit = 'C17' in codes
+        print('  [negative13] stamp commented -> issues=%d codes=%s %s'
+              % (len(issues), sorted(codes), 'OK' if hit else 'MISSED'))
+        ok = ok and hit
+
+    # ---- NEGATIVE CONTROL 14: the stamp cites an image nobody has run (C17). --
+    # Direction one: a version in the claim with no evidence behind it. This is the
+    # shape that would let someone "cover" a new major by editing a comment.
+    bad_cite = _mutate(sql, '-- PG-VERIFIED-ON: postgres:14',
+                       '-- PG-VERIFIED-ON: postgres:9 postgres:14', 'NEG14')
+    if bad_cite is None:
+        ok = False
+    else:
+        issues, _ = run_checks(bad_cite, contract, smoke, specs, evidence)
+        codes = set(c for c, _ in issues)
+        hit = 'C17' in codes
+        print('  [negative14] cites postgres:9 -> issues=%d codes=%s %s'
+              % (len(issues), sorted(codes), 'OK' if hit else 'MISSED'))
+        ok = ok and hit
+
+    # ---- NEGATIVE CONTROL 15: a report the stamp does not cite (C17). --------
+    # Direction two, and the only sample that separates this check from a
+    # one-directional one. A DDL that quietly claims less than was proven would be
+    # green under the old rule, and the next reader re-derives a weaker claim.
+    bad_under = _mutate(sql, '-- PG-VERIFIED-ON: postgres:14',
+                        '-- PG-VERIFIED-ON: postgres:15', 'NEG15')
+    if bad_under is None:
+        ok = False
+    else:
+        issues, _ = run_checks(bad_under, contract, smoke, specs, evidence)
+        codes = set(c for c, _ in issues)
+        hit = 'C17' in codes
+        print('  [negative15] omits a cited report -> issues=%d codes=%s %s'
+              % (len(issues), sorted(codes), 'OK' if hit else 'MISSED'))
+        ok = ok and hit
+
+    # ---- NEGATIVE CONTROL 16: an empty evidence set (C17's vacuity guard). ----
+    # With nothing on the evidence side the comparison would agree with any stamp
+    # whatsoever, so an empty set must FAIL rather than pass vacuously.
+    issues, _ = run_checks(sql, contract, smoke, specs, set())
+    codes = set(c for c, _ in issues)
+    hit = 'C17' in codes
+    print('  [negative16] empty evidence  -> issues=%d codes=%s %s'
+          % (len(issues), sorted(codes), 'OK' if hit else 'MISSED'))
+    ok = ok and hit
+
+    # ---- NEGATIVE CONTROL 17: the caller forgets the evidence set. -----------
+    # The sentinel exists so this cannot pass silently. Without the sample,
+    # "forgot to wire C17" and "C17 has teeth" look identical.
+    issues, _ = run_checks(sql, contract, smoke, specs)
+    codes = set(c for c, _ in issues)
+    hit = 'GATE' in codes and 'C17' not in codes
+    print('  [negative17] evidence arg omitted -> issues=%d codes=%s %s'
+          % (len(issues), sorted(codes), 'OK' if hit else 'MISSED'))
+    ok = ok and hit
+
+    print('SELFTEST %s' % ('OK: all 17 negative controls fire, clean sample stays clean'
                            if ok else 'FAIL'))
     return 0 if ok else 1
 
@@ -785,17 +953,26 @@ def main():
     smoke = read_text(smoke_path)
     specs = read_text(specs_path)
 
+    evidence, ev_problems = evidence_images(root)
+    for problem in ev_problems:
+        print('WARNING: smoke evidence -- %s' % problem)
+
     print('CRLF-normalised: contract=%d bytes, sql=%d bytes, smoke=%d bytes, specs=%d bytes'
           % (len(contract.encode('utf-8')), len(sql.encode('utf-8')),
              len(smoke.encode('utf-8')), len(specs.encode('utf-8'))))
 
-    issues, stats = run_checks(sql, contract, smoke, specs)
+    issues, stats = run_checks(sql, contract, smoke, specs, evidence)
 
     print('extracted: seed_rows=%d ddl_tables=%d spec_rows=%d rule_specs=%d '
-          'contract_table_refs=%d required_constraints=%d covered_by_smoke=%d'
+          'contract_table_refs=%d required_constraints=%d covered_by_smoke=%d '
+          'verified_on=%s evidence_images=%s'
           % (stats['seed_rows'], stats['ddl_tables'], stats['spec_rows'],
              stats['rule_specs'], stats['contract_table_refs'], len(REQUIRED_CONSTRAINTS),
-             stats.get('smoke_constraints_tested', 0)))
+             stats.get('smoke_constraints_tested', 0),
+             stats.get('verified_on', '(none)'), stats.get('evidence_images', '(none)')))
+    print('smoke evidence files: %s'
+          % ' '.join(sorted(glob.glob(os.path.join(root, 'tools',
+                                                   'sql-smoke-report*.txt')))))
 
     for code, msg in issues:
         print('FAIL [%s] %s' % (code, msg))

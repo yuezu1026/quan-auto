@@ -4,6 +4,23 @@
 -- 目标: PostgreSQL 14+
 -- 说明: 本脚本同时承担「默认阈值种子」职责，种子行由 tools/verify_risk_config.py 强制校验。
 --       RATIO 单位一律存 0~1 小数（契约 D3），禁止写 10 表示 10%。
+--
+-- 执行记录（2026-09-23 首次，2026-09-24 补成版本阶梯）—— 这一段里的
+-- PG-VERIFIED-ON 是本文件关于「在哪些镜像上验过」的**唯一**主张，其字面内容由
+-- tools/verify_risk_config.py 的 C17 与 tools/sql-smoke-report*.txt 记录的镜像名
+-- **双向**核对：多写一个没跑过的版本会红，少写一个跑过的也会红。
+--
+-- PG-VERIFIED-ON: postgres:14 postgres:15 postgres:16 postgres:17
+--
+--   每个镜像一次独立运行（23/23 PASS），各写一份快照，互不覆盖：
+--     tools/sql-smoke-report-pg14.txt  PostgreSQL 14.24
+--     tools/sql-smoke-report-pg15.txt  PostgreSQL 15.18
+--     tools/sql-smoke-report-pg16.txt  PostgreSQL 16.15
+--     tools/sql-smoke-report.txt       PostgreSQL 17.11（2026-09-23 那份）
+--   能说：两个冒烟套件在 14.24 / 15.18 / 16.15 / 17.11 四个镜像上都通过。
+--   不能说：标题里那句「PostgreSQL 14+」全都成立 —— 实测只覆盖这四个 tag。
+--   改任何 CHECK 表达式都要重跑 tools/run_sql_smoke.py（要另存证据就加 --report=）。
+--
 -- 约定: ① 标识符一律不加双引号、全小写。PostgreSQL 会把未加引号的标识符折叠为小写，
 --          而加过引号的标识符终身区分大小写 —— 混用是「表不存在」类事故的常见根因。
 --       ② 时间列一律 timestamptz(3)，存绝对时刻；展示口径由应用层统一为 Asia/Shanghai。

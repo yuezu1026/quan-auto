@@ -33,10 +33,13 @@
 - **没有本地 PostgreSQL 实例**（`psql` 不在 PATH、无服务、无安装目录），但**容器通道可用**：
   `python tools/run_sql_smoke.py` 会起一次性容器 PostgreSQL 跑 `db/*.sql` + 触发测试。
   2026-09-23 实测风控 **23/0**、数据中心 **42/0** PASS（证据 `tools/sql-smoke-report.txt`，含镜像 digest）；
+  2026-09-24 用 `--pg-image=` + `--report=` 在 `postgres:14`(14.24) / `15`(15.18) / `16`(16.15) 上各跑一遍，
+  同样是 **23/0 与 42/0**（证据 `tools/sql-smoke-report-pg1{4,5,6}.txt`，pg17 那份未被覆盖）；
   这两份绿的**效力**已被 `python tools/falsify_smoke.py` 逐条证伪 —— **31/31 CAUGHT**，
-  覆盖全部 30 条命名 CHECK（证据 `tools/falsify-report.txt`）。
-  两句话都不能说：① 「从未执行」（已不成立）；② 「约束已验证」（只跑过 `postgres:17` 一个镜像，
+  覆盖全部 30 条命名 CHECK（证据 `tools/falsify-report.txt`，**且只在 postgres:17 上做过**）。
+  两句话都不能说：① 「从未执行」（已不成立）；② 「约束已验证」（只跑过这四个 tag，
   「PostgreSQL 14+」仍未证实，且改过任何 `db/*.sql` 后那轮结论即作废）。
+  每个 DDL 头部的 `-- PG-VERIFIED-ON:` 与上面这些快照里的镜像名由门禁**双向**核对。
 - **控制台是 cp936(GBK)**：输出里出现 GBK 之外的字符（如 `↔`）会让 Python 抛 `UnicodeEncodeError`。
   PowerShell `>` 重定向写的是 **UTF-16LE**，不是 UTF-8。
 - **`tools/` 下只用标准库**，不要引入第三方依赖。

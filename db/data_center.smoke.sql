@@ -53,12 +53,22 @@
 --     exit code 0 + "SMOKE PASS: ..."  -> every guard is effective
 --     non-zero   + "SMOKE FAIL: ..."   -> at least one guard is a paper guard
 --
--- STATUS: written 2026-09-23, EXECUTED 2026-09-23 -- SMOKE PASS, 42 passed / 0 failed
---   on postgres:17 (PostgreSQL 17.11, Debian) via tools/run_sql_smoke.py. Evidence,
---   including the image digest: tools/sql-smoke-report.txt.
+-- STATUS: written 2026-09-23, EXECUTED 2026-09-23 and re-run on a version ladder
+--   2026-09-24 -- SMOKE PASS, 42 passed / 0 failed, on FOUR images, each run writing
+--   its own snapshot (a later run never overwrites an earlier one -- that is what
+--   run_sql_smoke.py's --report= is for):
+--     postgres:14  PostgreSQL 14.24  tools/sql-smoke-report-pg14.txt
+--     postgres:15  PostgreSQL 15.18  tools/sql-smoke-report-pg15.txt
+--     postgres:16  PostgreSQL 16.15  tools/sql-smoke-report-pg16.txt
+--     postgres:17  PostgreSQL 17.11  tools/sql-smoke-report.txt
+--   Each snapshot records the image digest and the server/client encoding.
+--
+--   So: "the two smoke suites pass on 14.24 / 15.18 / 16.15 / 17.11" is now measured.
+--   "PostgreSQL 14+ works" is still NOT, and must not be inferred from the above --
+--   other tags and other distributions have never been run.
 --
 --   What that green does NOT cover:
---     * only that one image has ever been run -- "PostgreSQL 14+" is untested;
+--     * no image outside those four has ever been run;
 --     * the denominator is not self-asserted: a section that silently stopped
 --       executing would shrink n_pass without turning anything red. What keeps the
 --       B half present is C7 in tools/verify_data_center.py (16/16 asserted by name).

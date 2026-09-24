@@ -4,12 +4,24 @@
 -- 对应 PRD 模块: 模块 1（数据中心）
 -- 生成日期: 2026-09-23
 --
--- STATUS: written 2026-09-23, EXECUTED 2026-09-23 -- VERIFIED ONCE on postgres:17
---         (PostgreSQL 17.11, Debian). Evidence: tools/sql-smoke-report.txt (42/42 PASS,
---         image digest recorded there). "PostgreSQL 14+" is NOT covered -- only that
---         one image has ever been run.
---         注意：这次执行只覆盖 postgres:17。换版本、改 CHECK 表达式、或改了 DDL 未迁移时，
---         下面的约束会重新退回「纸面防线」—— 每次改 db/*.sql 都必须重跑 tools/run_sql_smoke.py。
+-- STATUS: written 2026-09-23, EXECUTED 2026-09-23, re-run on a version ladder 2026-09-24.
+--
+-- PG-VERIFIED-ON: postgres:14 postgres:15 postgres:16 postgres:17
+--
+--         逐版本证据（每个镜像一次独立运行，各写一份快照，互不覆盖）:
+--           postgres:14 -- PostgreSQL 14.24, tools/sql-smoke-report-pg14.txt (42/42 PASS)
+--           postgres:15 -- PostgreSQL 15.18, tools/sql-smoke-report-pg15.txt (42/42 PASS)
+--           postgres:16 -- PostgreSQL 16.15, tools/sql-smoke-report-pg16.txt (42/42 PASS)
+--           postgres:17 -- PostgreSQL 17.11, tools/sql-smoke-report.txt      (42/42 PASS)
+--         上面那行 PG-VERIFIED-ON 是本文件关于「在哪些镜像上验过」的**唯一**主张，
+--         它的字面内容由 tools/verify_data_center.py 的 C6 与 tools/sql-smoke-report*.txt
+--         记录的镜像名**双向**核对（多写一个没跑过的版本会红，少写一个跑过的也会红）。
+--
+--         能说与不能说：可以说「这两个 smoke 套件在 14.24 / 15.18 / 16.15 / 17.11 四个
+--         镜像上都通过」。**不能**说「PostgreSQL 14+ 全都成立」—— 四条大版本之间还有无数
+--         小版本与发行版，实测只覆盖这四个 tag。改 CHECK 表达式、或改了 DDL 未迁移时，
+--         下面的约束会重新退回「纸面防线」—— 每次改 db/*.sql 都必须重跑
+--         tools/run_sql_smoke.py（要另存证据就加 --report=，别覆盖上一轮）。
 --
 -- 落地约定（与 db/risk_control.sql 一致，全平台单一方言）:
 --   1. 标识符一律小写、不加双引号（PostgreSQL 折叠规则）
@@ -297,11 +309,17 @@ COMMIT;
 -- =============================================================================
 -- 后续说明
 --
--- 1. 【已执行一次，但只在那一个镜像上】2026-09-23 用 tools/run_sql_smoke.py 在临时容器
---    postgres:17（PostgreSQL 17.11, Debian）上执行本文件 + db/data_center.smoke.sql，
---    结果 42/42 通过；证据（含镜像 digest、server/client encoding）在
---    tools/sql-smoke-report.txt。但「在一个版本上通过」不等于 DDL 声称的
---    「PostgreSQL 14+」都通过 —— 其它版本从未跑过，本条不得被读成前者。
+-- 1. 【已执行四个版本，不是「14+ 全部成立」】2026-09-23 首次用 tools/run_sql_smoke.py 在
+--    临时容器 postgres:17（PostgreSQL 17.11, Debian）上执行本文件 + db/data_center.smoke.sql，
+--    结果 42/42 通过；2026-09-24 用同一脚本（`--pg-image=postgres:NN` + `--report=...`
+--    另存）在 postgres:14 / postgres:15 / postgres:16 上各跑一次，也都是 42/42。证据四份：
+--      tools/sql-smoke-report-pg14.txt (14.24)
+--      tools/sql-smoke-report-pg15.txt (15.18)
+--      tools/sql-smoke-report-pg16.txt (16.15)
+--      tools/sql-smoke-report.txt      (17.11, 2026-09-23 那份，未被覆盖)
+--    每份都含镜像 digest、server/client encoding。
+--    **但**「在四个 tag 上通过」仍不等于 DDL 标题里那句「PostgreSQL 14+」——
+--    四条大版本之间还有别的 tag 与发行版，从未跑过。本段不得被读成后者。
 --
 -- 2. 触发测试的**效力**已逐条证伪（2026-09-23，不再是抽样）：`python tools/falsify_smoke.py`
 --    把两份 DDL 里的每一条命名 CHECK **单独**放宽（只放松表达式，不删约束）后重跑对应

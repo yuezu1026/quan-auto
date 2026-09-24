@@ -22,22 +22,27 @@ Checks (each independent; no check returns early and shadows a later one)
   C3  every ck_ in the DDL is documented in contract §3.6.1
   C4  every ck_ is declared inside a CREATE TABLE body, not in a comment or a stray line
   C5  no MySQL-isms in the DDL
-  C6  the DDL still carries its verification-status stamp, and that stamp names the
-      image the DDL was actually run on (2026-09-23: postgres:17). Was "must carry a
-      NOT YET EXECUTED banner" -- once the DDL really did run, keeping that literal
-      would have made the gate defend a falsehood. The stamp is now the other way
-      round: a DDL that HAS run must say WHERE, because "passed on 17.11" is not
-      "PostgreSQL 14+ works". NOT YET DONE: cross-check the cited image against the
-      image recorded in tools/sql-smoke-report.txt (today the stamp is a hand-written
-      claim and only the second half of that pair is machine-checked).
+  C6  the DDL's "-- PG-VERIFIED-ON: <images>" stamp and the images recorded in
+      tools/sql-smoke-report*.txt agree IN BOTH DIRECTIONS: a cited image with no
+      report behind it is a claim with no evidence, and a report the stamp omits is
+      evidence the stamp hides. This check has a history worth keeping: it began as
+      "must carry a NOT YET EXECUTED banner" (keeping that literal after the DDL really
+      ran would have made the gate defend a falsehood), then became "must name the one
+      image it ran on" while exactly one image had been run. As of 2026-09-24 the runs
+      are a ladder -- postgres:14/15/16/17, each with its own snapshot file -- so the
+      union of those reports IS the claim, both halves are machine-checked, and the
+      "NOT YET DONE: cross-check the cited image" note that used to live here is done.
   C7  GATE  db/data_center.smoke.sql was supplied and is non-empty, and every ck_ the
       DDL declares is asserted BY NAME against a rejected sample there
 
 Exit codes: 0 = PASS, 1 = FAIL.
 """
+import glob
 import os
 import re
 import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # ----------------------------------------------------------------------------- 
 # Extractors. Every one of them is followed by a hard vacuity guard in run_checks().
@@ -55,11 +60,21 @@ MYSQLISM_RE = re.compile(
     r'|\bIFNULL\s*\(|\bint\(\d+\)|`[a-z_]+`|\bON\s+UPDATE\s+CURRENT_TIMESTAMP\b'
     r'|\bLONGTEXT\b|\bDOUBLE\s*\(\s*\d', re.I)
 
-# C6: the DDL's verification-status stamp. It must name the image the DDL was run on --
-# an executed DDL presented as "verified" without saying WHERE was run recreates exactly
-# the falsehood the old NOT-YET-EXECUTED banner existed to prevent (one green run on
-# postgres:17 does not make the DDL's own "PostgreSQL 14+" claim true).
-EXEC_BANNER_RE = re.compile(r'VERIFIED\s+ONCE\s+on\s+(postgres:\d[\w.\-]*)')
+# C6: the verification-status stamp, tied to the evidence files rather than trusted.
+#
+# The marker is a single dedicated line, so "what does this DDL claim" has exactly one
+# answer a reviewer can look up and a stray `postgres:NN` in prose cannot inflate it.
+#
+# The comparison runs in BOTH directions on purpose. A one-directional judge ("every
+# cited image has a report") cannot see the drift where the artifact regenerates: once a
+# fifth major is run, the DDL would keep claiming four, every check would stay green, and
+# the next reader would re-derive a weaker claim than the evidence supports. That family
+# -- one-directional judge, report cleaner than reality -- is the one this project keeps
+# getting bitten by, so the evidence side is a hard equality.
+STAMP_RE = re.compile(r'^[ \t]*--[ \t]*PG-VERIFIED-ON:[ \t]*(.*)$', re.M)
+PG_IMAGE_RE = re.compile(r'postgres:\d[\w.\-]*')
+REPORT_GLOB = os.path.join(ROOT, 'tools', 'sql-smoke-report*.txt')
+REPORT_IMAGE_RE = re.compile(r'^[ \t]*image[ \t]*:[ \t]*(postgres:\d[\w.\-]*)[ \t]*$', re.M)
 
 # C7: the shape a constraint name must take in the smoke test to count as a trigger
 # test -- an EQUALITY COMPARISON against that literal, e.g.
@@ -77,6 +92,33 @@ DIAGNOSTICS_RE = re.compile(r'GET\s+STACKED\s+DIAGNOSTICS\s+\w+\s*=\s*CONSTRAINT
 
 def smoke_assert_re(name):
     return re.compile(SMOKE_ASSERT_TMPL % re.escape(name))
+
+
+def evidence_images():
+    """Returns (set of image names, list of problems) read from the smoke reports.
+
+    Every report must yield at least one name: a report whose `image  :` line is gone
+    (format drift) would otherwise contribute nothing and silently shrink the evidence
+    side -- which is the half that makes the comparison mean anything.
+    """
+    problems = []
+    files = sorted(glob.glob(REPORT_GLOB))
+    if not files:
+        return set(), ['no file matched %s' % REPORT_GLOB]
+    found = set()
+    for path in files:
+        try:
+            with open(path, encoding='utf-8-sig', errors='replace') as handle:
+                text = handle.read().replace('\r\n', '\n')
+        except OSError as exc:
+            problems.append('cannot read %s (%s)' % (path, exc))
+            continue
+        hits = set(REPORT_IMAGE_RE.findall(text))
+        if not hits:
+            problems.append('%s records no "image  : postgres:N" line'
+                            % os.path.basename(path))
+        found |= hits
+    return found, problems
 
 
 def strip_sql_line_comments(text):
@@ -218,15 +260,46 @@ def run_checks(ddl_text, contract_text, smoke_text):
         fail('C5', 'MySQL-ism(s) in the PostgreSQL DDL: %s' % mysql)
     stats['mysqlisms'] = len(mysql)
 
-    # --- C6: the verification-status stamp must survive and must name the image -------
-    stamp = EXEC_BANNER_RE.search(ddl_text)
+    # --- C6: the verification stamp and the smoke evidence must say the same thing ----
+    # Both halves are computed independently: the claim comes from the DDL, the evidence
+    # from the report files. Neither is allowed to be empty, because an empty side would
+    # make the equality below pass over nothing at all.
+    evidence, ev_problems = evidence_images()
+    if ev_problems:
+        fail('C6', 'the evidence side of the verification stamp could not be read (%s) -- '
+                   'with no evidence to compare against, the stamp is back to being a '
+                   'hand-written claim, which is what this check exists to prevent'
+                   % '; '.join(ev_problems))
+    if not evidence:
+        fail('C6', 'no smoke report yielded an image name -- the comparison below would '
+                   'run over an empty set and agree with any stamp whatsoever')
+    stamp = STAMP_RE.search(ddl_text)
     if not stamp:
-        fail('C6', 'the DDL no longer carries a "VERIFIED ONCE on <image>" stamp -- a '
-                   'verification claim that does not say which image it was run on is '
+        fail('C6', 'the DDL no longer carries its "-- PG-VERIFIED-ON: <image>..." stamp -- '
+                   'a verification claim that does not say which images it was run on is '
                    'not checkable, and one green run on one version does not make the '
                    "DDL's own supported-version claim true")
     else:
-        stats['verified_on'] = stamp.group(1)
+        cited = set(PG_IMAGE_RE.findall(stamp.group(1)))
+        if not cited:
+            fail('C6', 'the "-- PG-VERIFIED-ON:" stamp names no image (%r) -- the line is '
+                       'there but carries no claim, so the check above would be satisfied '
+                       'by decoration' % stamp.group(1).strip())
+        else:
+            stats['verified_on'] = ' '.join(sorted(cited))
+            unevidenced = sorted(cited - evidence)
+            if unevidenced:
+                fail('C6', 'the DDL claims verification on %s but no tools/'
+                           'sql-smoke-report*.txt records that image -- a cited version '
+                           'with no evidence behind it is the same unfalsifiable claim as '
+                           'before, just spelled with more versions' % unevidenced)
+            hidden = sorted(evidence - cited)
+            if hidden:
+                fail('C6', 'a smoke report records %s but the DDL stamp does not cite it -- '
+                           'the stamp understates what was actually run, and the next '
+                           'reader re-derives a weaker claim than the evidence supports'
+                           % hidden)
+            stats['evidence_images'] = ' '.join(sorted(evidence))
 
     # --- C7: every declared constraint has a trigger test that names it -----------
     # C2-C6 prove the constraint INVENTORY is consistent. None of them can show that a
@@ -294,9 +367,10 @@ def selftest():
     # expected to be able to fail on them, which is the whole point of running it.
     issues, stats = run_checks(ddl, contract, smoke)
     print('  [control-real-artifacts] issues=%d codes=%s tables=%d documented=%d '
-          'declared=%d smoke_asserted=%d'
+          'declared=%d smoke_asserted=%d verified_on=%s evidence=%s'
           % (len(issues), sorted(set(k for k, _ in issues)), stats['tables'],
-             stats['documented'], stats['declared'], stats.get('smoke_asserted', -1)))
+             stats['documented'], stats['declared'], stats.get('smoke_asserted', -1),
+             stats.get('verified_on', '(none)'), stats.get('evidence_images', '(none)')))
 
     # C2: a constraint in the contract that the DDL does not declare.
     bad = _mutate(contract, '| `ck_dc_version_format` |', '| `ck_dc_ghost_format` |', 'NEG1')
@@ -329,22 +403,58 @@ def selftest():
     else:
         scenario('NEG4-mysqlism', bad, contract, 'C5')
 
-    # C6a: the verification stamp silently dropped. Both halves matter now, so each half
-    # gets its own sample: this one loses the "VERIFIED ONCE on <image>" shape entirely.
-    bad = _mutate(ddl, 'VERIFIED ONCE on postgres:17', 'STATUS: executed', 'NEG5a')
+    # C6a: the verification stamp silently dropped. The marker line is gone, so there is
+    # no claim to compare with the evidence at all.
+    bad = _mutate(ddl, '-- PG-VERIFIED-ON:', '-- STATUS:', 'NEG5a')
     if bad is None:
         ok = False
     else:
         scenario('NEG5a-stamp-dropped', bad, contract, 'C6')
 
-    # C6b: the stamp survives but no longer names the image. This is the sample that
-    # distinguishes the new rule from the old one -- a banner-only check would call this
-    # input clean, and the claim would be unverifiable again.
-    bad = _mutate(ddl, 'VERIFIED ONCE on postgres:17', 'VERIFIED ONCE by hand', 'NEG5b')
+    # C6b: the marker survives but names no image. This is the sample that distinguishes
+    # the new rule from the old one -- a "carries a banner" check would call this input
+    # clean while the claim is unverifiable again.
+    bad = _mutate(ddl, '-- PG-VERIFIED-ON: postgres:14 postgres:15 postgres:16 postgres:17',
+                  '-- PG-VERIFIED-ON: verified by hand', 'NEG5b')
     if bad is None:
         ok = False
     else:
         scenario('NEG5b-stamp-without-image', bad, contract, 'C6')
+
+    # C6c: the stamp cites an image that no report covers. This is the direction the old
+    # one-way check also had -- kept because it is the failure mode that puts a version in
+    # the claim with nothing run behind it.
+    bad = _mutate(ddl, '-- PG-VERIFIED-ON: postgres:14',
+                  '-- PG-VERIFIED-ON: postgres:9 postgres:14', 'NEG5c')
+    if bad is None:
+        ok = False
+    else:
+        scenario('NEG5c-cited-image-unevidenced', bad, contract, 'C6')
+
+    # C6d: the REVERSE direction -- a report exists that the stamp does not cite. The old
+    # one-way rule called this clean, so this is the sample that proves the check is not
+    # one-directional. Without it, "the gate is green" would still be compatible with a
+    # DDL that quietly claims less than was actually proven.
+    bad = _mutate(ddl, '-- PG-VERIFIED-ON: postgres:14 postgres:15 postgres:16 postgres:17',
+                  '-- PG-VERIFIED-ON: postgres:15 postgres:16 postgres:17', 'NEG5d')
+    if bad is None:
+        ok = False
+    else:
+        scenario('NEG5d-evidence-not-cited', bad, contract, 'C6')
+
+    # C6e: an empty evidence side. Pointing the glob at a name that cannot match proves
+    # the guard without touching (much less deleting) any real report. Patched on the
+    # module global, which is what evidence_images() reads at call time.
+    saved_glob = REPORT_GLOB
+    globals()['REPORT_GLOB'] = os.path.join(root, 'tools', '__selftest_no_such_report__*.txt')
+    try:
+        scenario('GATE-no-evidence-files', ddl, contract, 'C6')
+    finally:
+        globals()['REPORT_GLOB'] = saved_glob
+    if REPORT_GLOB != saved_glob:
+        print('    REPORT_GLOB not restored -- the samples after this point would run '
+              'against patched state')
+        ok = False
 
     # C7a: a constraint that the DDL declares but the smoke test never asserts. The DDL
     # is untouched and the contract still lists it, so C2-C6 all stay clean -- without
@@ -405,11 +515,21 @@ def selftest():
     # flagging everything and its "DIRTY" verdict carries no information. The synthetic
     # smoke must carry the real assertion shapes (equality + diagnostics), otherwise this
     # control would be asserting that a clean verdict is reachable while C7 is broken.
+    #
+    # The stamp is DERIVED from the evidence files rather than hard-coded, so that adding
+    # a report does not turn this control into a sample of a stale literal: what it pins
+    # down is "a stamp that cites exactly what the reports record is clean", not "these
+    # four version strings are the right ones".
+    evidence_now, ev_now_problems = evidence_images()
+    if ev_now_problems or not evidence_now:
+        print('    POSITIVE-control: evidence files unreadable (%s) -- the control below '
+              'would fail for the wrong reason' % (ev_now_problems or 'empty set'))
+        ok = False
     synth_ddl = ('CREATE TABLE IF NOT EXISTS t (\n'
                  '    a int NOT NULL,\n'
                  '    CONSTRAINT ck_dc_demo CHECK (a > 0)\n'
                  ');\n'
-                 '-- VERIFIED ONCE on postgres:17\n')
+                 '-- PG-VERIFIED-ON: %s\n' % ' '.join(sorted(evidence_now)))
     synth_contract = ('#### 3.6.1 数据库级不变量（最后防线）\n\n'
                       '| 约束名 | 表 | 强制内容 | 依据 |\n'
                       '| --- | --- | --- | --- |\n'

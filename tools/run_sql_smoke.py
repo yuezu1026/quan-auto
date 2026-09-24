@@ -17,6 +17,13 @@ tools/falsify-report.txt 这两份**快照**为准，改过任何 db/*.sql 或 *
     python tools/run_sql_smoke.py --selftest       # 只测本脚本的判定逻辑，不需要 docker
     python tools/run_sql_smoke.py --keep           # 失败也保留容器，便于人工进容器排查
     python tools/run_sql_smoke.py --pg-image=postgres:16
+    python tools/run_sql_smoke.py --pg-image=postgres:14 --report=tools/sql-smoke-report-pg14.txt
+
+`--report=<相对仓库根的路径>` 用来**另存**证据。为什么需要它：本脚本的结论**只对跑过的那个
+镜像成立**，所以要支撑「PostgreSQL 14+」这类跨版本声称，必须**逐版本各留一份快照**；
+没有这个开关时第二次运行会原地**覆盖**第一次的证据，于是「14 通过了吗」这个问题永远
+答不上来，而报告看起来依旧是绿的。不带 `--report` 时行为与以前**完全一致**
+（默认仍写 tools/sql-smoke-report.txt）。
 
 退出码
 ------
@@ -47,7 +54,9 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 COMPOSE_FILE = os.path.join(ROOT, 'docker-compose.smoke.yml')
-REPORT_PATH = os.path.join(ROOT, 'tools', 'sql-smoke-report.txt')
+DEFAULT_REPORT_PATH = os.path.join(ROOT, 'tools', 'sql-smoke-report.txt')
+# 可变：--report= 可以改它。默认值**一个字都没动**，所以不带该开关时与以前逐字节一致。
+REPORT_PATH = DEFAULT_REPORT_PATH
 
 DB_NAME = 'quan'
 DB_USER = 'postgres'
@@ -187,6 +196,28 @@ def write_report(lines, verdict, exit_code):
         fh.write('\n'.join(body) + '\n')
 
 
+def set_report_path(value):
+    """解析 --report=<相对仓库根的路径>。返回 (path, None) 或 (None, 原因)。
+
+    只做三件事，全部是「写不出去就别装作写出了」：① 相对路径按仓库根解析；
+    ② 上级目录必须已存在（**不**自动 mkdir：路径打错时自动建目录会让人以为写对了）；
+    ③ 不能指向目录。
+    """
+    global REPORT_PATH
+    raw = (value or '').strip()
+    if not raw:
+        return None, '--report 后面是空的'
+    path = raw if os.path.isabs(raw) else os.path.join(ROOT, raw)
+    path = os.path.normpath(path)
+    if os.path.isdir(path):
+        return None, '--report 指向的是一个目录：%s' % path
+    parent = os.path.dirname(path)
+    if not os.path.isdir(parent):
+        return None, '--report 的上级目录不存在：%s' % parent
+    REPORT_PATH = path
+    return path, None
+
+
 def teardown(log, keep):
     if keep:
         log('')
@@ -211,14 +242,32 @@ def main():
         return selftest()
 
     keep = '--keep' in sys.argv
+    report_arg = None
     for arg in sys.argv[1:]:
         if arg.startswith('--pg-image='):
             ENV['PG_IMAGE'] = arg.split('=', 1)[1]
+        elif arg.startswith('--report='):
+            report_arg = arg.split('=', 1)[1]
 
     log = Log()
     log('sql-smoke: 在临时 PostgreSQL 上执行 db/*.sql，把 UNPROVEN 变成有证据的结论。')
     log('理由：静态门禁只能证明约束**还写着**，只有真实数据库能证明约束**会拒绝**。')
     log('')
+
+    # --- 0. 报告落点 ------------------------------------------------------
+    # 这一步**故意**在 write_report 之前失败时直接 return，不调用 finish()：
+    # 参数写错时退回默认路径去写，会把上一轮（例如 postgres:17 那份）证据**覆盖掉**，
+    # 而且覆盖它的还是一份「本次没跑成」的报告。宁可什么都不写。
+    if report_arg is not None:
+        new_path, why = set_report_path(report_arg)
+        if new_path is None:
+            log('GATE FAIL: --report 不可用 -- %s' % why)
+            log('          报告写不到指定位置时**不会**退回默认路径：那会覆盖上一轮的证据，')
+            log('          而且覆盖它的还是一份「本次没跑成」的报告。故本次不写任何报告。')
+            return EXIT_GUARD
+        log('report target: %s' % new_path)
+        log('              （默认落点是 %s；本次是另存，不会动它）' % DEFAULT_REPORT_PATH)
+        log('')
 
     if not os.path.exists(COMPOSE_FILE):
         log('GATE FAIL: 缺少 %s' % COMPOSE_FILE)
@@ -383,7 +432,16 @@ def scalar_cid():
 
 
 def finish(log, verdict, code):
-    write_report(log.lines, verdict, code)
+    try:
+        write_report(log.lines, verdict, code)
+    except Exception as exc:                                    # noqa: BLE001
+        log('')
+        log('GATE FAIL: 报告写不出去（%r）。' % (exc,))
+        log('          target: %s' % REPORT_PATH)
+        log('          结论没落盘 = 本次不产生任何结论。绝不能因为「进程跑完了」就当它通过。')
+        # 本来就非 0 的结局保持原码；本来是 PASS 的必须**降级**，否则会留下一个
+        # 「绿了但没证据」的结局 —— 那正是本项目反复要防的假绿。
+        return code if code != EXIT_OK else EXIT_GUARD
     log('')
     log('report: %s -- 看它，不要为了看结果重跑（重跑要起容器）。' % REPORT_PATH)
     log('verdict: %s' % verdict)
@@ -426,7 +484,35 @@ def selftest():
     case('NEG-pass-but-rc-nonzero', 1,
          'NOTICE:  SMOKE PASS: all 24 database-level checks are effective\n', 'GUARD_FAIL')
 
-    print('SELFTEST %s: 判定逻辑的三种结局都有样本覆盖' % ('OK' if ok else 'FAIL'))
+    # --- --report 的解析守卫：坏样本 3 个 + 干净样本 2 个 --------------------
+    # 只测「能解析出路径」是不够的：这个开关的**唯一**目的是别覆盖上一轮证据，
+    # 所以重点是「坏参数必须拒绝，且**不得**动 REPORT_PATH」。全程不写任何文件。
+    saved = REPORT_PATH
+
+    def rcase(tag, value, want_ok):
+        nonlocal ok
+        path, why = set_report_path(value)
+        got_ok = (path is not None)
+        hit = (got_ok == want_ok)
+        # 失败时全局必须原样不动 —— 否则「拒绝」只拒绝了一半。
+        untouched = want_ok or (REPORT_PATH == saved)
+        print('  [%s] ok=%s untouched=%s %s'
+              % (tag, got_ok, untouched, 'OK' if (hit and untouched)
+                 else 'MISSED (want_ok=%s)' % want_ok))
+        if not hit:
+            print('        why=%s' % why)
+        globals()['REPORT_PATH'] = saved
+        ok = ok and hit and untouched
+
+    rcase('report-NEG-empty', '', False)
+    rcase('report-NEG-is-a-directory', 'tools', False)
+    rcase('report-NEG-parent-missing', 'tools/__selftest_no_such_dir__/x.txt', False)
+    rcase('report-POS-relative', 'tools/__selftest_target__.txt', True)
+    rcase('report-POS-absolute', os.path.join(ROOT, '__selftest_target__.txt'), True)
+    assert REPORT_PATH == saved, '自测把 REPORT_PATH 弄脏了：%s' % REPORT_PATH
+
+    print('SELFTEST %s: 判定逻辑的三种结局 + --report 落点守卫都有样本覆盖'
+          % ('OK' if ok else 'FAIL'))
     return 0 if ok else 1
 
 

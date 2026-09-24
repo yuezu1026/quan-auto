@@ -757,8 +757,16 @@ def execute(picked, report_path=REPORT_PATH):
           'WRITTEN, not that they REJECT.' % len(rows))
     print('NOTE: the runtime evidence lives in %s (produced by %s).'
           % (os.path.relpath(SMOKE_REPORT_PATH, ROOT), os.path.relpath(SMOKE_TOOL, ROOT)))
-    print('      That file is a SNAPSHOT: read its verdict together with the image '
-          'digest recorded inside it, and re-run it after any db/*.sql edit.')
+    print('      That path is the DEFAULT snapshot; `--report=` writes a sibling without '
+          'touching it,')
+    print('      which is how the version ladder was recorded (tools/sql-smoke-report-pg1*.txt '
+          '-- postgres:14/15/16).')
+    print('      A snapshot is evidence only together with the image digest recorded inside '
+          'it,')
+    print('      and re-running after any db/*.sql edit overwrites it -- so save to a new path.')
+    print('NOTE: these %d gates DO read those snapshots, but only to compare the image names ' % len(rows))
+    print('      against each DDL\'s PG-VERIFIED-ON stamp (in both directions); they do not '
+          're-run SQL.')
     print('NOTE: proof that the runtime green has teeth lives in %s (produced by %s).'
           % (os.path.relpath(FALSIFY_REPORT_PATH, ROOT), os.path.relpath(FALSIFY_TOOL, ROOT)))
     print('      One case per named CHECK; every case must turn exactly one sample red.')

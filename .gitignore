@@ -11,13 +11,16 @@ Thumbs.db
 Desktop.ini
 
 # ── 以下刻意**不**忽略，它们是证据快照，必须入库 ──────────────────
-#   tools/gates-report.txt      上一次门禁的总判据（含棘轮数字）
-#   tools/sql-smoke-report.txt  容器 PostgreSQL 冒烟证据（含镜像 digest）
-#   tools/falsify-report.txt    逐条约束的证伪证据
-#   tools/gates-baseline.json   棘轮基线（手工维护，没有 --write-baseline）
-#   docs/*.docx                 3 份派生 md 的源文档
-#   .vscode/tasks.json          门禁任务的唯一入口
+#   tools/gates-report.txt         上一次门禁的总判据（含棘轮数字）
+#   tools/sql-smoke-report.txt     容器 PostgreSQL 冒烟证据（镜像 digest + 默认路径那份 = postgres:17）
+#   tools/sql-smoke-report-pg1*.txt 版本阶梯证据（postgres:14/15/16，各一份，互不覆盖）
+#   tools/falsify-report.txt       逐条约束的证伪证据（目前只有 postgres:17 一轮）
+#   tools/gates-baseline.json      棘轮基线（手工维护，没有 --write-baseline）
+#   docs/*.docx                    3 份派生 md 的源文档
+#   .vscode/tasks.json             门禁任务的唯一入口
 # 如果将来要加忽略规则，先确认它不在上面这批里 —— 忽略掉证据 = 假绿。
+# 注意：这几份冒烟快照由 `--report=` 另存；`falsify_smoke.py` 目前仍写固定路径，
+# 跨版本跑之前得先给它加同样的开关，否则会把 postgres:17 那轮证据覆盖掉。
 
 # ── 一次性探针（`.rounds/_*`，按 `_` 前缀约定）──────────────────────
 # 某一次调试落盘的**过程回显**：红/绿那一次的输出、行尾形态探针、重录日志。

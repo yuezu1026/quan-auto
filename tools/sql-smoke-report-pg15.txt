@@ -1,0 +1,48 @@
+sql-smoke: 在临时 PostgreSQL 上执行 db/*.sql，把 UNPROVEN 变成有证据的结论。
+理由：静态门禁只能证明约束**还写着**，只有真实数据库能证明约束**会拒绝**。
+
+report target: D:\project-quan\quan-auto\tools\sql-smoke-report-pg15.txt
+              （默认落点是 D:\project-quan\quan-auto\tools\sql-smoke-report.txt；本次是另存，不会动它）
+
+docker server version: 29.4.0
+
+--- 起全新库 ---
+pre-clean: down -v -> exit 0（没东西可拆时非 0 属正常，不判失败）
+数据库已就绪（compose up -d --wait 返回 0）
+
+--- 前置守卫 ---
+  server_encoding = UTF8  OK
+  client_encoding = UTF8  OK
+  public schema 表数 = 0（全新库）  OK
+
+--- 实测环境 ---
+  image  : postgres:15
+  digest : postgres@sha256:c2ca90969ca293925ab474466e837689cc712321afdd9e4640bd0cf942fdca3a
+  server : PostgreSQL 15.18 (Debian 15.18-1.pgdg13+1)
+
+--- risk-control ---
+ddl applied: db/risk_control.sql
+smoke: db/risk_control.smoke.sql -> PASS (23 passed, 0 failed, psql exit=0)
+    | psql:/work/db/risk_control.smoke.sql:488: NOTICE:  ---- smoke summary: 23 passed, 0 failed ----
+    | psql:/work/db/risk_control.smoke.sql:488: NOTICE:  SMOKE PASS: all 23 database-level guards are effective
+
+--- data-center ---
+ddl applied: db/data_center.sql
+smoke: db/data_center.smoke.sql -> PASS (42 passed, 0 failed, psql exit=0)
+    | psql:/work/db/data_center.smoke.sql:860: NOTICE:  ---- smoke summary: 42 passed, 0 failed ----
+    | psql:/work/db/data_center.smoke.sql:860: NOTICE:  SMOKE PASS: all 42 database-level checks are effective
+
+--- 汇总 ---
+  risk-control     PASS        23 passed, 0 failed
+  data-center      PASS        42 passed, 0 failed
+
+boundary: 本次证明只对 image=postgres:15 (digest=postgres@sha256:c2ca90969ca293925ab474466e837689cc712321afdd9e4640bd0cf942fdca3a) 成立。
+          它**不**证明「PostgreSQL 14+」都成立 -- 只测了上面这一个版本。
+boundary: 本次证明的是**约束的行为**，不是**契约的正确性**。若某条约束本身语义
+          就写错了（例如区间定错），它一样会「正确地拒绝」了一个错误的样本。
+teardown: docker compose down -v -> exit 0
+
+verdict: SMOKE PASS（全部数据库级守卫都真的会拒绝）
+exit code: 0
+NOTE: 本报告的结论只对上面记录的镜像版本 + digest 成立。
+      只在一个版本上通过，不等于 DDL 声称的 PostgreSQL 14+ 全都通过。
