@@ -66,9 +66,15 @@
   一行：`report_type` 是 `dc_financial` 主键的一部分，拼成一行等于让资产负债类科目挂在
   一行不属于任何真实报表的数据上。缺的科目按契约留 NaN，`missing_ratio` 会报出来。
 
-**仍然没有实测过的**（不许读成「已验证」）：`pageSize` 的取值（实测过的只是「这个参数被
-接受」）、东财的**日期过滤语法**（所以 `period_end` 在归一化之后筛，不拼进请求）、日线端点
-（`push2his` 间歇性拒连），以及 akshare / baostock 两源的一切。
+**仍然没有实测过的**（不许读成「已验证」）：`pageSize` 的**上限**（实测过的是「这个取值被
+遵守」）、东财的**日线端点**（`push2his` 间歇性拒连），以及 akshare / baostock 两源的一切。
+
+**东财的日期过滤语法已于 2026-09-24 实测**（附录 B14）：`(SECURITY_CODE="600000")(REPORTDATE='2024-12-31')`
+—— 单引号，且**每张报表用自己的日期键名**（利润表 `REPORTDATE`、资产负债表 `REPORT_DATE`），
+键名写错会被源**当场拒**（`success=false` + `REPORT_DATE列不存在`）。但这份证据只有
+**1 标的 × 2 报表 × 1 天**（换标的、换 `reportName` 都没测）⇒ 它在本模块里**只当省流量用，
+不做正确性依赖**：`period_end` 在归一化之后**仍然**筛一遍（见 `fetch_financial`），
+请求侧那份过滤哪天被源静默忽略，结果也不会多一行。
 
 ## 一处契约缺口（本切片不擅自补）
 
@@ -1206,6 +1212,24 @@ class BaostockAdapter(_AdapterBase):
                                  source=self._SOURCE, kind='UNSUPPORTED')
 
 
+def _period_column(column_map: Mapping[str, str], report_name: str) -> str:
+    """某张报表列名表里「哪个源列是报告期」—— 恰一个才返回，否则拒。
+
+    为什么要函数而不是就地在 `fetch_financial` 里取一个就算：日期过滤的键名
+    **每张报表不同**（利润表 `REPORTDATE`、资产负债表 `REPORT_DATE`，附录 B14 实测），
+    而「列名表里映射到 `period_end` 的源列」是这层对应关系的唯一真源。多一个就是
+    「筛哪一列」没有唯一答案，少一个就是筛不了 —— 两种都是**猜**的入口，所以这里
+    直接拒，而不是随便挑一个。
+    """
+    keys = sorted(key for key, value in column_map.items() if value == 'period_end')
+    if len(keys) != 1:
+        raise SourceAdapterError(
+            '东财 %s 的列名表里映射到 period_end 的源列有 %d 个（%s）：恰一个才能拿去'
+            '当日期过滤的键名' % (report_name, len(keys), keys),
+            source='eastmoney', kind='UNSUPPORTED')
+    return keys[0]
+
+
 class EastMoneyAdapter(_AdapterBase):
     """东方财富数据中心接口 —— 备源（`SourcePriority.FALLBACK`）。
 
@@ -1240,10 +1264,14 @@ class EastMoneyAdapter(_AdapterBase):
         参数（全部走 kwargs）：
             symbol: 标的，接受 `normalize_symbol` 的四种写法；发给源的是裸代码。
             report_name: 东财报表名，必须登记在 `EASTMONEY_REPORT_TYPE` 里。
+            period_end: 报告期，拼进过滤表达式（源侧只回这一期，**只为省流量**）。
+            date_key: 该报表**自己的**报告期列名，由调用方从列名表里取
+                （`_period_column`）。本函数不猜键名：猜错会被源当场拒（附录 B14）。
             opener: 仅测试传（替换 `urllib.request.urlopen`）。生产路径不传。
 
-        `period_end` **刻意不作为请求参数**：东财的日期过滤语法没有实测过，不猜。
-        「只要哪一期」由调用方在归一化之后筛（见 `fetch_financial`）。
+        **请求侧的日期过滤只省流量，不做正确性依赖**：实测证据只有 1 标的 × 2 报表 ×
+        1 天（附录 B14），而本地筛是能用本地帧测出来的那一种。所以 `fetch_financial`
+        在归一化之后**仍然**筛一遍 —— 这里发出去的过滤哪天被源静默忽略，结果也不会多一行。
         """
         symbol = str(kwargs.get('symbol') or '')
         report_name = str(kwargs.get('report_name') or '')
@@ -1259,6 +1287,18 @@ class EastMoneyAdapter(_AdapterBase):
                 % (report_name, sorted(EASTMONEY_REPORT_TYPE)),
                 source='eastmoney', kind='UNSUPPORTED')
 
+        period_end = kwargs.get('period_end')
+        date_key = str(kwargs.get('date_key') or '')
+        if not isinstance(period_end, date):
+            # 和 symbol 同理：缺/错参数是**调用方**写错了，用 ValueError 表达，免得被
+            # `_call` 翻译成 SourceAdapterError 之后读成「这个源不可用」。
+            raise ValueError(
+                'EastMoneyAdapter._default_fetch 需要 date 类型的 period_end 参数')
+        if not date_key:
+            raise ValueError(
+                'EastMoneyAdapter._default_fetch 需要 date_key 参数（取该报表列名表里'
+                ' period_end 的那一列，见 `_period_column`）')
+
         code = code_digits(symbol)
         opener = kwargs.get('opener')
         rows: List[Any] = []
@@ -1269,8 +1309,13 @@ class EastMoneyAdapter(_AdapterBase):
                 {'reportName': report_name,
                  'columns': 'ALL',
                  # 过滤表达式用**裸代码**：实测 `(SECURITY_CODE="600000")` 有返回；
-                 # 带后缀的写法没有实测过，不猜。
-                 'filter': '(SECURITY_CODE="%s")' % code,
+                 # 带后缀的写法没有实测过，不猜。日期那一项是实测语法（附录 B14）：
+                 # **单引号**，键名由调用方给（每张报表不同）。
+                 # ⚠️ 日期这里**必须**是单引号：B14 实测的是 `(REPORTDATE='2024-12-31')`。
+                 # 本行曾写成双引号 —— 单元测试没拦住（当时的期望值是照实现对齐的），
+                 # 是「期望值照实测逐字写、不由实现算」这条纪律把它抓出来的。
+                 'filter': '(SECURITY_CODE="%s")(%s=\'%s\')'
+                           % (code, date_key, period_end.isoformat()),
                  'pageNumber': page,
                  'pageSize': EASTMONEY_PAGE_SIZE,
                  'source': 'WEB',
@@ -1305,8 +1350,9 @@ class EastMoneyAdapter(_AdapterBase):
         * **一个报告期出两行，不是一行**：`report_type` 是 `dc_financial` 主键的一部分。
           把利润表与资产负债表拼成一行，会让资产负债类科目挂在一行 `report_type='INCOME'`
           的数据上 —— 那行不属于任何真实报表。
-        * **按报告期筛在归一化之后做**：东财的日期过滤语法没实测过（见 `_default_fetch`），
-          而在这里筛是能用本地帧测出来的行为。
+        * **按报告期筛在归一化之后仍然做一遍**：请求里也带了日期过滤（附录 B14 实测的
+          语法，少传数据），但那份证据只有 1 标的 × 2 报表 × 1 天，而且注入了自定义
+          `fetch=` 时请求根本不存在 —— 本地这一遍才是**契约保证的那一遍**。
         """
         frames = []
         for symbol in symbols:
@@ -1318,7 +1364,9 @@ class EastMoneyAdapter(_AdapterBase):
                     raise SourceAdapterError(
                         '东财报表 %r 没有登记在 EASTMONEY_REPORT_TYPE 里' % report_name,
                         source=self._SOURCE, kind='UNSUPPORTED')
-                raw = self._call(symbol=symbol, report_name=report_name)
+                raw = self._call(
+                    symbol=symbol, report_name=report_name, period_end=period_end,
+                    date_key=_period_column(column_map, report_name))
                 frames.append(normalize_financial(
                     raw, column_map, symbol=symbol, report_type=report_type,
                     # ROE 是百分数这个开关跟着**表**走，不跟着 reportName 走 ——

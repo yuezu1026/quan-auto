@@ -773,33 +773,41 @@ def _open_against(monkeypatch, server):
     return server.url
 
 
-def _documented_request_params(report_name):
-    """生产实现该发的参数。写成一份期望值，是为了让「悄悄少发一个参数」变红。"""
+def _documented_request_params(report_name, date_key, period_end):
+    """生产实现该发的参数。写成一份期望值，是为了让「悄悄少发一个参数」变红。
+
+    过滤表达式是**照实测语法逐字写的**（附录 B14），不由实现算出来 —— 从实现算出来的
+    期望值只能证明「实现等于它自己」。
+    """
     return {'reportName': report_name, 'columns': 'ALL',
-            'filter': '(SECURITY_CODE="600000")',
+            'filter': '(SECURITY_CODE="600000")(%s=\'%s\')' % (date_key, period_end),
             'pageSize': str(ds.EASTMONEY_PAGE_SIZE),
             'source': 'WEB', 'client': 'WEB'}
 
 
 def test_default_fetch_pages_through_the_envelope_and_normalises_the_code(
         monkeypatch) -> None:
-    """逐页取回、按页号顺序拼起来；发出去的过滤条件用的是**裸代码**。
+    """逐页取回、按页号顺序拼起来；发出去的过滤条件用的是**裸代码 + 报告期**。
 
     `sh.600000` → `(SECURITY_CODE="600000")` 这一条是重点：源只认裸代码，把带后缀
     的写法发过去会得到一个「查无此股」的正常响应，然后这份数据就静默地缺失了。
+    带报告期（附录 B14 实测的单引号写法）只为**少传数据** —— 一张报表整段历史
+    有上百行，而调用方只要一期。它不是正确性依据：筛选在归一化之后**还会**做一遍。
     """
     rows = [{'SECURITY_CODE': '600000', 'REPORTDATE': '2026-06-30'}]
     with _LocalHTTP(body=_eastmoney_envelope(rows, pages=2)) as server:
         _open_against(monkeypatch, server)
         frame = EastMoneyAdapter._default_fetch(
-            symbol='sh.600000', report_name='RPT_LICO_FN_CPD')
+            symbol='sh.600000', report_name='RPT_LICO_FN_CPD',
+            period_end=date(2026, 6, 30), date_key='REPORTDATE')
         requests = list(server.requests)
 
     assert len(requests) == 2, 'pages=2 必须真的走两页；只取第一页会静默丢数据'
     assert list(frame['SECURITY_CODE']) == ['600000', '600000'], '两页都要进结果'
+    documented = _documented_request_params('RPT_LICO_FN_CPD', 'REPORTDATE', '2026-06-30')
     for index, (path, headers) in enumerate(requests, start=1):
         query = urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)
-        for key, value in _documented_request_params('RPT_LICO_FN_CPD').items():
+        for key, value in documented.items():
             assert query.get(key) == [value], '请求参数 %s 发出去了没：%r' % (key, query)
         assert query.get('pageNumber') == [str(index)], '页号必须递增：%r' % (query,)
         assert headers.get('User-Agent') == ds.HTTP_USER_AGENT
@@ -817,8 +825,9 @@ def test_default_fetch_raises_instead_of_truncating_past_the_page_cap(
     with _LocalHTTP(body=body) as server:
         _open_against(monkeypatch, server)
         with pytest.raises(SourceAdapterError) as caught:
-            EastMoneyAdapter._default_fetch(symbol='600000',
-                                            report_name='RPT_LICO_FN_CPD')
+            EastMoneyAdapter._default_fetch(
+                symbol='600000', report_name='RPT_LICO_FN_CPD',
+                period_end=date(2026, 6, 30), date_key='REPORTDATE')
         requests = list(server.requests)
 
     assert caught.value.kind == 'SOURCE_SCHEMA_MISMATCH'
@@ -838,8 +847,9 @@ def test_default_fetch_treats_an_in_band_rejection_as_a_schema_mismatch(
     with _LocalHTTP(body=body) as server:
         _open_against(monkeypatch, server)
         with pytest.raises(SourceAdapterError) as caught:
-            EastMoneyAdapter._default_fetch(symbol='600000',
-                                            report_name='RPT_LICO_FN_CPD')
+            EastMoneyAdapter._default_fetch(
+                symbol='600000', report_name='RPT_LICO_FN_CPD',
+                period_end=date(2026, 6, 30), date_key='REPORTDATE')
 
     assert caught.value.kind == 'SOURCE_SCHEMA_MISMATCH', \
         '带内拒绝不是网络故障，更不是「本适配器不覆盖」'
@@ -853,6 +863,10 @@ def test_default_fetch_refuses_an_unregistered_report_name_before_any_request(
 
     取回来也归一化不了（`report_type` 是主键的一部分，猜一个值比不取更坏），
     所以这里在发请求之前就拦住 —— 白跑一趟网络只会让人以为「是源那边没数据」。
+
+    顺带钉住**守卫次序**：本用例没给 `period_end` / `date_key`，却必须报 `UNSUPPORTED`
+    而不是「缺参数」—— 报表名这一步在前。反过来的话，人会去补那两个参数，然后继续
+    等一个永远不会来的报表。
     """
     with _LocalHTTP(body=_eastmoney_envelope([])) as server:
         _open_against(monkeypatch, server)
@@ -875,10 +889,83 @@ def test_default_fetch_returns_an_empty_frame_when_the_source_has_no_rows(
     """
     with _LocalHTTP(body=_eastmoney_envelope([], pages=1)) as server:
         _open_against(monkeypatch, server)
-        frame = EastMoneyAdapter._default_fetch(symbol='600000',
-                                                report_name='RPT_DMSK_FN_BALANCE')
+        frame = EastMoneyAdapter._default_fetch(
+            symbol='600000', report_name='RPT_DMSK_FN_BALANCE',
+            period_end=date(2026, 6, 30), date_key='REPORT_DATE')
 
     assert frame.shape[0] == 0
+
+
+def test_default_fetch_puts_the_period_into_the_filter_with_the_reports_own_key(
+        monkeypatch) -> None:
+    """请求里的日期过滤用**各自报表的**键名，单引号（附录 B14 实测的语法）。
+
+    两个键名**必须不一样**：写死一个，另一张表就会被源当场拒（`success=false`  +
+    `REPORT_DATE列不存在`），而「被拒」与「这张报表本来就没有数据」在调用方看是两种
+    完全不同的结论。离线这里量不到源的反应，能钉住的是「键名真的分开了、真的走到了
+    URL 上」。
+    """
+    sent = {}
+    for report_name, date_key in (('RPT_LICO_FN_CPD', 'REPORTDATE'),
+                                  ('RPT_DMSK_FN_BALANCE', 'REPORT_DATE')):
+        with _LocalHTTP(body=_eastmoney_envelope([])) as server:
+            _open_against(monkeypatch, server)
+            EastMoneyAdapter._default_fetch(
+                symbol='600000', report_name=report_name,
+                period_end=date(2026, 6, 30), date_key=date_key)
+            (path, _headers) = server.requests[0]
+        sent[report_name] = urllib.parse.parse_qs(
+            urllib.parse.urlsplit(path).query)['filter'][0]
+
+    assert sent == {
+        'RPT_LICO_FN_CPD': '(SECURITY_CODE="600000")(REPORTDATE=\'2026-06-30\')',
+        'RPT_DMSK_FN_BALANCE': '(SECURITY_CODE="600000")(REPORT_DATE=\'2026-06-30\')',
+    }, '每张报表一个键名（附录 B14）：写死一个，另一张表永远取不到数'
+
+
+def test_default_fetch_refuses_a_missing_period_before_any_request(monkeypatch) -> None:
+    """缺 `period_end` / `date_key` ⇒ `ValueError`，且**零请求**。
+
+    这两个参数不可省：少了它们，`filter` 会退化成「整表全取」—— 一个**能用但悄悄
+    变慢**的形态，静默降级正是本模块一直在防的（宁可当场报错）。
+    用 `ValueError` 而不是 `SourceAdapterError`：这是**调用方**写错，不是源不可用。
+    """
+    cases = [
+        ({'symbol': '600000', 'report_name': 'RPT_LICO_FN_CPD'}, 'period_end'),
+        ({'symbol': '600000', 'report_name': 'RPT_LICO_FN_CPD',
+          'period_end': date(2026, 6, 30)}, 'date_key'),
+        ({'symbol': '600000', 'report_name': 'RPT_LICO_FN_CPD',
+          'date_key': 'REPORTDATE'}, 'period_end'),
+    ]
+    with _LocalHTTP(body=_eastmoney_envelope([])) as server:
+        _open_against(monkeypatch, server)
+        for kwargs, missing in cases:
+            with pytest.raises(ValueError) as caught:
+                EastMoneyAdapter._default_fetch(**kwargs)
+            assert missing in str(caught.value), '报错要点名缺的是哪一个参数：%r' % (kwargs,)
+        requests = list(server.requests)
+
+    assert requests == [], '参数不齐时一个请求都不该发：发了就是拿默认行为去猜'
+
+
+def test_period_column_takes_the_reports_own_period_source_column() -> None:
+    """`_period_column` 取列名表里**唯一**那个 `period_end` 的源列，不猜也不挑。
+
+    两张真实表给出的键名不同，正是「不能写死一个」的来源；而 0 个 / 2 个都是**猜**的
+    入口（随便挑一个就是 B12/B13 的老毛病），所以必须拒。
+    """
+    assert ds._period_column(EASTMONEY_INCOME_FINANCIAL,
+                             'RPT_LICO_FN_CPD') == 'REPORTDATE'
+    assert ds._period_column(EASTMONEY_BALANCE_FINANCIAL,
+                             'RPT_DMSK_FN_BALANCE') == 'REPORT_DATE'
+
+    for bad_map, why in (
+            ({'SECURITY_CODE': 'symbol'}, '一个都没有 ⇒ 筛不了'),
+            ({'A': 'period_end', 'B': 'period_end'}, '两个 ⇒ 筛哪一列没有唯一答案')):
+        with pytest.raises(SourceAdapterError) as caught:
+            ds._period_column(bad_map, 'RPT_X')
+        assert caught.value.kind == 'UNSUPPORTED', why
+        assert caught.value.retryable is False
 
 
 def test_fetch_financial_returns_one_row_per_report_for_the_same_period() -> None:
@@ -891,7 +978,7 @@ def test_fetch_financial_returns_one_row_per_report_for_the_same_period() -> Non
     seen = []
 
     def fetch(**kwargs):
-        seen.append(kwargs['report_name'])
+        seen.append(kwargs)
         if kwargs['report_name'] == 'RPT_LICO_FN_CPD':
             return _eastmoney_income_raw()
         return _eastmoney_balance_raw()
@@ -899,8 +986,12 @@ def test_fetch_financial_returns_one_row_per_report_for_the_same_period() -> Non
     adapter = EastMoneyAdapter(fetch=fetch)
     frame = adapter.fetch_financial(['600000.SH'], date(2026, 6, 30))
 
-    assert seen == ['RPT_LICO_FN_CPD', 'RPT_DMSK_FN_BALANCE'], \
-        '两张报表都要取，且顺序固定（页面/日志里的行顺序才可复现）'
+    assert [(kw['report_name'], kw['date_key']) for kw in seen] == [
+        ('RPT_LICO_FN_CPD', 'REPORTDATE'),
+        ('RPT_DMSK_FN_BALANCE', 'REPORT_DATE')], \
+        '两张报表都要取（顺序固定），且各自的日期键名从自己的列名表里取（附录 B14）'
+    assert [kw['period_end'] for kw in seen] == [date(2026, 6, 30)] * 2, \
+        '请求侧也要带上报告期：只带键名不带值等于没筛'
     assert len(frame) == 2
     assert sorted(frame['report_type']) == ['BALANCE', 'INCOME']
     assert frame['revenue'].notna().sum() == 1, '收入类科目只该出现在 INCOME 行上'
