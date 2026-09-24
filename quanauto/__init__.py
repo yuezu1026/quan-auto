@@ -1,9 +1,10 @@
 """智能量化交易平台 —— Python 研究 / 回测线。
 
 **迭代状态**：I1 已交付第一条端到端竖切（CSV → MA 双均线 → 撮合 → 绩效 → 回测报告）；
-I2 的 S1（PIT / `as_of` 边界层，`quanauto/datacenter.py`）与 S2（采集侧源适配器，
-`quanauto/datasources.py`）已落地，**但 I2 未关闭** —— PostgreSQL 写入与回测改读真实日线
-尚未开始，复权因子仍恒 1.0。迭代边界以 `docs/迭代计划.md` 为准，别把 S2 读成 I2 收工。
+I2 的 S1（PIT / `as_of` 边界层，`quanauto/datacenter.py`）、S2（采集侧源适配器，
+`quanauto/datasources.py`）与 S3（落库侧 `quanauto/pgstore.py` + 引擎改读 `as_of()` 产出的
+feed）已落地，**但 I2 未关闭** —— 真实数据源**从未联网联调**，复权因子仍恒 1.0。
+迭代边界以 `docs/迭代计划.md` 为准，别把 S3 读成 I2 收工。
 
 实现分布在本包的各模块里，入口是 `quanauto.cli`。
 
