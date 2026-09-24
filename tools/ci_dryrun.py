@@ -9,10 +9,13 @@ I0 §四 的「触发测试」一行要求一次真实的红→绿往返记录�
 
 它不是 CI
 ---------
-本仓库**没有配置 git remote**（`git remote -v` 为空），所以 `.github/workflows/ci.yml`
-从未在 GitHub 上真实运行过。本工具跑的是**同样的两条命令**，因此只能标成
-「本地等价」，不得读成「CI 已跑通」。报告里连这个措辞一起写进去，避免以后有人
-把这份快照当成 CI 的绿色。
+`.github/workflows/ci.yml` 到 2026-09-24 为止**只在这个工具里跑过**。2026-09-24 仓库推上
+GitHub（公开仓库，remote `origin`），workflow 第一次真跑就在 `skeleton` 门禁上判红：
+本机有 `.venv/`、克隆里没有，同一个 commit、同一份判据两边结论不同 —— **判据依赖环境
+就是判据的缺陷**，已按「本机产物目录不是仓库地址」修掉（`verify_skeleton._classify_ref`）。
+本工具跑的是**同样的两条命令**，给的是本机解释器的口径，因此只能标成「本地等价」，
+和 GitHub 上那次真跑**不能互相替代**。报告里连这个措辞一起写进去，避免以后有人把
+这份快照当成 CI 的绿色。
 
 它为什么不能是门禁
 ------------------
@@ -361,8 +364,8 @@ def main(argv):
     say('# ci-dryrun 报告（本地等价，不是 CI）')
     say()
     say('这一份是**快照**：结论只对下面记录的解释器与 commit 成立，改完代码必须重跑。')
-    say('本仓库没有配置 git remote，因此 `.github/workflows/ci.yml` **从未在 GitHub 上真实运行过**；')
-    say('下面跑的是与它**相同的两条命令**。')
+    say('CI 自 2026-09-24 起在 GitHub 上真跑（`origin` 公开）；下面这份是**本地等价**：')
+    say('它给的是本机解释器的口径，和 GitHub 上那次真跑不能互相替代。')
     say()
     say('generated: %s' % time.strftime('%Y-%m-%d %H:%M:%S'))
     say('python:    %s  (%s)' % (py, py_label))
