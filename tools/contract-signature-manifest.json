@@ -368,6 +368,18 @@
   },
   "contract": "docs/智能量化交易平台-核心模块接口契约文档.md",
   "impl_only": {
+    "AKShareAdapter": {
+      "extras": [],
+      "impl_fields": null,
+      "impl_params": {
+        "_default_fetch": ["symbol", "start", "end", "**kwargs"],
+        "fetch_daily_bar": ["self", "symbols", "start", "end"],
+        "fetch_financial": ["self", "symbols", "period_end"],
+        "fetch_index_members": ["self", "index_code", "as_of_date"]
+      },
+      "reason": "契约只规定标准 schema，没有「数据源适配器」这一层（§3.2 那张表是「源 → 能提供什么」的能力对应，不是类形状），所以三个源适配器按实现侧登记。登记的价值是「换源/加源都不该改下游签名」：fetch_daily_bar(symbols, start, end) 这一组形状一旦变化，采集层与建表语句必须同时跟着看。_default_fetch 单独登记，是因为它才是真正的取数入口（构造时注入假函数就靠它的签名），把 **kwargs 改成位置参数会静默打断注入路径。注意这条登记只管签名形状，不管「列名映射对不对」—— 后者由 verify_data_center_adapter.py 的 A1~A4 盯着。",
+      "source": "quanauto/datasources.py"
+    },
     "BacktestEngine": {
       "extras": [],
       "impl_fields": null,
@@ -402,6 +414,18 @@
       },
       "reason": "dc_daily_bar（db/data_center.sql）的读接口在契约里没有类块，按实现侧登记它的两个方法，避免「换一个只认 symbol 的 store」时静默改变过滤口径。",
       "source": "quanauto/datacenter.py"
+    },
+    "BaostockAdapter": {
+      "extras": [],
+      "impl_fields": null,
+      "impl_params": {
+        "_default_fetch": ["symbol", "start", "end", "**kwargs"],
+        "fetch_daily_bar": ["self", "symbols", "start", "end"],
+        "fetch_financial": ["self", "symbols", "period_end"],
+        "fetch_index_members": ["self", "index_code", "as_of_date"]
+      },
+      "reason": "同 AKShareAdapter，口径与理由一致，不再重复。三个源各占一条而不是合并成一条，是因为三家没有共享的取数实现：任何一家被改名/删除都必须单独报出来，合并登记会让其中一家的消失被另一家的存在掩盖。",
+      "source": "quanauto/datasources.py"
     },
     "DailyBar": {
       "extras": [],
@@ -457,6 +481,18 @@
       },
       "reason": "契约里的 DataFeed 是抽象基类，本类是它唯一带 as_of 的实现体；契约文档用项目符号描述取数语义（§3.3/§3.4），没有可解析的类块，所以按实现侧登记。登记的价值是：I2 S1 定下的「显式日期参数 = 抛，列表方法 = 裁剪」这一组签名与语义，不会被后续迭代悄悄改成另一种形状。",
       "source": "quanauto/datacenter.py"
+    },
+    "EastMoneyAdapter": {
+      "extras": [],
+      "impl_fields": null,
+      "impl_params": {
+        "_default_fetch": ["**kwargs"],
+        "fetch_daily_bar": ["self", "symbols", "start", "end"],
+        "fetch_financial": ["self", "symbols", "period_end"],
+        "fetch_index_members": ["self", "index_code", "as_of_date"]
+      },
+      "reason": "同前两个源适配器，另外单独登记它有一个额外理由：它的 _default_fetch 只有 **kwargs 一个参数，是全项目唯一「取数入口不做位置参数约束」的地方 —— 这个差异是刻意的（分支参数由子类自己解释），登记它正好把「不要为了统一形状给它加位置参数」固化成一条可见的约束。",
+      "source": "quanauto/datasources.py"
     },
     "InMemoryBarStore": {
       "extras": [],
@@ -570,6 +606,19 @@
       "reason": "契约 §3.3 的 DataCenter.as_of(...) 没有会话参数，而 D6/D7 的判据是「回测会话 vs 实盘会话」—— S1 因此在实现侧引入这个本地类型（不在契约枚举表里）。登记它是为了在它被改名/删除时报警；「回测与实盘的分支判据」这件事本身由 verify_data_center_pit.py 的 P7 盯着。",
       "source": "quanauto/datacenter.py"
     },
+    "SourceAdapter": {
+      "extras": [],
+      "impl_fields": null,
+      "impl_params": {
+        "fetch_daily_bar": ["self", "symbols", "start", "end"],
+        "fetch_financial": ["self", "symbols", "period_end"],
+        "fetch_index_members": ["self", "index_code", "as_of_date"],
+        "source_name": ["self"],
+        "validate": ["self", "frame"]
+      },
+      "reason": "契约里没有这一层的类块（契约把「取数」写成 DataCenter 的语义，不写源适配器接口），所以按实现侧登记。它比三个子类更该被登记：这 5 个抽象方法是「新增一种数据源必须实现什么」的全部答案，改一个名字（例如 fetch_financial → fetch_fundamental）会让下游按旧名调用时才炸，而不是在门禁里被提前看见。本类的静态形状由 verify_data_center_adapter.py 的 A0~A10 守着 —— 那个门禁不执行适配器，所以它证明不了「映射出来的数据是对的」，只证明「形状与列名集合对得上」。",
+      "source": "quanauto/datasources.py"
+    },
     "Strategy": {
       "extras": [],
       "impl_fields": null,
@@ -589,6 +638,19 @@
       },
       "reason": "契约里的 Strategy 是 ABC，含 12 个抽象方法；I1 只复用了 on_data 的形状，按实现侧登记以免把「本迭代没实现的抽象方法」算成漂移。",
       "source": "quanauto/strategies.py"
+    },
+    "_AdapterBase": {
+      "extras": [],
+      "impl_fields": null,
+      "impl_params": {
+        "__init__": ["self", "fetch"],
+        "_call": ["self", "**kwargs"],
+        "_default_fetch": ["self", "**kwargs"],
+        "source_name": ["self"],
+        "validate": ["self", "frame"]
+      },
+      "reason": "私有类（名字以下划线开头），它的成员会被 is_public() 过滤掉、不参与公开成员的比对 —— 登记它不是为了公开接口，而是为了它承载的两件事：_call 把源侧的任何异常统一翻译成 SourceAdapterError（漏掉一处，那一处就开始向上抛 ModuleNotFoundError/KeyError/ValueError，而那些类型在上层读起来像「调用方写错了」），以及 validate 的委托（三个子类共用同一套判据）。这类共享骨架改名/删除会让三个子类同时静默失效，所以要单独看着。基类里的 _default_fetch 是抛错占位，真正的实现由子类覆盖。",
+      "source": "quanauto/datasources.py"
     }
   },
   "non_normative_blocks": [

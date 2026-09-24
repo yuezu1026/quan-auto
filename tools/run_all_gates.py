@@ -70,11 +70,14 @@ Usage:
 Exit codes: 0 = all gates green, 1 = at least one gate failed or the harness itself
 could not run its checks, 2 = the harness' own self-test failed.
 """
+import contextlib
+import io
 import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -135,6 +138,25 @@ GATES = [
                 '与回测会话的 QFQ/BFILL 拒绝都还在，且只由 DataCenter.as_of() 产出',
         'runner': ['tools/verify_data_center_pit.py'],
         'selftest': ['tools/verify_data_center_pit.py', '--selftest'],
+    },
+    {
+        'name': 'data-center-adapter',
+        'tier': 'A',
+        # 上两个门禁守的是建表语句与取数路径，这个守的是**两者之间的那一层**：数据源
+        # 适配器（quanauto/datasources.py）把外部 SDK 的列名/取值翻成标准 schema。它是
+        # 全项目唯一一处「外部世界命名」与「我们自己的命名」正面接触的地方，而出错方式
+        # 全是静默的：源字段名漏进下游（`data['close']` 与 `data['收盘']` 混用不会报错，
+        # 只会在某天算出两个不同的数）、采集层直接 import 数据库驱动（研究层与平台层
+        # 的边界当场消失）、或者上游 SDK 的枚举值直接写进我们有 CHECK 约束的列、到入库
+        # 那一刻才炸。这三件事人眼审 200 行映射表都看不出，机器比集合不会。
+        # 边界：它只做**静态**比对——把映射表里的值拿去和 DDL/契约的闭集对照、把 import
+        # 根拿去和白名单对照——它**从不执行适配器、不联网、不 import pandas**（C4），也
+        # 因此**证明不了「映射是对的数据」**：源列名→标准列的对应关系正确与否，只有真
+        # 拉一次数据才知道（这正是 DC 契约附录 B 里记着的未验证项）。
+        'what': '适配器把源列名/取值翻成标准 schema、采集层不含数据库驱动、'
+                '上游 SDK 只在函数内惰性 import、且行对象不暴露源字段名',
+        'runner': ['tools/verify_data_center_adapter.py'],
+        'selftest': ['tools/verify_data_center_adapter.py', '--selftest'],
     },
     {
         'name': 'iteration-plan',
@@ -435,7 +457,17 @@ def scope_line(rows, all_names):
     return 'SCOPE: FULL -- all %d registered gate(s) ran.' % len(all_names)
 
 
-def write_report(rows, gates_by_name):
+def write_report(rows, registry, report_path=REPORT_PATH):
+    """`registry` must be the WHOLE gate list, never the --gate= filtered subset.
+
+    scope_line() answers 'which registered gates are missing from rows?', so the
+    comparison set has to be the registry. Handed the subset instead, the comparison
+    shrinks with the selection and a one-gate run stamps 'SCOPE: FULL -- all 1
+    registered gate(s) ran.' on its own artifact -- the exact false green the scope line
+    exists to prevent. The parameter is named `registry` (not `gates_by_name`) on
+    purpose: the old name invited passing a mapping built from the filtered list.
+    """
+    gates_by_name = {g['name']: g for g in registry}
     lines = []
     lines.append(scope_line(rows, list(gates_by_name)))
     lines.append('')
@@ -450,7 +482,7 @@ def write_report(rows, gates_by_name):
         lines.append('-' * 78)
         lines.append(r['output'].rstrip())
         lines.append('')
-    with open(REPORT_PATH, 'w', encoding='utf-8', newline='\n') as f:
+    with open(report_path, 'w', encoding='utf-8', newline='\n') as f:
         f.write('\n'.join(lines))
     return len(lines)
 
@@ -527,6 +559,35 @@ def selftest():
           % (part[:34], full[:34], 'OK' if hit else 'MISSED'))
     ok = ok and hit
 
+    # End-to-end control for the line above: scope_line() being correct proves nothing
+    # unless write_report() is WIRED to it with the whole registry. It was not -- the
+    # caller handed it the --gate= filtered list, so the comparison set shrank with the
+    # selection and a one-gate run stamped 'SCOPE: FULL -- all 1 registered gate(s) ran.'
+    # onto its own report. A pure-function test can never see a wrong argument at a call
+    # site, so this drives a REAL --gate= run into a throwaway report and reads the bytes
+    # that actually landed there. The gate's own verdict is deliberately NOT asserted:
+    # the scope line has to be honest whether that gate is green or red today.
+    tmp_report = os.path.join(tempfile.gettempdir(), 'gates-selftest-partial.txt')
+    picked_one = GATES[0]['name']
+    not_run = [g['name'] for g in GATES if g['name'] != picked_one]
+    first = ''
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            execute([picked_one], report_path=tmp_report)
+        with open(tmp_report, encoding='utf-8-sig') as f:
+            first = f.readline().strip()
+    except (OSError, IndexError) as exc:
+        first = '(unreadable: %s)' % exc
+    hit = (len(GATES) >= 2 and first.startswith('SCOPE: PARTIAL')
+           and ('1 of %d gate(s) ran' % len(GATES)) in first and not_run[0] in first)
+    print('  [scope-line-wired-e2e] picked=%s first=%s %s'
+          % (picked_one, first[:40], 'OK' if hit else 'MISSED'))
+    ok = ok and hit
+    try:
+        os.remove(tmp_report)
+    except OSError:
+        pass
+
     # A gate with no selftest at all must be rejected, not silently accepted as green:
     # it would be a detector nobody has ever seen fire.
     noself = {'name': 'c', 'tier': 'A', 'what': 'x', 'runner': [], 'selftest': []}
@@ -598,6 +659,18 @@ def main():
         return 0
 
     picked = [a.split('=', 1)[1] for a in sys.argv if a.startswith('--gate=')]
+    return execute(picked)
+
+
+def execute(picked, report_path=REPORT_PATH):
+    """Run the selected gates and write the report; returns the process exit code.
+
+    Split out of main() so the selftest can drive a REAL --gate= run against a throwaway
+    report path and read the bytes it produced. That matters here: the scope guard was
+    green while the report lied, because the bug was in the call site, not in
+    scope_line(). No amount of testing the pure function can see a wrong argument at the
+    one place it is called.
+    """
     gates = [g for g in GATES if not picked or g['name'] in picked]
     baseline = load_baseline()
 
@@ -648,10 +721,17 @@ def main():
             print('=== %s full output ===' % r['name'])
             print(r['output'])
 
-    n = write_report(rows, {g['name']: g for g in gates})
+    # GATES, not `gates`: the report must be able to say what was NOT run.
+    n = write_report(rows, GATES, report_path)
+    try:
+        shown_report = os.path.relpath(report_path, ROOT)
+    except ValueError:
+        # Windows: relpath raises when the two paths are on different drives, which is
+        # exactly what happens when the selftest writes its throwaway report to %TEMP%.
+        shown_report = report_path
     print('')
     print('report: %s (%d lines) -- read this instead of re-running the gates'
-          % (os.path.relpath(REPORT_PATH, ROOT), n))
+          % (shown_report, n))
     print('verdict: %s (%d/%d gate(s) green)'
           % ('PASS' if not failed else 'FAIL', len(rows) - len(failed), len(rows)))
     # 这行以前写的是「no SQL was executed … remains UNPROVEN」。2026-09-23 起
