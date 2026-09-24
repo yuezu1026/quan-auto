@@ -4,10 +4,10 @@
 本仓库没有配置 git remote，因此 `.github/workflows/ci.yml` **从未在 GitHub 上真实运行过**；
 下面跑的是与它**相同的两条命令**。
 
-generated: 2026-09-24 08:32:21
+generated: 2026-09-24 08:39:20
 python:    D:\project-quan\quan-auto\.venv\Scripts\python.exe  (.venv/Scripts/python.exe)
 version:   Python 3.13.9
-commit:    562e4affbc6b7b5f5cadee2bff6377a8185797c6
+commit:    dc53ec85dcf3f013e62da3f0657ebe92961664d9
 dirty:     2 项未提交改动（快照与产物不同步）
 pycache:   启动时清掉 0 个 __pycache__（陈旧字节码会让结论与磁盘源码无关）
 
@@ -15,33 +15,33 @@ pycache:   启动时清掉 0 个 __pycache__（陈旧字节码会让结论与磁
 exit: 0
   | ........................................................................ [ 96%]
   | ...                                                                      [100%]
-  | 75 passed in 0.57s
+  | 75 passed in 0.55s
 
 ## 2. 红→绿往返（I0 触发测试的证据：两个关键的东西各红一次）
 
 ### pkg-version-drift -- 把包版本改成 0.1.1（与 pyproject 不一致）
   靶子: quanauto/__init__.py  '__version__ = "0.1.0"' -> '__version__ = "0.1.1"'
   applied: True  (字节已变)
-  清缓存: 删掉 0 个 __pycache__（否则同秒写回会让 Python 继续用旧字节码）
+  解释器读回: 变异前 0.1.0 -> 变异后 0.1.1  （一样就说明变异没到达解释器）
   红: pytest exit=1
     | =========================== short test summary info ===========================
     | FAILED tests/test_skeleton.py::test_version_matches_pyproject - AssertionErro...
-    | 1 failed, 74 passed in 0.66s
-  还原: 字节与原始内容一致
+    | 1 failed, 74 passed in 0.67s
+  还原: 与原始字节逐字节一致
+  解释器读回: 还原后 0.1.0
   绿: pytest exit=0
     | ........................................................................ [ 96%]
     | ...                                                                      [100%]
-    | 75 passed in 0.56s
+    | 75 passed in 0.55s
 
 ### ci-drops-gates -- 把 CI 里那一行门禁命令换成单跑一个子门禁
   靶子: .github/workflows/ci.yml  'python tools/run_all_gates.py' -> 'python tools/verify_risk_config.py'
   applied: True  (字节已变)
-  清缓存: 删掉 0 个 __pycache__（否则同秒写回会让 Python 继续用旧字节码）
   红: verify_skeleton exit=1
     | root: D:\project-quan\quan-auto
     | denominator: 9 detector(s) ran: PYPROJECT, VERSION, PACKAGE, TESTS, CI, CI-SWALLOW, GATE-COUNT, IMPL-STATUS, MAP-PATHS
     | verdict: FAIL (1 issue(s))
-  还原: 字节与原始内容一致
+  还原: 与原始字节逐字节一致
   绿: verify_skeleton exit=0
     | root: D:\project-quan\quan-auto
     | denominator: 9 detector(s) ran: PYPROJECT, VERSION, PACKAGE, TESTS, CI, CI-SWALLOW, GATE-COUNT, IMPL-STATUS, MAP-PATHS
