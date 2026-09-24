@@ -185,9 +185,56 @@ class SourceAdapterError(DataCenterError):
 
     适配器**只**抛这一个异常类去表示"源这一侧的问题"；源字段名归一化失败也用
     它，因为那同样意味着"这个源的这份数据不能用"，而不是"上层代码写错了"。
+
+    除消息外还带三个**可判断**的属性（类别表见下方 `SOURCE_FAILURE_KINDS`）：
+    `source`（哪个源）/ `kind`（哪一类）/ `retryable`（值不值得重试）。
+    只给消息的版本写不出重试策略 —— 那正是 I2a 之前的状态。
     """
 
     code = "DATA_005"
+
+    def __init__(self, message: str = "", *, source: str = "", kind: str = "UNKNOWN",
+                 retryable: Optional[bool] = None, code: Optional[str] = None) -> None:
+        if kind not in SOURCE_FAILURE_KINDS:
+            # 刻意**不降级成 UNKNOWN**。降级会让「新加的类别根本没生效」与
+            # 「归类成功」长得一模一样 —— 那正是分类表最容易失效的方式。
+            raise ValueError(
+                "未知的取数失败类别 %r：类别表是闭集，写错必须当场红（可用值：%s）"
+                % (kind, ' / '.join(SOURCE_FAILURE_KINDS)))
+        super().__init__(message, code=code)
+        self.source = source
+        self.kind = kind
+        self.retryable = (kind in RETRYABLE_SOURCE_FAILURES) if retryable is None \
+            else bool(retryable)
+
+
+# ── 取数失败的**分类**（I2a，2026-09-24）─────────────────────────────────────
+# 契约 §3.9 的 DATA_005 只规定「源这一侧出问题就用它」，**没规定怎么区分**。
+# 一句字符串不足以让调用方决定动作：`ModuleNotFoundError`（去装库）与
+# `TimeoutError`（过五分钟重试）在旧实现里长得一模一样，处置却相反。
+#
+# 分类的判据是**调用方要做的动作**，不是异常类型本身 —— 这是选类别的唯一标准。
+# 动作相同的两个失败就是同一类，哪怕报错文字完全不同。
+#
+# 刻意**没有**「源没给数据」这一类：在本层区分不了「真的没有交易日」与
+# 「代码写错了 / 源换了字段」，把它做成类别会鼓励上层把「空结果」当异常处理。
+# 那是读侧 `as_of` 语义的事，已有 `DataNotAvailableError`（DATA_001）表达。
+SOURCE_FAILURE_KINDS = (
+    'SDK_MISSING',             # 源库没装（ImportError）                → 动作：装库
+    'SOURCE_AUTH',             # 鉴权被拒（401/403）                    → 动作：换凭证
+    'SOURCE_UNREACHABLE',      # 连不上（DNS／连接被拒／断流／5xx）     → 动作：重试
+    'SOURCE_TIMEOUT',          # 连上了但超时                           → 动作：重试
+    'SOURCE_RATE_LIMITED',     # 被限流（429）                          → 动作：退避后重试
+    'SOURCE_SCHEMA_MISMATCH',  # 通了但解析不了（键缺／类型变／非 JSON）→ 动作：改映射表
+    'UNSUPPORTED',             # 这一源不覆盖这个数据面                 → 动作：换源
+    'UNKNOWN',                 # 兜底：没归类的一律来这里，**不猜**      → 动作：看原始类型名
+)
+
+# 「值得原样重试」的类别。这张表是分类存在的**全部理由** ——
+# 其余类别的重试是纯浪费：装库不会因为重试而成功，改映射表更不会。
+RETRYABLE_SOURCE_FAILURES = (
+    'SOURCE_UNREACHABLE', 'SOURCE_TIMEOUT', 'SOURCE_RATE_LIMITED',
+)
 
 
 class CalendarError(DataCenterError):

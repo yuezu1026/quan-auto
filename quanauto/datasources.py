@@ -65,7 +65,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from datetime import date
 import re
+import socket
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
+import urllib.error
 
 import pandas as pd
 
@@ -669,6 +671,40 @@ def _violation(frame: pd.DataFrame, tag: str) -> Optional[str]:
 
 
 
+def classify_source_failure(exc: BaseException) -> str:
+    """把源侧的任意异常映射到 `SOURCE_FAILURE_KINDS` 里的**一个**类别。
+
+    判定顺序**从具体到笼统**，这条顺序就是本函数的全部风险，不能凭感觉调：
+    `socket.timeout` 就是 `TimeoutError`、是 `OSError` 的子类；`HTTPError` 是
+    `URLError` 的子类、`URLError` 又是 `OSError` 的子类。顺序写反的话，
+    「超时」「限流」「鉴权被拒」会一起被最笼统的那一档截走，而返回值看上去
+    仍然是个**合法**类别 —— 静默降级，没有报错。所以
+    `tests/test_data_center_adapter.py` 里有一条专门盯这条顺序的用例。
+
+    `UNKNOWN` 是**真的兜底**：这里不猜。猜错的类别比没有类别更坏 —— 它会让
+    调用方对着一类它其实不认识的东西执行重试或放弃。
+
+    本函数体内**不出现类别名以外的字符串字面量**，这是刻意的：
+    `tools/verify_data_center_adapter.py` 的 A11 靠这条性质静态判定
+    「返回值 ⊆ 声明表」，混进一句提示语就会让那条判定失去意义。
+    """
+    if isinstance(exc, ImportError):
+        return 'SDK_MISSING'
+    if isinstance(exc, urllib.error.HTTPError):
+        if exc.code == 429:
+            return 'SOURCE_RATE_LIMITED'
+        if exc.code in (401, 403):
+            return 'SOURCE_AUTH'
+        return 'SOURCE_UNREACHABLE'
+    if isinstance(exc, (socket.timeout, TimeoutError)):
+        return 'SOURCE_TIMEOUT'
+    if isinstance(exc, (urllib.error.URLError, ConnectionError, OSError)):
+        return 'SOURCE_UNREACHABLE'
+    if isinstance(exc, (KeyError, IndexError, TypeError, ValueError)):
+        return 'SOURCE_SCHEMA_MISMATCH'
+    return 'UNKNOWN'
+
+
 class SourceAdapter(ABC):
     """数据源适配器基类。一个数据源一个子类，负责把源特有格式归一化到本契约的标准 schema。
 
@@ -740,22 +776,29 @@ class _AdapterBase(SourceAdapter):
     def _default_fetch(self, **kwargs: Any) -> pd.DataFrame:
         """子类覆盖为真实的源调用（惰性导入）。"""
         raise SourceAdapterError(
-            '%s 适配器没有注入 fetch 函数，也没有默认实现' % type(self).__name__)
+            '%s 适配器没有注入 fetch 函数，也没有默认实现' % type(self).__name__,
+            source=self._SOURCE, kind='UNSUPPORTED')
 
     def _call(self, **kwargs: Any) -> pd.DataFrame:
         """调用注入的取数函数，并把源侧异常统一翻译成 `SourceAdapterError`。
 
-        `SourceAdapterError` 原样透传（它已经是这个类型的语义）；其余一律包一层，
-        并在消息里保留原异常类型名 —— 丢掉类型名会让「源库没装」和「源限流」
-        在日志里长得一模一样。
+        `SourceAdapterError` 原样透传（它已经是这个类型的语义，而且带着适配器
+        自己判定好的类别）；其余一律包一层，并在消息里保留原异常类型名 ——
+        丢掉类型名会让「源库没装」和「源限流」在日志里长得一模一样。
+
+        类别由 `classify_source_failure` 判定，`retryable` 由类别推出来，
+        `source` 由适配器自己填。这三样加起来才写得成重试策略。
         """
         try:
             return self._fetch(**kwargs)
         except SourceAdapterError:
             raise
         except Exception as exc:  # noqa: BLE001 —— 这一层的职责就是兜住源侧的一切
-            raise SourceAdapterError('%s 取数失败（%s）：%s'
-                                     % (self._SOURCE, type(exc).__name__, exc)) from exc
+            raise SourceAdapterError(
+                '%s 取数失败（%s）：%s' % (self._SOURCE, type(exc).__name__, exc),
+                source=self._SOURCE,
+                kind=classify_source_failure(exc),
+            ) from exc
 
 
 def _empty(*columns: str) -> pd.DataFrame:
@@ -811,13 +854,15 @@ class AKShareAdapter(_AdapterBase):
         raise SourceAdapterError(
             'akshare 财务接口（`stock_financial_abstract`）不含披露日期，'
             '契约 §3.2 要求 `announce_date` 缺失即不合格 —— 本适配器不提供该能力，'
-            '财务请走 EastMoneyAdapter（DR 见数据中心契约附录 B）')
+            '财务请走 EastMoneyAdapter（DR 见数据中心契约附录 B）',
+            source=self._SOURCE, kind='UNSUPPORTED')
 
     def fetch_index_members(self, index_code: str, as_of_date: date) -> pd.DataFrame:
         raise SourceAdapterError(
             'akshare 指数成分股接口只给**当前**名单，契约 D5 禁止用当前名单回溯历史 '
             '（幸存者偏差）；本适配器不提供该能力，指数成分股请走 EastMoneyAdapter'
-            '（DR 见数据中心契约附录 B）')
+            '（DR 见数据中心契约附录 B）',
+            source=self._SOURCE, kind='UNSUPPORTED')
 
 
 class BaostockAdapter(_AdapterBase):
@@ -841,7 +886,11 @@ class BaostockAdapter(_AdapterBase):
         import baostock as bs  # noqa: PLC0415 —— 惰性导入，见上文
         login = bs.login()
         if getattr(login, 'error_code', '0') != '0':
-            raise SourceAdapterError('baostock 登录失败：%s' % getattr(login, 'error_msg', ''))
+            # baostock 的登录是**匿名**的、不收凭证，所以登录失败只可能是服务端
+            # 不可用而不是凭证错 —— 归到「连不上」（可重试）而不是「鉴权」。
+            # 这个判断未经联网验证（本机未装 baostock），所以只是分类不是结论。
+            raise SourceAdapterError('baostock 登录失败：%s' % getattr(login, 'error_msg', ''),
+                                     source='baostock', kind='SOURCE_UNREACHABLE')
         try:
             result = bs.query_history_k_data_plus(
                 _baostock_code(symbol),
@@ -867,10 +916,12 @@ class BaostockAdapter(_AdapterBase):
         return pd.concat(frames, ignore_index=True)
 
     def fetch_financial(self, symbols: List[str], period_end: date) -> pd.DataFrame:
-        raise SourceAdapterError('契约 §3.2 的表里 baostock 不覆盖财务，见附录 B')
+        raise SourceAdapterError('契约 §3.2 的表里 baostock 不覆盖财务，见附录 B',
+                                 source=self._SOURCE, kind='UNSUPPORTED')
 
     def fetch_index_members(self, index_code: str, as_of_date: date) -> pd.DataFrame:
-        raise SourceAdapterError('契约 §3.2 的表里 baostock 不覆盖指数成分股，见附录 B')
+        raise SourceAdapterError('契约 §3.2 的表里 baostock 不覆盖指数成分股，见附录 B',
+                                 source=self._SOURCE, kind='UNSUPPORTED')
 
 
 class EastMoneyAdapter(_AdapterBase):
@@ -890,10 +941,12 @@ class EastMoneyAdapter(_AdapterBase):
         形状正确）。"""
         raise SourceAdapterError(
             'EastMoneyAdapter 需要注入真实的东财数据中心取数函数'
-            '（无官方 SDK，未在本切片实现）')
+            '（无官方 SDK，未在本切片实现）',
+            source='eastmoney', kind='UNSUPPORTED')
 
     def fetch_daily_bar(self, symbols: List[str], start: date, end: date) -> pd.DataFrame:
-        raise SourceAdapterError('契约 §3.2 的表里东财不覆盖行情（行情走 AKShare/Baostock）')
+        raise SourceAdapterError('契约 §3.2 的表里东财不覆盖行情（行情走 AKShare/Baostock）',
+                                 source=self._SOURCE, kind='UNSUPPORTED')
 
     def fetch_financial(self, symbols: List[str], period_end: date) -> pd.DataFrame:
         frames = []

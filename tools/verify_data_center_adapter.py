@@ -4,10 +4,10 @@
 
 这个门禁**只解析源码：不 import pandas、不跑 pytest、不联网**（C4：门禁不许把
 「装不装第三方库」变成能不能跑的条件）。`tests/test_data_center_adapter.py` 证明的是
-「今天的 32 个用例过了」；这个门禁证明的是另一件事：适配器层那几条「结构上就不该发生」
-的性质，在**下一个人加数据源**时不会静默失效。
+「此刻这批用例跑过了」（用例数随迭代增长，不在此处写死）；这个门禁证明的是另一件事：
+适配器层那几条「结构上就不该发生」的性质，在**下一个人加数据源**时不会静默失效。
 
-它盯三条互相独立的承诺，每条都能追到一句原文：
+它盯四条互相独立的承诺，每条都能追到一句原文：
 
   1. 「源字段名不得泄漏到输出列」（契约 §4 验收表 / D9；`quanauto/datacenter.py`
      `DailyBar` docstring 点名要求本门禁反向检查这条）。
@@ -23,6 +23,11 @@
   3. 源 SDK 只能惰性导入（`_default_fetch` 内）。源库缺失必须由 `_call` 翻译成
      `SourceAdapterError`（DATA_005），模块级导入会让「没装 akshare」升级成
      「`import quanauto.datasources` 直接失败」—— 失败地点从数据源挪到了包导入。
+  4. 取数失败的分类表是**闭集且无孤儿**（I2a，2026-09-24）。`quanauto/errors.py` 的
+     `SOURCE_FAILURE_KINDS` 是唯一声明处，`quanauto/datasources.py` 的
+     `classify_source_failure` 是唯一判定处。**两个方向都要盯**：声明了没人抛 = 死代码
+     （还会让「已分类」看起来比实际完整），抛了没声明 = 运行时才 ValueError（而那时
+     告警已经发生在生产取数里）。分类若没接在翻译点上，整张表就只是装饰品。
 
 Detector（每个都独立跑、互不 return；`--selftest` 每个探测器一个样本）：
 
@@ -54,8 +59,14 @@ Detector（每个都独立跑、互不 return；`--selftest` 每个探测器一�
   A10 NON-VACUITY
       上面每个探测器都必须真的看到过目标。提取为空（改名/失配）时所有探测项都在空转，
       却会打印「0 issue(s) PASS」—— 零目标是 FAILURE，不是通过。
+  A11 TAXONOMY-CLOSED
+      取数失败的分类表**两个方向都闭合**，并且真的接在翻译点上。这一条天跨文件：
+      `classify_source_failure` **函数体内**的字符串字面量全部当作类别名（该函数体
+      内不许出现别的字符串，这条约束写在该函数的 docstring 里），加上所有 `kind='...'`
+      字面量，两者之并集必须**恰好等于**声明表；另需存在一处「`_call` 把
+      `classify_source_failure(exc)` 的结果当作 `kind=` 传下去」。
 
-覆盖范围就是 `SOURCE_RELS` 点名的三个文件，不是「整个仓库」。要加数据源、要让某个
+覆盖范围就是 `SOURCE_RELS` 点名的四个文件，不是「整个仓库」。要加数据源、要让某个
 新模块也被检查，就得往常量里登记 —— 这是刻意的：一个 glob 全仓的门禁没法告诉评审
 「它到底看了哪几个文件」，而这里要防的失效模式恰恰是「下一个模块没被看见，所有门禁
 却是绿」。
@@ -63,7 +74,8 @@ Detector（每个都独立跑、互不 return；`--selftest` 每个探测器一�
 **这个门禁证明不了什么**（写在正文里，避免被读成更多）：它只看形状，看不到内容。
 映射表里的源列名是从各源文档抄来的、**从未联网核对过**（akshare/baostock 都没装），
 所以「映射方向对、单位对、列名对」这三件事它一概不保证。那条欠账登记在数据中心契约
-附录 B。运行时行为由 `tests/test_data_center_adapter.py` 的 32 个用例负责。
+附录 B。运行时行为由 `tests/test_data_center_adapter.py` 负责（分类的**判定顺序**也在
+那里有专门用例，那是这张表最容易被写反、而且写反了不报错的地方）。
 
 用法：
     python tools/verify_data_center_adapter.py             # 检查仓库
@@ -83,8 +95,9 @@ import sys
 
 ADAPTER_REL = os.path.join('quanauto', 'datasources.py')
 ROWCLASS_REL = os.path.join('quanauto', 'datacenter.py')
+ERRORS_REL = os.path.join('quanauto', 'errors.py')
 CONTRACT_REL = os.path.join('docs', '智能量化交易平台-数据中心接口契约文档.md')
-SOURCE_RELS = (ADAPTER_REL, ROWCLASS_REL, CONTRACT_REL)
+SOURCE_RELS = (ADAPTER_REL, ROWCLASS_REL, ERRORS_REL, CONTRACT_REL)
 
 # 列名映射表：{源列名: 标准列名}。**新增数据源的映射表必须登记在这里**，否则它既不算
 # 对也不算错（A3 会因此报错，而不是静默放行）。
@@ -99,6 +112,13 @@ SCHEMA_TUPLES = ('DAILY_BAR_COLUMNS', 'FINANCIAL_REQUIRED_COLUMNS',
                  'FINANCIAL_SUBJECT_COLUMNS', 'INDEX_MEMBER_COLUMNS')
 REPORT_TYPES_CONST = 'REPORT_TYPES'
 DROPPED_MARKERS_CONST = 'BAOSTOCK_DROPPED_MARKERS'
+
+# A11 的四个名字。**声明处与判定处分在两个文件里**，所以这一条天生跨文件。
+TAXONOMY_CONST = 'SOURCE_FAILURE_KINDS'
+RETRYABLE_CONST = 'RETRYABLE_SOURCE_FAILURES'
+CLASSIFIER_FUNC = 'classify_source_failure'
+TRANSLATION_METHOD = '_call'
+ADAPTER_ERROR_CLASS = 'SourceAdapterError'
 
 # 采集侧禁止出现的库：任何「能写库」的驱动都算。
 DB_DRIVER_MODULES = ('psycopg', 'psycopg2', 'sqlalchemy', 'asyncpg', 'aiomysql',
@@ -122,7 +142,8 @@ IDENT_RE = re.compile(r'^[a-z_][a-z0-9_]*$')
 
 STAT_KEYS = ('scanned_modules', 'str_maps', 'column_maps', 'value_maps',
              'schema_bindings', 'module_imports', 'lazy_source_imports',
-             'row_classes', 'denylist_names', 'contract_schemas')
+             'row_classes', 'denylist_names', 'contract_schemas',
+             'taxonomy_declared', 'taxonomy_producers', 'taxonomy_wiring')
 
 # A10 的下限：必须是「这个仓库当前实测到的东西」的最小值，不是愿望值。
 # 阈值定高一点是刻意的 —— 提取器一旦失配，这些数会整体掉到 0，而 0 必须红。
@@ -136,6 +157,9 @@ MIN_STATS = (
     ('row_classes', 1, '被检查的数据类'),
     ('denylist_names', 1, '反推出来的源特有字段名黑名单'),
     ('contract_schemas', 3, '从契约 §3.2 抽出的列名清单'),
+    ('taxonomy_declared', 8, 'errors.py 里声明出来的取数失败类别（A11 的证据：看不到就说明分类表没了）'),
+    ('taxonomy_producers', 8, '适配器实际会产出的类别（判定分支 ＋ 显式 raise）'),
+    ('taxonomy_wiring', 1, '把分类结果接成 kind= 的翻译点（A11 的证据：看不到就说明分类没接线）'),
 )
 
 # `ast.literal_eval` 拿不到时的哨兵。用两个哨兵是为了让报错能区分
@@ -265,8 +289,8 @@ def contract_list(text, start_token, end_token):
     return names, prose, ''
 
 
-def run_checks(adapter_text, rows_text, contract_text):
-    """三个文本 -> (issues, stats)。返回 `issues` 为空才是 PASS。"""
+def run_checks(adapter_text, rows_text, errors_text, contract_text):
+    """四个文本 -> (issues, stats)。返回 `issues` 为空才是 PASS。"""
     issues, stats = [], {}
     adapter_tree = parse_module(adapter_text, ADAPTER_REL, issues)
     rows_tree = parse_module(rows_text, ROWCLASS_REL, issues)
@@ -278,7 +302,7 @@ def run_checks(adapter_text, rows_text, contract_text):
         issues.append(('A0', '源码解析失败，后续检查全部无从谈起 —— 这不是「没问题」，'
                              '而是「没检查」'))
         return issues, stats
-    stats['scanned_modules'] = 2
+    stats['scanned_modules'] = 3
 
     constants = module_constants(adapter_tree)
 
@@ -456,6 +480,114 @@ def run_checks(adapter_text, rows_text, contract_text):
                              ' schema 不参与「映射表值域 ⊆ 标准 schema」的判定，'
                              '于是那张表的映射值既不算对也不算错' % name))
 
+    # ── A11：取数失败的分类表闭合，且真的接在翻译点上（I2a）────────────────────
+    # 这一条天生跨文件：errors.py 是唯一**声明处**，datasources.py 是唯一**判定处**。
+    # 声明表用 module_constants 读，因此它必须是元组**字面量** —— frozenset/生成式/
+    # 条件表达式都会让本门禁拿不到值，那等于没检查（A10 会在下一节把这种情形变红）。
+    err_tree = parse_module(errors_text, ERRORS_REL, issues)
+    declared, declared_ok = (), False
+    if err_tree is None:
+        issues.append(('A11', 'errors.py 解析失败 —— 分类表的声明处读不到，本探测项放弃判定'
+                              '（这是「没检查」，不是「没问题」）'))
+    else:
+        err_constants = module_constants(err_tree)
+        value = err_constants.get(TAXONOMY_CONST, _MISSING)
+        if value is _MISSING:
+            issues.append(('A11', '常量 %s 不存在 —— 分类表是「取数失败可分类」的全部契约，'
+                                  '它不见了，下面每条判定都无从谈起' % TAXONOMY_CONST))
+        elif not (isinstance(value, tuple) and value
+                  and all(isinstance(x, str) and x for x in value)):
+            issues.append(('A11', '常量 %s 必须是「非空的全字符串元组字面量」—— frozenset/'
+                                  '生成式/条件表达式都会让本门禁拿不到值' % TAXONOMY_CONST))
+        else:
+            declared, declared_ok = tuple(value), True
+        retryable = err_constants.get(RETRYABLE_CONST, _MISSING)
+        if isinstance(retryable, tuple):
+            stray = sorted(set(x for x in retryable if isinstance(x, str)) - set(declared))
+            if stray:
+                issues.append(('A11', '%s 引用了 %s 里没有的类别 %s —— 那条「值得重试」的'
+                                      '规则永远匹配不上：静默失配，没有任何报错'
+                               % (RETRYABLE_CONST, TAXONOMY_CONST, stray)))
+
+    # 生产者之一：判定函数的返回值。**只收字面量**，且把函数体内的字符串全部当作类别名
+    # （docstring 除外）—— 这条约束写在该函数的 docstring 里，混进提示语就会让本判定
+    # 失去意义，所以这里刻意不猜。
+    classifier_kinds, found_classifier = set(), False
+    for node in adapter_tree.body:
+        if not (isinstance(node, ast.FunctionDef) and node.name == CLASSIFIER_FUNC):
+            continue
+        found_classifier = True
+        body = node.body
+        if body and isinstance(body[0], ast.Expr) \
+                and isinstance(body[0].value, ast.Constant) \
+                and isinstance(body[0].value.value, str):
+            body = body[1:]
+        for stmt in body:
+            classifier_kinds |= {n.value for n in ast.walk(stmt)
+                                 if isinstance(n, ast.Constant)
+                                 and isinstance(n.value, str)}
+    if not found_classifier:
+        issues.append(('A11', '适配器里找不到模块级函数 %s —— 分类表没有判定处，`kind` 只会'
+                              '来自兜底值' % CLASSIFIER_FUNC))
+
+    # 生产者之二：显式 raise 时写死的 kind 字面量（「这一源不覆盖」那类走这条路）；
+    # 同时统计翻译点接线：`_call` 把判定结果当作 kind= 传下去的那一处。
+    # 生产者之二：显式 raise 时写死的 kind 字面量（「这一源不覆盖」那类走这条路）。
+    literal_kinds = set()
+    for node in ast.walk(adapter_tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        callee = func.id if isinstance(func, ast.Name) else (
+            func.attr if isinstance(func, ast.Attribute) else '')
+        if callee != ADAPTER_ERROR_CLASS:
+            continue
+        for kw in node.keywords:
+            if kw.arg == 'kind' and isinstance(kw.value, ast.Constant) \
+                    and isinstance(kw.value.value, str):
+                literal_kinds.add(kw.value.value)
+
+    # 接线：`_call` 的函数体里必须有一处把判定结果当 kind= 传下去。判「在哪个体内」
+    # 而不是「调用者的名字叫什么」—— 真实写法是
+    # `raise SourceAdapterError(..., kind=classify_source_failure(exc))`，接收方是
+    # **异常类本身**，不是 `_call`。判错了会让一条真实存在的接线被报成「没接线」。
+    wired = 0
+    for node in ast.walk(adapter_tree):
+        if not (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name == TRANSLATION_METHOD):
+            continue
+        for inner in ast.walk(node):
+            if not isinstance(inner, ast.Call):
+                continue
+            for kw in inner.keywords:
+                if kw.arg == 'kind' and isinstance(kw.value, ast.Call) \
+                        and isinstance(kw.value.func, ast.Name) \
+                        and kw.value.func.id == CLASSIFIER_FUNC:
+                    wired += 1
+
+    produced = classifier_kinds | literal_kinds
+    if declared_ok:
+        orphan = sorted(produced - set(declared))
+        if orphan:
+            issues.append(('A11', '适配器会产出 %s 里没有的类别 %s —— 这会在**运行时**才抛 '
+                                  'ValueError，而那时告警已发生在生产取数里（本门禁把 %s '
+                                  '体内的字符串字面量全当作类别名，该函数体内不要写别的'
+                                  '字符串）' % (TAXONOMY_CONST, orphan, CLASSIFIER_FUNC)))
+        unused = sorted(set(declared) - produced)
+        if unused:
+            issues.append(('A11', '类别 %s 声明了却没有任何地方会产出 %s —— 预支的类别是'
+                                  '死代码，还会让「已分类」看起来比实际完整；要么实现它，'
+                                  '要么从 %s 里删掉'
+                           % (TAXONOMY_CONST, unused, TAXONOMY_CONST)))
+    if not wired:
+        issues.append(('A11', '找不到「%s 把 %s(exc) 的结果当作 kind= 传下去」的接线 —— '
+                              '分类表没接在翻译点上，它只是个装饰品：类别算出来了，'
+                              '却没有异常带着它出去'
+                       % (TRANSLATION_METHOD, CLASSIFIER_FUNC)))
+    stats['taxonomy_declared'] = len(declared)
+    stats['taxonomy_producers'] = len(produced)
+    stats['taxonomy_wiring'] = wired
+
     # ── A10：非空转 ─────────────────────────────────────────────────────────────
     for key, minimum, what in MIN_STATS:
         got = stats.get(key, 0)
@@ -523,10 +655,47 @@ EASTMONEY_REPORT_TYPE = {
 }
 
 
+def classify_source_failure(exc):
+    if isinstance(exc, ImportError):
+        return 'SDK_MISSING'
+    if isinstance(exc, TimeoutError):
+        return 'SOURCE_TIMEOUT'
+    if isinstance(exc, ValueError):
+        return 'SOURCE_SCHEMA_MISMATCH'
+    if isinstance(exc, KeyError):
+        return 'SOURCE_RATE_LIMITED'
+    if isinstance(exc, OSError):
+        return 'SOURCE_UNREACHABLE'
+    if isinstance(exc, PermissionError):
+        return 'SOURCE_AUTH'
+    if isinstance(exc, RuntimeError):
+        return 'UNSUPPORTED'
+    return 'UNKNOWN'
+
+
 class Adapter:
     def fetch(self):
         import akshare
         return akshare
+
+    def _call(self, **kwargs):
+        try:
+            return self._fetch(**kwargs)
+        except Exception as exc:
+            raise SourceAdapterError('x', source='x',
+                                     kind=classify_source_failure(exc)) from exc
+"""
+
+# 与 CLEAN_ADAPTER 配套的**声明处**。必须换掉真的那一份 —— 否则 POSITIVE 证明的只是
+# 「真文件恰好过」，而一个「永远报红」的 A11 在下面四个 NEG 里也全都「命中」。
+# 类别数与真实产物同量（八个）：A10 的下限是对**真实产物**实测出来的最小值，
+# 比它小的合成样本会被 A10 抦住，那样 POSITIVE 就在证明 A10，而不是在证明 A11 不误报。
+CLEAN_ERRORS = """\
+SOURCE_FAILURE_KINDS = ('SDK_MISSING', 'SOURCE_AUTH', 'SOURCE_UNREACHABLE',
+                        'SOURCE_TIMEOUT', 'SOURCE_RATE_LIMITED',
+                        'SOURCE_SCHEMA_MISMATCH', 'UNSUPPORTED', 'UNKNOWN')
+RETRYABLE_SOURCE_FAILURES = ('SOURCE_UNREACHABLE', 'SOURCE_TIMEOUT',
+                             'SOURCE_RATE_LIMITED')
 """
 
 CLEAN_ROWS = """\
@@ -563,13 +732,18 @@ def selftest():
     if missing:
         print('SELFTEST FAIL: missing input(s) %s' % ', '.join(missing))
         return 1
-    adapter, rows, contract = [read_text(p) for p in paths]
+    adapter, rows, errors, contract = [read_text(p) for p in paths]
 
     ok = True
 
-    def scenario(tag, adapter_text, rows_text, contract_text, code, want_clean=False):
+    def scenario(tag, adapter_text, rows_text, contract_text, code, want_clean=False,
+                 errors_text=None):
         nonlocal ok
-        issues, _stats = run_checks(adapter_text, rows_text, contract_text)
+        # `errors_text=None` 表示「用真实的那一份」；只有 POSITIVE 与 A11 的样本
+        # 需要换掉它。
+        issues, _stats = run_checks(adapter_text, rows_text,
+                                    errors if errors_text is None else errors_text,
+                                    contract_text)
         codes = sorted(set(k for k, _ in issues))
         hit = (not issues) if want_clean else (code in codes)
         print('  [%s] issues=%d codes=%s %s'
@@ -581,7 +755,7 @@ def selftest():
 
     # CONTROL：真实产物。只报告，不断言它是干净的 —— 门禁允许在真产物上变红，
     # 那正是「能跑起来」的全部意义。
-    issues, stats = run_checks(adapter, rows, contract)
+    issues, stats = run_checks(adapter, rows, errors, contract)
     print('  [control-real-artifacts] issues=%d codes=%s %s'
           % (len(issues), sorted(set(k for k, _ in issues)),
              ' '.join('%s=%d' % (k, stats.get(k, -1)) for k in STAT_KEYS)))
@@ -712,10 +886,63 @@ def selftest():
                      "EASTMONEY_INDEX_MEMBER = {}\nEASTMONEY_REPORT_TYPE = {}\n")
     scenario('NEG10-extraction-empty', empty_adapter, rows, contract, 'A10')
 
-    # POSITIVE：合成三件套必须一条问题都没有。没有这个样本，
+    # A11 的四个方向各给一个样本，而且**刻意做成单向**：一发只点着一个分支，
+    # 「命中」才说明得了是哪一条在说话。四个锚都是纯 ASCII 单行 —— 锚一旦失配，
+    # `_mutate` 会把它回显出来，含 GBK 之外的字符会让控制台把「锚丢了」变成崩溃。
+
+    # (a) 声明了没人抛：类别还在表里，判定函数不再返回它。死代码方向。
+    bad = _mutate(adapter,
+                  "    return 'UNKNOWN'\n",
+                  "    return 'SDK_MISSING'\n",
+                  'NEG11a-kind-without-producer')
+    if bad is None:
+        ok = False
+    else:
+        scenario('NEG11a-kind-without-producer', bad, rows, contract, 'A11')
+
+    # (b) 抛了没声明：适配器用了一个声明表里没有的类别。这个方向最坏 —— 它到
+    # **运行时**才 ValueError，而那时告警已经发生在生产取数里。
+    bad = _mutate(adapter,
+                  "            source='eastmoney', kind='UNSUPPORTED')\n",
+                  "            source='eastmoney', kind='SOURCE_FLUX_CAPACITOR')\n",
+                  'NEG11b-undeclared-kind-produced')
+    if bad is None:
+        ok = False
+    else:
+        scenario('NEG11b-undeclared-kind-produced', bad, rows, contract, 'A11')
+
+    # (c) 分类没接线：`_call` 不再把判定结果当 kind= 传下去。类别算出来了，
+    # 却没有异常带着它出去 —— 整张表退化成装饰品。
+    bad = _mutate(adapter,
+                  "                kind=classify_source_failure(exc),\n",
+                  "                kind='UNKNOWN',\n",
+                  'NEG11c-classifier-not-wired')
+    if bad is None:
+        ok = False
+    else:
+        scenario('NEG11c-classifier-not-wired', bad, rows, contract, 'A11')
+
+    # (d) 可重试表引用了没声明的类别：那条「值得重试」的规则永远匹配不上，
+    # 而且静默 —— 没有任何报错。
+    bad = _mutate(errors,
+                  "RETRYABLE_SOURCE_FAILURES = (\n"
+                  "    'SOURCE_UNREACHABLE', 'SOURCE_TIMEOUT', 'SOURCE_RATE_LIMITED',\n"
+                  ")\n",
+                  "RETRYABLE_SOURCE_FAILURES = (\n"
+                  "    'SOURCE_UNREACHABLE', 'SOURCE_TIMEOUT', 'SOURCE_RATE_LIMITED',\n"
+                  "    'SOURCE_FLUX_CAPACITOR',\n"
+                  ")\n",
+                  'NEG11d-retryable-names-unknown-kind')
+    if bad is None:
+        ok = False
+    else:
+        scenario('NEG11d-retryable-names-unknown-kind', adapter, rows, contract, 'A11',
+                 errors_text=bad)
+
+    # POSITIVE：合成四件套必须一条问题都没有。没有这个样本，
     # 「永远报红」的探测器和「有效」的探测器在上面的 NEG 里长得一模一样。
     scenario('POSITIVE-clean-synthetic', CLEAN_ADAPTER, CLEAN_ROWS, CLEAN_CONTRACT, None,
-             want_clean=True)
+             want_clean=True, errors_text=CLEAN_ERRORS)
 
     print('SELFTEST %s' % ('OK: every detector fires on its own sample, two extraction '
                            'guards (A0/A10) and one clean sample stays clean'

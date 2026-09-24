@@ -13,6 +13,9 @@ from __future__ import annotations
 
 import dataclasses
 from datetime import date
+import json
+import socket
+import urllib.error
 
 import pandas as pd
 import pytest
@@ -31,6 +34,7 @@ from quanauto.datasources import (
     BaostockAdapter,
     EastMoneyAdapter,
     SourceAdapter,
+    classify_source_failure,
     normalize_daily_bar,
     normalize_financial,
     normalize_index_members,
@@ -38,7 +42,11 @@ from quanauto.datasources import (
     validate_frame,
 )
 from quanauto.enums import SourcePriority
-from quanauto.errors import SourceAdapterError
+from quanauto.errors import (
+    RETRYABLE_SOURCE_FAILURES,
+    SOURCE_FAILURE_KINDS,
+    SourceAdapterError,
+)
 from quanauto.models import ValidationReport
 
 
@@ -395,3 +403,183 @@ def test_validation_report_matches_data_center_contract_fields() -> None:
     assert fields == ["is_valid", "row_count", "errors", "warnings", "missing_ratio"], (
         "ValidationReport 的字段与数据中心契约 §3.9 不一致：实际 %r" % fields
     )
+
+
+# ── I2a-1：取数失败**可分类**（2026-09-24）────────────────────────────────────
+# 背景：契约 §3.9 只规定「源这一侧出问题就抛 SourceAdapterError（DATA_005）」，
+# 没规定**怎么区分**。而调用方要做的动作恰恰取决于类别：「源库没装」要去装库、
+# 「超时」要退避重试、「映射表对不上」要改代码。三者在旧实现里都是一句字符串，
+# 只能靠人读中文 —— 日志能读，重试策略读不了。
+#
+# 这一组的纪律：**一个类别一个样本**。分类器是一条「从具体到笼统」的 if 链，
+# 只测一个坏样本会让后面的分支根本没跑到，却看起来全绿。
+
+#: 分类器的样本表：(异常实例, 期望类别)。**每一类都要有样本**，兜底那档也要 ——
+#: 否则「兜底」只是个没被证明过的假设。
+_SOURCE_FAILURE_SAMPLES = (
+    # 源库没装 —— 动作是「装库」。重试一百次也不会因此装上。
+    (ModuleNotFoundError("No module named 'akshare'"), 'SDK_MISSING'),
+    # 鉴权被拒（401/403）：换凭证，不是重试。
+    (urllib.error.HTTPError('u', 401, 'Unauthorized', {}, None), 'SOURCE_AUTH'),
+    (urllib.error.HTTPError('u', 403, 'Forbidden', {}, None), 'SOURCE_AUTH'),
+    # 限流（429）：退避后重试**值得**。
+    (urllib.error.HTTPError('u', 429, 'Too Many Requests', {}, None),
+     'SOURCE_RATE_LIMITED'),
+    # 其它 HTTP 状态（5xx 等）：站点自己有问题，重试值得。
+    (urllib.error.HTTPError('u', 503, 'Service Unavailable', {}, None),
+     'SOURCE_UNREACHABLE'),
+    # 超时。注意 `socket.timeout` 就是 `TimeoutError`，且它是 `OSError` 的子类 ——
+    # 判定顺序写反的话，这一行会掉进「连不上」那档。
+    (socket.timeout('timed out'), 'SOURCE_TIMEOUT'),
+    (TimeoutError('timed out'), 'SOURCE_TIMEOUT'),
+    (urllib.error.URLError('name resolution failed'), 'SOURCE_UNREACHABLE'),
+    (ConnectionResetError('connection reset by peer'), 'SOURCE_UNREACHABLE'),
+    # 通了但解析不了：源改了字段名、返回了 HTML 错误页。改映射表，不是重试。
+    (KeyError('日期'), 'SOURCE_SCHEMA_MISMATCH'),
+    (TypeError('unsupported operand type(s)'), 'SOURCE_SCHEMA_MISMATCH'),
+    (ValueError('could not convert string to float'), 'SOURCE_SCHEMA_MISMATCH'),
+    (json.JSONDecodeError('Expecting value', '', 0), 'SOURCE_SCHEMA_MISMATCH'),
+    # 兜底：没归类的一律 UNKNOWN，**不猜**。原始类型名保留在消息里给人看。
+    (RuntimeError('something else entirely'), 'UNKNOWN'),
+)
+
+_SAMPLE_IDS = ['%02d-%s-%s' % (index, type(exc).__name__, kind)
+               for index, (exc, kind) in enumerate(_SOURCE_FAILURE_SAMPLES)]
+
+#: 「本适配器明说不覆盖这个数据面」的调用 —— `UNSUPPORTED` 类别的**生产者**。
+#: 它与上面每一类的区别在动作：不是装库、不是重试、不是改映射，是**换源**。
+_UNSUPPORTED_CALLS = (
+    ('akshare-financial',
+     AKShareAdapter(fetch=lambda **kwargs: pd.DataFrame()),
+     lambda adapter: adapter.fetch_financial(['600000.SH'], date(2026, 9, 30))),
+    ('akshare-index-members',
+     AKShareAdapter(fetch=lambda **kwargs: pd.DataFrame()),
+     lambda adapter: adapter.fetch_index_members('000300.SH', date(2026, 9, 30))),
+    ('baostock-financial',
+     BaostockAdapter(fetch=lambda **kwargs: pd.DataFrame()),
+     lambda adapter: adapter.fetch_financial(['600000.SH'], date(2026, 9, 30))),
+    ('baostock-index-members',
+     BaostockAdapter(fetch=lambda **kwargs: pd.DataFrame()),
+     lambda adapter: adapter.fetch_index_members('000300.SH', date(2026, 9, 30))),
+    ('eastmoney-daily-bar',
+     EastMoneyAdapter(fetch=lambda **kwargs: pd.DataFrame()),
+     lambda adapter: adapter.fetch_daily_bar(
+         ['600000.SH'], date(2026, 9, 1), date(2026, 9, 30))),
+)
+
+
+def test_failure_taxonomy_is_a_closed_set_of_uppercase_strings() -> None:
+    """分类表是闭集，且必须非空 —— 空表的每一条断言都会变成空转。"""
+    assert SOURCE_FAILURE_KINDS, "分类表是空的，下面每条断言都在空转"
+    for kind in SOURCE_FAILURE_KINDS:
+        assert isinstance(kind, str) and kind and kind == kind.upper(), (
+            "类别名必须是大写字符串常量：%r" % (kind,))
+    assert len(set(SOURCE_FAILURE_KINDS)) == len(SOURCE_FAILURE_KINDS), "类别名重复"
+
+
+def test_retryable_categories_name_only_known_categories() -> None:
+    """「可重试」表里若出现分类表没有的名字，那条规则永远匹配不上 —— 静默失配。"""
+    assert RETRYABLE_SOURCE_FAILURES, "可重试表为空 —— 分类存在的全部理由就没了"
+    unknown = sorted(set(RETRYABLE_SOURCE_FAILURES) - set(SOURCE_FAILURE_KINDS))
+    assert not unknown, "可重试表引用了分类表里没有的类别：%r" % (unknown,)
+
+
+@pytest.mark.parametrize("exc,expected", _SOURCE_FAILURE_SAMPLES, ids=_SAMPLE_IDS)
+def test_classifier_maps_each_failure_to_its_category(exc, expected) -> None:
+    assert classify_source_failure(exc) == expected
+
+
+def test_the_classifier_tests_specific_types_before_general_ones() -> None:
+    """判定顺序是这张表的**全部风险**：`socket.timeout` ⊂ `OSError`，
+    `HTTPError` ⊂ `URLError` ⊂ `OSError`。顺序反了，最该区分的两类
+    （超时 / 限流）会一起掉进「连不上」，而分类表看上去仍然「有那么多类别」。
+    """
+    assert classify_source_failure(socket.timeout('t')) == 'SOURCE_TIMEOUT', \
+        'socket.timeout 被更笼统的 OSError 分支截走了'
+    assert classify_source_failure(
+        urllib.error.HTTPError('u', 429, 'x', {}, None)) == 'SOURCE_RATE_LIMITED', \
+        'HTTPError 被更笼统的 URLError 分支截走了'
+    assert classify_source_failure(
+        urllib.error.HTTPError('u', 401, 'x', {}, None)) == 'SOURCE_AUTH', \
+        '401 与 429 被混成了一类 —— 一个该换凭证，一个该退避'
+
+
+@pytest.mark.parametrize("kind", SOURCE_FAILURE_KINDS)
+def test_retryable_flag_is_derived_from_the_category(kind) -> None:
+    """`retryable` 不是自由字段：不传就由类别推出来，推不出来说明类别没登记。"""
+    assert SourceAdapterError('x', kind=kind).retryable is (
+        kind in RETRYABLE_SOURCE_FAILURES)
+
+
+def test_an_unknown_category_is_rejected_instead_of_silently_downgraded() -> None:
+    """写错的类别必须**当场红**。降级成 UNKNOWN 会让「新加的类别根本没生效」
+    和「归类成功」长得一模一样 —— 那正是分类表最容易失效的方式。
+    """
+    with pytest.raises(ValueError) as caught:
+        SourceAdapterError('x', kind='SOURCE_FLUX_CAPACITOR')
+    assert 'SOURCE_FLUX_CAPACITOR' in str(caught.value)
+
+
+def test_call_attaches_source_category_and_retryable_to_the_translated_error() -> None:
+    """`_call` 是分类的**唯一接线点**：不接在这里，分类表就是个装饰品。"""
+    def boom(**kwargs):
+        raise TimeoutError('read timed out')
+
+    adapter = AKShareAdapter(fetch=boom)
+    with pytest.raises(SourceAdapterError) as caught:
+        adapter.fetch_daily_bar(['600000.SH'], date(2026, 9, 1), date(2026, 9, 30))
+    err = caught.value
+    assert err.source == 'akshare', '不知道是哪个源失败，多源并跑时无法定位'
+    assert err.kind == 'SOURCE_TIMEOUT'
+    assert err.retryable is True
+    assert 'TimeoutError' in str(err), \
+        '原异常类型名不许丢：类别是粗分类，类型名才是排查线索'
+
+
+def test_a_source_adapter_error_from_the_fetch_keeps_its_own_category() -> None:
+    """`_call` 对 `SourceAdapterError` 是**原样透传**，不是重新分类。
+
+    重新分类会把适配器自己判定好的类别压成 UNKNOWN，于是「该换源」这个
+    动作在日志里消失了 —— 而它恰恰是唯一能解释「已经装了库为什么还失败」的线索。
+    """
+    def boom(**kwargs):
+        raise SourceAdapterError('源明说不覆盖这个数据面', source='akshare',
+                                 kind='UNSUPPORTED')
+
+    adapter = AKShareAdapter(fetch=boom)
+    with pytest.raises(SourceAdapterError) as caught:
+        adapter.fetch_daily_bar(['600000.SH'], date(2026, 9, 1), date(2026, 9, 30))
+    assert caught.value.kind == 'UNSUPPORTED'
+
+
+@pytest.mark.parametrize("label,adapter,call", _UNSUPPORTED_CALLS,
+                         ids=[label for label, _, _ in _UNSUPPORTED_CALLS])
+def test_capability_the_source_does_not_cover_is_unsupported_and_not_retryable(
+        label, adapter, call) -> None:
+    """「这一源不覆盖这个数据面」是**装库和重试都解决不了**的失败。
+
+    旧实现把它和「网络炸了」写成同一句字符串，调用方的重试策略于是会对着一个
+    永远不会变好的失败反复重试。
+    """
+    with pytest.raises(SourceAdapterError) as caught:
+        call(adapter)
+    assert caught.value.kind == 'UNSUPPORTED'
+    assert caught.value.retryable is False, '不覆盖的能力重试一万次也不会变成覆盖'
+
+
+def test_every_declared_category_has_a_producer() -> None:
+    """**不许预支类别。** 声明了却没有任何地方会产出的类别是死代码，而且会让
+    「已分类」看起来比实际更完整 —— 本仓库对「预支的异常」有同一条纪律。
+
+    这一条同时也是一张**完成度自检表**：以后新增类别时，它要么有分类器分支，
+    要么有显式 raise，否则本用例红。
+    """
+    produced = {classify_source_failure(exc) for exc, _ in _SOURCE_FAILURE_SAMPLES}
+    for label, adapter, call in _UNSUPPORTED_CALLS:
+        with pytest.raises(SourceAdapterError) as caught:
+            call(adapter)
+        produced.add(caught.value.kind)
+    assert produced == set(SOURCE_FAILURE_KINDS), (
+        '分类表与生产者对不上：声明了没人抛的有 %r；抛了没声明的有 %r'
+        % (sorted(set(SOURCE_FAILURE_KINDS) - produced),
+           sorted(produced - set(SOURCE_FAILURE_KINDS))))
