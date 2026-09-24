@@ -262,3 +262,63 @@ class InsufficientFundsError(BrokerError):
     """资金不足 —— 契约附录 C 要求「资金校验测试」，就靠它才断言得出来。"""
 
     code = "BROKER_001"
+
+
+# ── 风控类 ────────────────────────────────────────────────────────────────
+# 码取自《风控层接口契约文档》§3.7。**不在这里预支没人会抛的异常**：`RISK_003`
+# （单策略熔断）与 `RISK_008`（熔断未恢复）在实现里与 `RISK_002` 走同一条路径，
+# 报文里区分单元标识即可；`RISK_009`（放宽未确认）是**正常业务结果**（落 PENDING），
+# 不是异常；`RISK_011`（权益峰值缺失）以 WARNING 级违规上报，也不该中断交易。
+class RiskError(QuanAutoError):
+    """风控层异常的共同根。"""
+
+    code = "RISK_000"
+
+
+class RiskInterceptError(RiskError):
+    """风控拦截（RISK_001）—— 裁决为 REJECT/HALT。"""
+
+    code = "RISK_001"
+
+
+class RiskBreakerTrippedError(RiskError):
+    """熔断已触发导致开仓被拒（RISK_002 全账户 / RISK_003 单策略，看 `breaker_key`）。"""
+
+    code = "RISK_002"
+
+
+class RiskConfigInvalidError(RiskError):
+    """规则配置非法（RISK_004）—— 类型错 / 超范围 / GLOBAL 层缺规则（D4）。
+
+    语义要点：抛它的时候**旧值必须仍在生效**，这是「宁可旧值，不可无值，更不可半新半旧」。
+    """
+
+    code = "RISK_004"
+
+
+class RiskRuleNotFoundError(RiskConfigInvalidError):
+    """规则解析不到 —— GLOBAL 层都缺，按 D4 视为配置非法（沿用 RISK_004）。"""
+
+
+class RiskConfigLoadError(RiskError):
+    """规则加载失败（RISK_005）—— 存储层不可达**且**没有本地 LKG 缓存。"""
+
+    code = "RISK_005"
+
+
+class RiskDegradedError(RiskError):
+    """降级运行（RISK_006）—— 配置源不可达但 LKG 仍在生效，只减仓。"""
+
+    code = "RISK_006"
+
+
+class KillSwitchActiveError(RiskError):
+    """Kill Switch 已激活（RISK_007）—— 开仓一律拒绝。"""
+
+    code = "RISK_007"
+
+
+class RiskRuleVersionConflictError(RiskError):
+    """规则版本冲突（RISK_010）—— 例如运行中检测到版本回退。"""
+
+    code = "RISK_010"

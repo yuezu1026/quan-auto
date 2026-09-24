@@ -44,7 +44,7 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 | 文件 | 内容 |
 |---|---|
 | `docs/开工前缺口清单.md` | ★ **当前状态与阻塞项的唯一权威来源**。想知道「现在卡在哪」就读它 |
-| `docs/开发工作流规范.md` | ★ **开工前的作业规程**：产物四件套 / TDD 红源 / 四类漂移 / 对称棘轮 / 触发测试硬要求 / 七类真实踩坑案例 / token 分层 / 红线清单 |
+| `docs/开发工作流规范.md` | ★ **开工前的作业规程**：产物四件套 / TDD 红源 / 四类漂移 / 对称棘轮 / 触发测试硬要求 / 八类真实踩坑案例 / token 分层 / 红线清单 |
 | `docs/迭代计划.md` | ★ **交付节奏**：竖切 **I0~I4**（股票池那一轮已于 2026-09-23 裁决砍掉）、每个迭代的 DoD 四件套、B7 棘轮燃尽表、不采用的敏捷做法。原「待决」问题（迭代计划里那 5 条 + 更早的 Q1/Q7）已全部裁决并回填，**已无未决项** |
 | `docs/智能量化交易平台-风控层接口契约文档.md` | 风控层契约（补充主契约缺失的类型/异常） |
 | `docs/智能量化交易平台-数据中心接口契约文档.md` | 数据中心契约，含 D1~D10 设计决策 + **附录 A**（I2 S1 实现侧裁决与偏差登记：`DataFeedError` 继承、`SessionMode` 本地类型、越界两种语义、复权因子恒 1.0 这个已知缺口）+ **附录 B**（I2 S2 适配器裁决与偏差：`ValidationReport` 升格为 5 字段、pandas 是显式依赖、源 SDK 只能惰性导入、符号后缀与指数歧义、两处“安静的事故”（手/股、百分号）、`report_type` 必须适配器层映射完，另记两条已知缺口：停牌/涨跌停标记无处可落（契约内部不一致）、龙虎榜/资金流向无标准 schema）+ **附录 C**（I2 S3 落库侧裁决与偏差：`DataStoreError`(DATA_008) 属实现侧新增异常码、假连接与真库的效力边界、`PsycopgConnection` 的复用与事务语义）。**手写契约，没有 `.docx`** ⇒ 可原地编辑，不进 C2 的 `ADDENDA` |
@@ -63,6 +63,8 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 | `tests/test_data_center_store.py` | I2 S3 的落库侧回归测试 29 条：读必须按 `data_version` 过滤、窗口闭区间、upsert 的三条分支（新插入 / 同值不写 / 异值抛 `IngestConflictError`）与并发抢写、异常不许二次包装、驱动必须惰性导入。**一律不连库**：假连接只能证明「发出去的语句/参数是什么」，不能证明 PostgreSQL 接受它 —— 后者只有容器通道能证，两者不得互相冒充（DC 契约附录 C） |
 | `tests/test_backtest_db_feed.py` | I2 S3 **后半**的端到端回归测试 10 条：引擎只吃 `DataCenter.as_of()` 产出的 `DataFeed`、报告里的 `data_version` 必须是存储层版本且空版本必须抛 `DataVersionError`、`as_of` 之后的行必须被拒、存储层的 `Decimal` 必须在边界处收成 `float`。它守的是一条**缝**：S3 前半（落库）与后半（引擎）各自的用例都看不见对方那一侧，两边各自全绿不等于接起来能跑（实测当场咬出 3 个真缺陷） |
 | `tests/fixtures/sample_prices.csv` | 回归测试与可复现性门禁共用的小样本行情 |
+| `tests/test_risk_engine.py` | I3 前置的风控引擎本体回归测试 67 条（60 个测试函数，其中一条参数化出 8 组合）：规则装载与阈值校验（`RATIO` 不许写成百分数、全局规则缺一不可）、四层作用域优先级、`check()` 零 IO 且可重入、熔断与重启后峰值仍在、`KillSwitch` 没有一键清仓、阈值变更的收紧/放宽（放宽未确认转 PENDING）、LKG 回退与 `RISK_011`。它守的是**引擎**，看不见回测接线（那条缝由下一行守） |
+| `tests/test_backtest_risk_gate.py` | I3 的端到端回归测试 12 条：闸门**默认关闭**（不接线就不拦，I1 口径不变）、接上后每单必过一遍、缩到 0 股＝`REJECT`（不是 REDUCE）、`KillSwitch` 触发后**进市场的订单为 0**、「阈值全放宽 ≡ 不接闸门」这条等价关系、统计**不进**回测报告。含一条把 `_strategy_equity` 的**符号 bug** 钉死的用例（满仓时权益必须为正，否则假回撤→误熔断，症状是「第三笔单莫名被拒」） |
 | `.github/workflows/ci.yml` | 只两条 `run:`（`pytest -q` 与 `run_all_gates.py`），**禁止 `|| true` 吞退出码**；2026-09-24 起已在 GitHub 上真跑（`origin` 公开）—— 首次真跑抓到的环境依赖判据已修 |
 | `.venv/` | 仓库内虚拟环境（只装了 pytest）；**不入库**（`.gitignore`） |
 
@@ -100,7 +102,7 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 | `tools/verify_backtest_reproducibility.py` | 回测可复现性：同种子两次跑 `deterministic` 段逐字节一致、换种子必须真的改变、样本非空、段结构合规、入库证据不可是过期快照（R1~R5）；**默认只读**，重录证据要显式 `--record` |
 | `tools/verify_contract_signature.py` | 契约签名与实现**双向**一致（S1~S7）+ 未登记成员 / 未实现缺口清单；机器可读投影是 `tools/contract-signature-manifest.json` |
 | `tools/contract-signature-manifest.json` | 契约签名的机器可读投影（`classes` / `impl_only` / `non_normative_blocks` / `not_implemented` / `extras`）。`impl_only` 是**只有实现、契约没写**的类（如数据源适配器三角色），只能做反向漂移检查 |
-| `tools/pytest_mutation_check.py` | 把实现逐处改坏，验证 `tests/test_backtest_slice.py` 真的会红（**不是门禁**：它验证的是测试，且慢） |
+| `tools/pytest_mutation_check.py` | 把实现逐处改坏，验证基线四套件（`tests/test_backtest_slice.py` / `tests/test_data_center_store.py` / `tests/test_backtest_db_feed.py` / `tests/test_backtest_risk_gate.py`）真的会红（**不是门禁**：它验证的是测试，且慢。2026-09-24 实测 28 条样本：24 条变异全被抓、3 条 CONTROL、1 条 ENV-LIMIT） |
 | `tools/pytest-mutation-report.txt` | 上一条的逐变异证据 —— **快照**，改实现或改测试后作废 |
 | `.rounds/i1/` | I1 可复现性门禁的证据样本（同种子两份 + 换种子一份，共三份）—— 由 `--record` 显式重录，**跑门禁不会改它们** |
 | `tools/ci_dryrun.py` | 在本地把 CI 的两条命令真跑一遍 + 两次红→绿往返（含清 `__pycache__`），写 `tools/ci-dryrun-report.txt`。**不是门禁**（需 .venv） |
@@ -181,11 +183,11 @@ python tools/falsify_smoke.py            # 证伪那两份绿（逐条放宽约�
 其后仍是每个迭代一个提交；**当前提交数与 HEAD 一律现取 `git log --oneline`，不要在上面写死数字**
 （写死的数字每次提交都会过期，本项目已经在「过时计数」上踩过两次）。
 **I0 的「可回滚」与「可运行」两半都已交付，I1 又在其上打了第一条竖切，I2 S1 加厚了 PIT / `as_of` 边界层，I2 S2 把采集侧适配器接上、I2 S3 前半把落库侧读写接上、S3 后半让引擎改读 `as_of()` 产出的 feed**：
-`.venv` + pytest（数量**现取** `python -m pytest -q`；2026-09-24 I2 S3 后半实测 `114 passed` = 骨架 3 + 竖切 22 + PIT 18 + 适配器 32 + 落库侧 29 + 端到端接线 10）、
+`.venv` + pytest（数量**现取** `python -m pytest -q`；2026-09-24 I3 实测 `193 passed` = 骨架 3 + 竖切 22 + PIT 18 + 适配器 32 + 落库侧 29 + 端到端接线 10 + 风控引擎 67 + 风控闸门 12）、
 `pyproject.toml`（`dependencies = ["pandas>=2.0"]` —— S2 起**不再是空数组**，理由见 §1；源 SDK 在 `[datasources]` extra 里；
 Psycopg 驱动同理：`pgstore.py` 里**惰性导入**，本机 `.venv` 并未装它）、
 `quanauto/` 包（13 个实现模块，入口 `quanauto.cli`）、
-`tests/`（骨架自检 3 条 + 竖切回归 22 条 + PIT 回归 18 条 + 适配器回归 32 条 + 落库侧回归 29 条 + 端到端接线回归 10 条）、`.github/workflows/ci.yml`。
+`tests/`（骨架自检 3 条 + 竖切回归 22 条 + PIT 回归 18 条 + 适配器回归 32 条 + 落库侧回归 29 条 + 端到端接线回归 10 条 + 风控引擎回归 67 条 + 风控闸门回归 12 条）、`.github/workflows/ci.yml`。
 **I2 仍远未完成**：S1 交付 PIT 边界层、S2 交付采集侧适配器、S3 前半交付落库侧读写、S3 后半让回测改读 `as_of()` 产出的 feed；但**真实数据源从未联网联调**（源列名映射只在假源上验过），
 复权因子也仍恒为 1.0（已知缺口，DC 契约附录 A 记着、附录 B 复述并给出关闭条件）——
 `docs/迭代计划.md` 里 I2 的「产物」行**没有打勾**是**如实**，不是漏填。

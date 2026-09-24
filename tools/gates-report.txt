@@ -15,8 +15,8 @@ GATE risk-config (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 风控契约 §3.6 与 db/risk_control.sql 与 smoke.sql 三方一致
 argv: tools/verify_risk_config.py
 ------------------------------------------------------------------------------
-CRLF-normalised: contract=52236 bytes, sql=14075 bytes, smoke=21925 bytes
-extracted: seed_rows=6 ddl_tables=9 spec_rows=6 contract_table_refs=13 required_constraints=14 covered_by_smoke=14
+CRLF-normalised: contract=58956 bytes, sql=14075 bytes, smoke=21925 bytes, specs=71393 bytes
+extracted: seed_rows=6 ddl_tables=9 spec_rows=6 rule_specs=6 contract_table_refs=13 required_constraints=14 covered_by_smoke=14
 verdict: PASS (0 issue(s))
 
 ==============================================================================
@@ -54,8 +54,8 @@ GATE iteration-plan (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 迭代计划里每个标「已交付」的迭代都引用了一条真实存在的证据路径
 argv: tools/verify_iteration_plan.py
 ------------------------------------------------------------------------------
-CRLF-normalised: plan=29396 bytes (迭代计划.md)
-extracted: iterations=5 delivered=2 dod_sections=5
+CRLF-normalised: plan=30350 bytes (迭代计划.md)
+extracted: iterations=5 delivered=3 dod_sections=5
 verdict: PASS (0 issue(s))
 NOTE: this gate checks the plan is internally well-formed and that no completion claim dangles. It cannot judge whether an iteration was actually delivered -- someone still has to open the cited evidence file.
 

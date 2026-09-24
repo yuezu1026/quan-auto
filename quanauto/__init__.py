@@ -4,6 +4,9 @@
 I2 的 S1（PIT / `as_of` 边界层，`quanauto/datacenter.py`）、S2（采集侧源适配器，
 `quanauto/datasources.py`）与 S3（落库侧 `quanauto/pgstore.py` + 引擎改读 `as_of()` 产出的
 feed）已落地，**但 I2 未关闭** —— 真实数据源**从未联网联调**，复权因子仍恒 1.0。
+I3（风控真正介入交易）已落地两条线：`quanauto/risk.py` 的风控引擎本体，以及
+`BacktestEngine.attach_risk_engine()` 这条**默认关闭**的接线 —— 不接引擎时下单路径与 I1
+逐一相同，接了之后每单在下单前必经 `RiskEngine.check()`。
 迭代边界以 `docs/迭代计划.md` 为准，别把 S3 读成 I2 收工。
 
 实现分布在本包的各模块里，入口是 `quanauto.cli`。

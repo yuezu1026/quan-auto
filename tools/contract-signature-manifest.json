@@ -394,15 +394,17 @@
         "_strategy_version": ["self"],
         "add_datafeed": ["self", "symbol", "datafeed"],
         "add_strategy": ["self", "strategy", "capital", "params"],
+        "attach_risk_engine": ["self", "risk_engine"],
         "export_report": ["self", "path"],
         "get_result": ["self"],
+        "risk_summary": ["self"],
         "run": ["self"],
         "run_partial": ["self", "start_date", "end_date"],
         "set_broker": ["self", "broker"],
         "stop": ["self"],
         "validate_no_leakage": ["self"]
       },
-      "reason": "契约用项目符号逐条列出它的方法，不是可解析的类块，所以只能按实现侧登记：只查「清单记的成员还在不在、参数还对不对」，新增公有方法不判红。",
+      "reason": "契约用项目符号逐条列出它的方法，不是可解析的类块，所以只能按实现侧登记：只查「清单记的成员还在不在、参数还对不对」，新增公有方法不判红。attach_risk_engine / risk_summary 是 I3 加的两个：前者是风控闸门唯一的接线入口（参数名改了，接线方静默接不上就回到无风控），后者是运行统计的唯一读取点（字段改了，报告/测试的取值会静默变空）。",
       "source": "quanauto/engine.py"
     },
     "BarStore": {
@@ -598,6 +600,61 @@
       },
       "reason": "契约 §3.7 把 PITGuard 写成类块，但没写 record_access 之外的成员；按实现侧登记，保证第二层防线（逐行记录 + 越界即抛）的入口签名不会漂移。",
       "source": "quanauto/datacenter.py"
+    },
+    "RiskEngine": {
+      "extras": [],
+      "impl_fields": null,
+      "impl_params": {
+        "__init__": [
+          "self",
+          "store",
+          "config",
+          "*",
+          "kill_switch",
+          "next_trading_day"
+        ],
+        "apply_change": ["self", "change"],
+        "apply_pending": ["self", "as_of"],
+        "check": ["self", "request"],
+        "get_breaker_state": ["self", "breaker_key"],
+        "get_effective_rule": [
+          "self",
+          "rule_id",
+          "account_id",
+          "strategy_id",
+          "symbol"
+        ],
+        "get_rule_version": ["self"],
+        "get_run_state": ["self"],
+        "health": ["self"],
+        "is_watchdog_running": ["self"],
+        "load": ["self"],
+        "persist_state": ["self", "force"],
+        "reload": ["self"],
+        "resume_breaker": ["self", "breaker_key", "operator", "reason"],
+        "set_blacklist": ["self", "symbols"],
+        "start_watchdog": ["self"],
+        "stop_watchdog": ["self"],
+        "trip_breaker": ["self", "breaker_key", "reason"],
+        "write_lkg_cache": ["self", "path"]
+      },
+      "reason": "风控层契约（`智能量化交易平台-风控层接口契约文档.md` §3.1）里有 `class RiskEngine` 类块，但那份文档**不是本清单的 `contract`**（清单只对主契约逐字核对），所以只能按实现侧登记。登记的是 I3 实际接线用到的那一面：`__init__` 的 `kill_switch` 是关键字参数（名字写错＝接线静默接不上，回到无开关状态），`load` / `get_rule_version` / `check` / `get_run_state` / `health` 是回测闸门每根 bar 都在走的几个，`apply_change` + 熔断三件套是运维面。注意 impl_only 这条登记只查「记下来的成员还在、参数没变」：**新增公有方法不判红**；六个全局规则的 id/单位/方向/默认值由 `verify_risk_config.py` 的 C16 单独盯着（那一条比这里细，且它读的是 `RULE_SPECS` 字面量）。",
+      "source": "quanauto/risk.py"
+    },
+    "KillSwitch": {
+      "extras": [],
+      "impl_fields": null,
+      "impl_params": {
+        "__init__": ["self", "store", "state_path"],
+        "activate": ["self", "reason", "operator"],
+        "deactivate": ["self", "operator", "reason", "confirmation"],
+        "emergency_flatten": ["self", "reason", "operator"],
+        "get_state": ["self"],
+        "is_active": ["self"],
+        "load_state": ["cls", "state_path"]
+      },
+      "reason": "风控层契约 §3.4.1 有 `class KillSwitch` 类块，同样不属于本清单的 `contract`，按实现侧登记。它是 I3 DoD 里「可人工触发、阻断后续下单」的另一半：`is_active` 是 `RiskEngine.check()` 唯一读的成员（改名的后果是开关拉起来也不生效，而报告里看不出），`activate` 的参数是触发入口，`load_state` 是跨重启恢复的唯一入口。与 RiskEngine 同一条只查「成员还在、参数没变」，不查行为；行为由 `tests/test_backtest_risk_gate.py` 的两个 kill_switch 用例守着。",
+      "source": "quanauto/risk.py"
     },
     "SessionMode": {
       "extras": [],

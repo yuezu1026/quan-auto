@@ -10,6 +10,11 @@ What it protects against (in order of how much pain they cause):
                          must fire strictly earlier than the lifecycle retire gate).
   * contract/DDL drift -- the default table in the contract no longer matches the
                          seed rows in db/risk_control.sql.
+  * code/contract drift -- quanauto/risk.py carries its OWN copy of the six
+                         rule_ids, units, directions and default thresholds. Edit
+                         one number there and every other check stays green while
+                         the running engine enforces a value the contract never
+                         authorised. C16 closes that hole.
   * D7/D8 prerequisites -- the breaker-state / equity-peak tables going missing,
                          which would silently disable the drawdown breaker.
   * incomplete migration -- MySQL-only syntax (backticks, ENGINE=InnoDB,
@@ -147,6 +152,23 @@ SPEC_ROW_RE = re.compile(
     re.MULTILINE,
 )
 
+# quanauto/risk.py -- the implementation's own copy of the registry:
+#     RULE_SPECS: Tuple[RuleSpec, ...] = (
+#         RuleSpec(
+#             "max_position_pct", RuleTypeEnum.MAX_POSITION_PCT, RuleUnitEnum.RATIO,
+#             TighteningDirectionEnum.DECREASE, 0.10, "单票仓位上限（…）",
+#         ),
+#     )
+# The `\n\)` tail is what keeps the block from running into whatever comes next:
+# the entries are all indented, the closing paren is not.
+RULE_SPECS_BLOCK_RE = re.compile(r'RULE_SPECS\b[^=\n]*=\s*\((.*?)\n\)', re.DOTALL)
+RULE_SPECS_ENTRY_RE = re.compile(
+    r'RuleSpec\(\s*"([a-z][a-z0-9_]*)"\s*,\s*RuleTypeEnum\.[A-Z0-9_]+\s*,\s*'
+    r'RuleUnitEnum\.(RATIO|COUNT|ABSOLUTE)\s*,\s*'
+    r'TighteningDirectionEnum\.(DECREASE|INCREASE)\s*,\s*([0-9]+(?:\.[0-9]+)?)\s*,',
+    re.DOTALL,
+)
+
 # | `risk_rule` | duty | writer |
 TABLE_LIST_ROW_RE = re.compile(r"^\|\s*`([a-z][a-z0-9_]*)`\s*\|", re.MULTILINE)
 
@@ -195,6 +217,26 @@ def extract_spec_rows(contract_text):
     return spec
 
 
+def extract_rule_specs(specs_text):
+    """Return the same shape as extract_spec_rows(), but from the implementation.
+
+    Parsed with a regex instead of imported on purpose: this gate must stay runnable
+    in a bare checkout (no venv, no install), and an import would mean a syntax error
+    in risk.py silently turns C16 -- and only C16 -- into a no-op.
+    """
+    block = RULE_SPECS_BLOCK_RE.search(specs_text)
+    if not block:
+        return {}
+    specs = {}
+    for m in RULE_SPECS_ENTRY_RE.finditer(block.group(1)):
+        specs[m.group(1)] = {
+            'unit': m.group(2),
+            'direction': m.group(3),
+            'default': float(m.group(4)),
+        }
+    return specs
+
+
 def extract_contract_tables(contract_text):
     """Backticked first-column names from the section 3.6.1 table listing."""
     names = []
@@ -220,13 +262,14 @@ def extract_table_bodies(sql_text):
     return bodies
 
 
-def run_checks(sql_text, contract_text, smoke_text):
+def run_checks(sql_text, contract_text, smoke_text, specs_text):
     """Run every check independently. Returns (issues, stats).
 
     smoke_text is the content of db/risk_control.smoke.sql. It is a required
     argument, not an optional one: a defaulted argument would silently turn C15
     into a check that runs only in main() and never in --selftest, i.e. exactly the
-    kind of detector that can never be seen to be broken.
+    kind of detector that can never be seen to be broken. specs_text (the content of
+    quanauto/risk.py) is required for the same reason -- it feeds C16.
     """
     issues = []
     stats = {}
@@ -242,12 +285,14 @@ def run_checks(sql_text, contract_text, smoke_text):
     seed_rows = extract_seed_rows(sql_text)
     ddl_tables = CREATE_TABLE_RE.findall(sql_text)
     spec_rows = extract_spec_rows(contract_text)
+    rule_specs = extract_rule_specs(specs_text)
     contract_tables = extract_contract_tables(contract_text)
     table_bodies = extract_table_bodies(sql_text)
 
     stats['seed_rows'] = len(seed_rows)
     stats['ddl_tables'] = len(ddl_tables)
     stats['spec_rows'] = len(spec_rows)
+    stats['rule_specs'] = len(rule_specs)
     stats['contract_table_refs'] = len(contract_tables)
     stats['table_bodies'] = len(table_bodies)
 
@@ -263,6 +308,10 @@ def run_checks(sql_text, contract_text, smoke_text):
     if not spec_rows:
         fail('GATE', 'extracted 0 registry rows from contract section 3.1.1 '
                      '-- contract/DDL consistency checks would pass vacuously')
+    if not rule_specs:
+        fail('GATE', 'extracted 0 RuleSpec entries from quanauto/risk.py -- C16 '
+                     'would compare two empty registries and report a clean run, '
+                     'leaving the code/contract drift hole wide open')
     if not contract_tables:
         fail('GATE', 'extracted 0 table references from contract section 3.6.1 '
                      '-- persistence coverage checks would pass vacuously')
@@ -370,6 +419,35 @@ def run_checks(sql_text, contract_text, smoke_text):
                        "later" % (strat_spec['default'], acct_spec['default']))
 
     # ------------------------------------------------------------------
+    # C16: the implementation carries its own copy of the registry
+    # (quanauto/risk.py RULE_SPECS). It must agree with the contract field by field.
+    # Everything else in this file checks the DDL and the contract against each
+    # other; without C16 the code could enforce 0.12 for a rule the contract calls
+    # 0.10 and remain green -- a drift that only surfaces as "the breaker fired at a
+    # number nobody agreed on".
+    # ------------------------------------------------------------------
+    for rule_id in sorted(set(rule_specs) - set(spec_rows)):
+        fail('C16', "quanauto/risk.py defines '%s', which contract 3.1.1 does not "
+                    "list -- an implementation-only rule bypasses the registry" % rule_id)
+    for rule_id in sorted(set(spec_rows) - set(rule_specs)):
+        fail('C16', "contract 3.1.1 lists '%s', which quanauto/risk.py does not "
+                    "define -- the contract would promise a guard that is not wired "
+                    "up" % rule_id)
+
+    for rule_id in sorted(set(rule_specs) & set(spec_rows)):
+        impl, spec = rule_specs[rule_id], spec_rows[rule_id]
+        if impl['unit'] != spec['unit']:
+            fail('C16', "unit drift for '%s': risk.py=%s, contract=%s"
+                        % (rule_id, impl['unit'], spec['unit']))
+        if impl['direction'] != spec['direction']:
+            fail('C16', "tightening direction drift for '%s': risk.py=%s, contract=%s "
+                        "-- a flipped direction turns a relaxation guard into its "
+                        "opposite" % (rule_id, impl['direction'], spec['direction']))
+        if abs(impl['default'] - spec['default']) > 1e-12:
+            fail('C16', "default threshold drift for '%s': risk.py=%s, contract=%s"
+                        % (rule_id, impl['default'], spec['default']))
+
+    # ------------------------------------------------------------------
     # C9 / C10: every contract-declared table must exist in the DDL, and the
     # safety-critical ones must never go missing.
     # ------------------------------------------------------------------
@@ -467,8 +545,9 @@ def selftest(root):
     contract_path = os.path.join(root, 'docs', '智能量化交易平台-风控层接口契约文档.md')
     sql_path = os.path.join(root, 'db', 'risk_control.sql')
     smoke_path = os.path.join(root, 'db', 'risk_control.smoke.sql')
+    specs_path = os.path.join(root, 'quanauto', 'risk.py')
 
-    for path in (contract_path, sql_path, smoke_path):
+    for path in (contract_path, sql_path, smoke_path, specs_path):
         if not os.path.exists(path):
             print('SELFTEST FAIL: missing %s' % path)
             return 1
@@ -476,13 +555,15 @@ def selftest(root):
     sql = read_text(sql_path)
     contract = read_text(contract_path)
     smoke = read_text(smoke_path)
+    specs = read_text(specs_path)
 
     ok = True
 
     # ---- POSITIVE CONTROL: the real files must be clean. -------------------
-    issues, stats = run_checks(sql, contract, smoke)
-    print('  [positive ] real files        -> issues=%d (extracted seed=%d ddl=%d spec=%d)'
-          % (len(issues), stats['seed_rows'], stats['ddl_tables'], stats['spec_rows']))
+    issues, stats = run_checks(sql, contract, smoke, specs)
+    print('  [positive ] real files        -> issues=%d (extracted seed=%d ddl=%d spec=%d impl=%d)'
+          % (len(issues), stats['seed_rows'], stats['ddl_tables'], stats['spec_rows'],
+             stats['rule_specs']))
     if issues:
         ok = False
         for code, msg in issues:
@@ -497,7 +578,7 @@ def selftest(root):
         print('  SELFTEST SETUP FAIL: NEG1 could not strip the seed block')
         ok = False
     else:
-        issues, _ = run_checks(no_seed, contract, smoke)
+        issues, _ = run_checks(no_seed, contract, smoke, specs)
         codes = set(c for c, _ in issues)
         hit = 'GATE' in codes and 'C3' in codes
         print('  [negative1] seed stripped     -> issues=%d codes=%s %s'
@@ -512,7 +593,7 @@ def selftest(root):
     if bad_unit is None:
         ok = False
     else:
-        issues, _ = run_checks(bad_unit, contract, smoke)
+        issues, _ = run_checks(bad_unit, contract, smoke, specs)
         codes = set(c for c, _ in issues)
         hit = 'C4' in codes and 'C5' in codes
         print('  [negative2] ratio 0.10 -> 10  -> issues=%d codes=%s %s'
@@ -524,7 +605,7 @@ def selftest(root):
     if bad_gate is None:
         ok = False
     else:
-        issues, _ = run_checks(sql, bad_gate, smoke)
+        issues, _ = run_checks(sql, bad_gate, smoke, specs)
         codes = set(c for c, _ in issues)
         hit = 'C5' in codes and 'C7' in codes
         print('  [negative3] contract 0.15->0.25 -> issues=%d codes=%s %s'
@@ -539,7 +620,7 @@ def selftest(root):
     if bad_global is None:
         ok = False
     else:
-        issues, _ = run_checks(bad_global, contract, smoke)
+        issues, _ = run_checks(bad_global, contract, smoke, specs)
         codes = set(c for c, _ in issues)
         hit = 'C3' in codes
         print('  [negative4] GLOBAL -> STRATEGY -> issues=%d codes=%s %s'
@@ -554,7 +635,7 @@ def selftest(root):
     if bad_tbl is None:
         ok = False
     else:
-        issues, _ = run_checks(bad_tbl, contract, smoke)
+        issues, _ = run_checks(bad_tbl, contract, smoke, specs)
         codes = set(c for c, _ in issues)
         hit = 'C10' in codes and 'C9' in codes
         print('  [negative5] peak table gone  -> issues=%d codes=%s %s'
@@ -571,7 +652,7 @@ def selftest(root):
     if bad_my is None:
         ok = False
     else:
-        issues, _ = run_checks(bad_my, contract, smoke)
+        issues, _ = run_checks(bad_my, contract, smoke, specs)
         codes = set(c for c, _ in issues)
         hit = 'C13' in codes
         print('  [negative6] backtick back    -> issues=%d codes=%s %s'
@@ -586,7 +667,7 @@ def selftest(root):
     if bad_guard is None:
         ok = False
     else:
-        issues, _ = run_checks(bad_guard, contract, smoke)
+        issues, _ = run_checks(bad_guard, contract, smoke, specs)
         codes = set(c for c, _ in issues)
         hit = 'C14' in codes
         print('  [negative7] ratio guard gone -> issues=%d codes=%s %s'
@@ -603,7 +684,7 @@ def selftest(root):
     if bad_other is None:
         ok = False
     else:
-        issues, _ = run_checks(bad_other, contract, smoke)
+        issues, _ = run_checks(bad_other, contract, smoke, specs)
         codes = set(c for c, _ in issues)
         hit = 'C14' in codes
         print('  [negative8] breaker CHECK gone -> issues=%d codes=%s %s'
@@ -622,14 +703,61 @@ def selftest(root):
     if bad_smoke is None:
         ok = False
     else:
-        issues, _ = run_checks(sql, contract, bad_smoke)
+        issues, _ = run_checks(sql, contract, bad_smoke, specs)
         codes = set(c for c, _ in issues)
         hit = 'C15' in codes
         print('  [negative9] smoke test gap -> issues=%d codes=%s %s'
               % (len(issues), sorted(codes), 'OK' if hit else 'MISSED'))
         ok = ok and hit
 
-    print('SELFTEST %s' % ('OK: all 9 negative controls fire, clean sample stays clean'
+    # ---- NEGATIVE CONTROL 10: implementation registry drift (C16). --------
+    # The implementation keeps its own copy of the six thresholds. Change one there
+    # and, without C16, every other check stays green while the engine enforces 0.12
+    # for a rule the contract calls 0.10.
+    bad_impl = _mutate(specs,
+                       'TighteningDirectionEnum.DECREASE, 0.10, "单票仓位上限',
+                       'TighteningDirectionEnum.DECREASE, 0.12, "单票仓位上限',
+                       'NEG10')
+    if bad_impl is None:
+        ok = False
+    else:
+        issues, _ = run_checks(sql, contract, smoke, bad_impl)
+        codes = set(c for c, _ in issues)
+        hit = 'C16' in codes
+        print('  [negative10] risk.py 0.10->0.12 -> issues=%d codes=%s %s'
+              % (len(issues), sorted(codes), 'OK' if hit else 'MISSED'))
+        ok = ok and hit
+
+    # ---- NEGATIVE CONTROL 11: a renamed rule in the implementation (C16). --
+    # Proves the id-set comparison is not vacuous: a rule that exists in one registry
+    # and not the other must be reported, not quietly intersected away.
+    bad_impl_id = _mutate(specs,
+                          '"max_sector_pct", RuleTypeEnum.MAX_SECTOR_PCT',
+                          '"max_sector_share", RuleTypeEnum.MAX_SECTOR_PCT',
+                          'NEG11')
+    if bad_impl_id is None:
+        ok = False
+    else:
+        issues, _ = run_checks(sql, contract, smoke, bad_impl_id)
+        codes = set(c for c, _ in issues)
+        hit = 'C16' in codes
+        print('  [negative11] rule renamed   -> issues=%d codes=%s %s'
+              % (len(issues), sorted(codes), 'OK' if hit else 'MISSED'))
+        ok = ok and hit
+
+    # ---- NEGATIVE CONTROL 12: C16's own vacuity guard. ---------------------
+    # Feed it a source with no RULE_SPECS block at all. If C16 were wired up to
+    # compare two empty registries it would print a perfect "0 issues" -- the exact
+    # failure mode this whole gate exists to prevent, applied to the gate itself.
+    no_specs = 'GLOBAL_RULE_IDS = ()\n'
+    issues, _ = run_checks(sql, contract, smoke, no_specs)
+    codes = set(c for c, _ in issues)
+    hit = 'GATE' in codes
+    print('  [negative12] no RULE_SPECS  -> issues=%d codes=%s %s'
+          % (len(issues), sorted(codes), 'OK' if hit else 'MISSED'))
+    ok = ok and hit
+
+    print('SELFTEST %s' % ('OK: all 12 negative controls fire, clean sample stays clean'
                            if ok else 'FAIL'))
     return 0 if ok else 1
 
@@ -645,8 +773,9 @@ def main():
     contract_path = os.path.join(root, 'docs', '智能量化交易平台-风控层接口契约文档.md')
     sql_path = os.path.join(root, 'db', 'risk_control.sql')
     smoke_path = os.path.join(root, 'db', 'risk_control.smoke.sql')
+    specs_path = os.path.join(root, 'quanauto', 'risk.py')
 
-    for path in (contract_path, sql_path, smoke_path):
+    for path in (contract_path, sql_path, smoke_path, specs_path):
         if not os.path.exists(path):
             print('GATE FAIL: missing input %s' % path)
             sys.exit(1)
@@ -654,17 +783,18 @@ def main():
     sql = read_text(sql_path)
     contract = read_text(contract_path)
     smoke = read_text(smoke_path)
+    specs = read_text(specs_path)
 
-    print('CRLF-normalised: contract=%d bytes, sql=%d bytes, smoke=%d bytes'
+    print('CRLF-normalised: contract=%d bytes, sql=%d bytes, smoke=%d bytes, specs=%d bytes'
           % (len(contract.encode('utf-8')), len(sql.encode('utf-8')),
-             len(smoke.encode('utf-8'))))
+             len(smoke.encode('utf-8')), len(specs.encode('utf-8'))))
 
-    issues, stats = run_checks(sql, contract, smoke)
+    issues, stats = run_checks(sql, contract, smoke, specs)
 
-    print('extracted: seed_rows=%d ddl_tables=%d spec_rows=%d contract_table_refs=%d '
-          'required_constraints=%d covered_by_smoke=%d'
+    print('extracted: seed_rows=%d ddl_tables=%d spec_rows=%d rule_specs=%d '
+          'contract_table_refs=%d required_constraints=%d covered_by_smoke=%d'
           % (stats['seed_rows'], stats['ddl_tables'], stats['spec_rows'],
-             stats['contract_table_refs'], len(REQUIRED_CONSTRAINTS),
+             stats['rule_specs'], stats['contract_table_refs'], len(REQUIRED_CONSTRAINTS),
              stats.get('smoke_constraints_tested', 0)))
 
     for code, msg in issues:

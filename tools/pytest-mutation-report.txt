@@ -1,5 +1,5 @@
-baseline: 先跑一次干净的全绿（tests/test_backtest_slice.py + tests/test_data_center_store.py + tests/test_backtest_db_feed.py）
-baseline: 全绿 OK (passed=61)
+baseline: 先跑一次干净的全绿（tests/test_backtest_slice.py + tests/test_data_center_store.py + tests/test_backtest_db_feed.py + tests/test_backtest_risk_gate.py）
+baseline: 全绿 OK (passed=73)
 APPLIED M1-account-double-frozen @ quanauto/broker.py (newline='\r\n', tests=tests/test_backtest_slice.py)
   CAUGHT=yes exit=1 failed=2 (test_max_drawdown_is_plausible, test_pending_buy_does_not_change_total_capital)
 APPLIED M2-fill-at-close-not-open @ quanauto/broker.py (newline='\r\n', tests=tests/test_backtest_slice.py)
@@ -51,7 +51,13 @@ APPLIED S14-validation-report-computed-before-the-result-exists @ quanauto/engin
   CAUGHT=yes exit=1 failed=1 (test_engine_runs_end_to_end_over_a_store_backed_feed)
 APPLIED CONTROL-comment-only-db-feed @ quanauto/datacenter.py (newline='\r\n', tests=tests/test_backtest_db_feed.py)
   control OK: 没抓到（本检查器确实会报 caught=NO）
+APPLIED M15-risk-equity-sign-regression @ quanauto/engine.py (newline='\r\n', tests=tests/test_backtest_risk_gate.py)
+  CAUGHT=yes exit=1 failed=3 (test_rerun_resets_counters_but_keeps_rule_version, test_snapshot_equity_counts_floating_value_of_long_position, test_widened_thresholds_reproduce_the_ungated_run)
+APPLIED M16-risk-gate-open-loop @ quanauto/engine.py (newline='\r\n', tests=tests/test_backtest_risk_gate.py)
+  CAUGHT=yes exit=1 failed=9 (test_kill_switch_before_run_keeps_every_order_out_of_market, test_kill_switch_mid_run_blocks_only_subsequent_orders, test_reduce_shrinks_open_order_to_position_cap, test_report_payload_carries_no_risk_fields, test_rerun_resets_counters_but_keeps_rule_version, test_snapshot_equity_counts_floating_value_of_long_position, test_unloaded_engine_refuses_and_nothing_slips_through, test_widened_thresholds_reproduce_the_ungated_run, test_zero_share_reduction_is_a_block_not_a_zero_order)
+APPLIED M17-risk-block-not-recorded @ quanauto/engine.py (newline='\r\n', tests=tests/test_backtest_risk_gate.py)
+  CAUGHT=yes exit=1 failed=2 (test_kill_switch_before_run_keeps_every_order_out_of_market, test_zero_share_reduction_is_a_block_not_a_zero_order)
 NOTE [ENV-LIMIT] S9-driver-imported-eagerly 只在本机验不了，不等于通过；换到装了 psycopg 的环境要重跑
-mutations=21 caught=21 control=3 env_limited=1
+mutations=24 caught=24 control=3 env_limited=1
 report=D:\project-quan\quan-auto\tools\pytest-mutation-report.txt
 verdict: PASS

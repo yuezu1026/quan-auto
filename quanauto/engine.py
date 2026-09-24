@@ -14,7 +14,7 @@ run()
         └─ _bar_handler:
              broker.on_bar(bar_t)      ← 第 t-1 根挂的单在这里按 bar_t.open 成交
              每个策略 on_data(bar_t)   ← 用 bar_t 收盘信息产生信号
-             信号 → Market 单 → broker.submit_order  ← 等第 t+1 根成交
+             信号 → Market 单 → 风控闸门 → broker.submit_order  ← 等第 t+1 根成交
              记一次 AccountSnapshot
  └─ PerformanceAnalyzer.analyze() → 盖请求域字段（策略 id / 版本 / params / duration）
 ```
@@ -27,6 +27,14 @@ run()
    dict 的插入序会跟着文件行序变，那是「换个 CSV 行序结果就变」的根源。
 3. **随机只在 broker 里、且只用 `random.Random(seed)`**。引擎自己不抽随机数。
    默认 `percentage_slippage=0` ⇒ 一条随机数都不抽。
+
+## 风控闸门（I3）默认是**关着的**，且这一点必须能被看见
+
+`attach_risk_engine()` 之后，`_bar_handler` 里唯一那处 `broker.submit_order` 之前必经
+`RiskEngine.check()`（PASS 原样 / REDUCE 缩量 / REJECT、HALT 拦截）。**默认不接**，
+因为契约 §3.1.1 的默认阈值（单票 ≤ 10% 总资产）会把 I1 双均线策略按 90% 建仓的每一单
+都 REDUCE —— 那是风控正常工作的结果，但会让 `.rounds/i1/` 那份逐段比对的复现证据当场
+作废。谁要风控谁显式接；接没接可以从 `result.orders` 里被拦的单和 `risk_summary()` 看出来。
 
 ## 本迭代不做
 
@@ -81,6 +89,7 @@ from .models import (
     ValidationReport,
 )
 from .performance import PerformanceAnalyzer
+from .risk import RiskActionEnum, RiskCheckRequest, RiskEngine, RiskSnapshot
 from .strategies import Strategy
 
 REPORT_SCHEMA = "quanauto.backtest-report/1"
@@ -217,6 +226,16 @@ class BacktestEngine:
         self._rejected: List[Order] = []
         self._window: Optional[Tuple[datetime, datetime]] = None
         self._seed = 0
+        # ── 风控闸门（I3）────────────────────────────────────────────
+        # 默认**不接**（理由见 `attach_risk_engine`）。`_daily_orders` / `_amount_totals`
+        # 只在接了风控时参与判定，但它们**不接也要维护**：一个「没接就没有」的计数器
+        # 会让「接了之后第一单的计数」变成 undefined，而不是 0。
+        self._risk: Optional[RiskEngine] = None
+        self._risk_stats: Dict[str, int] = {}
+        self._risk_blocked: List[Dict[str, Any]] = []
+        self._daily_orders: Dict[str, int] = {}
+        self._amount_totals: Dict[str, Tuple[float, int]] = {}
+        self._reset_risk_run_state()
 
     # ── 注册 ─────────────────────────────────────────────────────────
     def add_datafeed(self, symbol: str, datafeed: DataFeed) -> bool:
@@ -250,6 +269,70 @@ class BacktestEngine:
         handle = StrategyHandle(strategy_id=strategy.strategy_id, initial_capital=float(capital))
         self._strategies.append((strategy, handle))
         return handle
+
+    # ── 风控闸门（I3）────────────────────────────────────────────────
+    def attach_risk_engine(self, risk_engine: RiskEngine) -> None:
+        """把风控引擎接到订单路径上。接上之后每张单在提交前**必经** `RiskEngine.check()`。
+
+        裁决在本引擎里的落法（对应契约 §3.2.1 的四种 action）：
+        PASS 原样提交、REDUCE 按 `adjusted_quantity` 缩量后提交、REJECT / HALT 拦截。
+
+        **为什么默认不接**（这是 I3 里最需要写明的取舍）：契约 §3.1.1 的默认 GLOBAL 阈值是
+        「单票仓位 ≤ 10% 总资产」，而 I1 的双均线策略按 `capital × 0.9` 建仓 —— 一接上，
+        每笔买入都会被 REDUCE 成总资产的 10%。那不是 bug，是风控按契约正常工作，但它会让
+        `.rounds/i1/` 那份逐段比对的复现证据（`verify_backtest_reproducibility.py` 的 R5）
+        当场作废。所以风控是**显式接线**：谁要它谁接。
+
+        接线点只有一个：`_bar_handler` 里 `self._broker.submit_order(order)` 全文只出现一次，
+        闸门就紧在它上面。**不要在别处提交订单**，那会绕过闸门且不留痕。
+
+        `risk_engine` 必须已经 `load()` 过 —— 没加载的引擎会拒绝判定（D4 fail-safe），
+        异常会从 `run()` 冒出来，而不是「悄悄放行」。
+        """
+        if not isinstance(risk_engine, RiskEngine):
+            raise ConfigValidationError(
+                "risk_engine 必须是 RiskEngine，收到 %r" % (type(risk_engine).__name__,)
+            )
+        self._risk = risk_engine
+        self._reset_risk_run_state()
+
+    def risk_summary(self) -> Dict[str, Any]:
+        """风控闸门的统计。没接风控时 `attached=False` —— 「接没接」必须一眼可见。
+
+        刻意**不进回测报告**：报告的 `deterministic` 段是 `.rounds/i1/` 那份被逐段比对的
+        复现证据，往里加字段等于让已交付的证据过期。要问「这一轮过没过风控」，看两处：
+        ① `result.orders` 里 `status=REJECTED` 且 `error_message` 带规则号的单；② 这里。
+
+        `checked` = 经过 `RiskEngine.check()` 的订单数；`passed` = 缩量后仍被提交的订单数
+        （含原样通过的）；`reduced` = 其中真被缩量的；`blocked` = 被拦下没进市场的。
+        """
+        if self._risk is None:
+            return {
+                "attached": False,
+                "rule_version": None,
+                "run_state": None,
+                "checked": 0,
+                "passed": 0,
+                "reduced": 0,
+                "blocked": 0,
+                "blocked_orders": [],
+            }
+        summary: Dict[str, Any] = {
+            "attached": True,
+            "rule_version": self._risk.get_rule_version(),
+            "run_state": self._risk.get_run_state().value,
+            "blocked_orders": list(self._risk_blocked),
+        }
+        summary.update(self._risk_stats)
+        return summary
+
+    def _reset_risk_run_state(self) -> None:
+        """清空**本轮**的风控统计。峰值与熔断状态故意不清 —— 它们归 `RiskEngine` 所有，
+        跨 `run()` / `run_partial()` 保留正是 D7/D8 要的（换段重跑不该把熔断洗掉）。"""
+        self._risk_stats = {"checked": 0, "passed": 0, "reduced": 0, "blocked": 0}
+        self._risk_blocked = []
+        self._daily_orders = {}
+        self._amount_totals = {}
 
     def set_broker(self, broker: SimulatedBroker) -> None:
         """替换撮合器。**契约里没有这个方法**（登记在 manifest 的 `members_extra`）。
@@ -404,6 +487,7 @@ class BacktestEngine:
         self._snapshots = []
         self._rejected = []
         self._result = None
+        self._reset_risk_run_state()
         self._events.clear()
         self._events.start()
         self._events.subscribe(EventType.BAR_EVENT, self._bar_handler)
@@ -432,6 +516,11 @@ class BacktestEngine:
                 order = self._order_from_signal(signal, bar)
                 if order is None:
                     continue
+                if not self._risk_gate(order, bar):
+                    continue
+                # 计数放在提交**之前**：这笔单已经离开风控、进了市场路径，无论撮合器
+                # 收不收，它都算当日的下单行为（口径见 `_daily_order_count`）。
+                self._note_daily_order(bar, order.symbol)
                 try:
                     order_id = self._broker.submit_order(order)
                 except OrderRejectedError as exc:
@@ -480,6 +569,182 @@ class BacktestEngine:
             slippage=0.0,
             error_message=None,
         )
+
+    # ── 风控闸门的实现（I3）──────────────────────────────────────────
+    def _risk_gate(self, order: Order, bar: BarData) -> bool:
+        """订单进撮合器前的闸门。返回 True = 放行（可能已缩量），False = 拦截。
+
+        契约 §3.2.5 的 `passed` 只在 `action == PASS` 时为真，所以**不能用它当放行判据**
+        —— REDUCE 也是「放行」，只是数量要缩。三种 action 在这里的落法：
+
+        * `PASS`   —— 原样提交。
+        * `REDUCE` —— 缩到 `adjusted_quantity` 再提交；缩成 0 股时按拦截处理（0 股订单
+          交给 broker 只会被拒，还会把拒绝原因写成一条误导人的「资金不足」）。
+        * `REJECT` / `HALT` —— 拦截，订单进 `self._rejected`。**不抛异常**：拒单是正常
+          业务事件，与 broker 那边的资金不足/卖超同口径（一次性拒单不该作废整段回测）。
+        """
+        if self._risk is None:
+            return True
+        account = self._broker.get_account()
+        response = self._risk.check(
+            RiskCheckRequest(
+                account_id=account.account_id,
+                strategy_id=order.strategy_id,
+                symbol=order.symbol,
+                side=order.direction,
+                is_open=self._is_open_order(order),
+                quantity=int(order.quantity),
+                price=float(bar.close),
+                snapshot=self._risk_snapshot(account, order.strategy_id, order.symbol, bar),
+            )
+        )
+        self._risk_stats["checked"] += 1
+        if response.action is RiskActionEnum.REDUCE:
+            allowed = int(response.adjusted_quantity)
+            if allowed <= 0:
+                self._record_risk_block(order, bar, response)
+                return False
+            if allowed < order.quantity:
+                order.quantity = allowed
+                self._risk_stats["reduced"] += 1
+            self._risk_stats["passed"] += 1
+            return True
+        if response.action is RiskActionEnum.PASS:
+            self._risk_stats["passed"] += 1
+            return True
+        self._record_risk_block(order, bar, response)
+        return False
+
+    def _record_risk_block(self, order: Order, bar: BarData, response: Any) -> None:
+        """被风控拦下的单走**和 broker 拒单完全相同**的那条路径。
+
+        这样「订单去哪了」永远只有一个答案：`result.orders` 里 `status=REJECTED` 的那些，
+        `error_message` 说明是谁拒的、依据哪条规则。另存一份结构化记录供 `risk_summary()`
+        与测试使用（`rule_ids` 排序去重 —— 报告要能逐字节比）。
+        """
+        order.status = OrderStatus.REJECTED
+        order.error_message = response.message
+        self._rejected.append(order)
+        self._risk_stats["blocked"] += 1
+        self._risk_blocked.append(
+            {
+                "datetime": bar.datetime.isoformat(),
+                "strategy_id": order.strategy_id,
+                "symbol": order.symbol,
+                "side": order.direction.value,
+                "quantity": int(order.quantity),
+                "action": response.action.value,
+                "run_state": response.run_state.value,
+                "rule_ids": sorted({violation.rule_id for violation in response.violations}),
+                "message": response.message,
+            }
+        )
+
+    def _is_open_order(self, order: Order) -> bool:
+        """这张单是开仓还是平仓（`RiskCheckRequest.is_open`）。
+
+        判据只有一条：**卖出且手里有这个标的的持仓** ⇒ 平仓；其余（买入、卖出但无持仓）
+        算开仓。把「卖出无持仓」也归到开仓是刻意偏严的：在 broker 那里它会被「卖超」拒掉，
+        但在风控眼里它是「要建立负暴露」的开仓方向动作，而开仓受的约束更多 ——
+        判断错时宁可更严，不可更松。
+        """
+        if order.direction is Direction.SELL:
+            position = self._broker.get_positions().get(order.symbol)
+            return position is None or position.quantity <= 0
+        return True
+
+    def _risk_snapshot(self, account: Any, strategy_id: str, symbol: str, bar: BarData) -> RiskSnapshot:
+        """按契约 §3.2.3 组装快照。每个字段都是**实测值**，缺的那一个如实留空。
+
+        * `symbol_avg_daily_amount` 用**已见 K 线**的成交额均值（含当根）：全样本均值要用到
+          还没发生的成交额，那是未来函数；至今均值在第 1 根上就等于当根成交额。
+        * `position_value_by_sector` **留空**：行业归类是契约 §四 明说的未定缺口，编一个
+          （比如按代码前缀猜行业）会让 `max_sector_pct` 在错的数据上做决定。留空时该规则
+          给 WARNING 不拦单（`risk.py` 里那条分支写了理由）。
+        """
+        positions = self._broker.get_positions()
+        return RiskSnapshot(
+            total_asset=float(account.total_capital),
+            available_capital=float(account.available_capital),
+            strategy_equity=self._strategy_equity(strategy_id, positions, bar),
+            symbol_avg_daily_amount=self._symbol_amount_avg(bar),
+            trading_date=bar.datetime.date().isoformat(),
+            position_value_by_symbol={name: float(p.market_value) for name, p in positions.items()},
+            daily_trade_count_by_symbol={symbol: self._daily_order_count(bar, symbol)},
+        )
+
+    def _strategy_equity(self, strategy_id: str, positions: Dict[str, Any], bar: BarData) -> float:
+        """策略权益 = 该策略分到的本金 + 它的已实现现金流 + 它净持仓的浮动市值。
+
+        为什么不直接用 `account.total_capital`：多策略回测里那是**整账户**权益，拿它当某条
+        策略的权益，会让每条策略的回撤都跟着别人一起动（一条策略亏损触发全体熔断）。
+
+        为什么净持仓要自己累：broker 的持仓是**全局**的（只按 `_trade_owner` 记成交归属），
+        而契约里 `RiskSnapshot.strategy_equity` 是必填字段。与其编一个数，不如把口径写在这里。
+        """
+        capital = 0.0
+        for _strategy, handle in self._strategies:
+            if handle.strategy_id == strategy_id:
+                capital = float(handle.initial_capital)
+                break
+        flow = 0.0
+        net: Dict[str, int] = {}
+        for trade in self._broker.get_trades(strategy_id):
+            gross = float(trade.price) * int(trade.quantity)
+            cost = float(trade.commission) + float(trade.slippage)
+            # **两个符号口径必须分开**，共用一个会算错权益：现金流看「钱的进出」
+            # （买入出钱 ⇒ 负），持仓看「多空方向」（买入是多头 ⇒ 正）。曾经这里只有一个
+            # `sign`，于是多头持仓在 `net` 里记成负数 ⇒ 下面那个 `quantity > 0` 不成立 ⇒
+            # 浮动市值永远加不上来。后果不是少算几个点：满仓时权益直接变成
+            # `capital - 买入金额 - 成本`（实测 90000 - 90060.25 = **-60.25**），
+            # `strategy_drawdown_pct` 因此观测到 1.0007 的假回撤，第一笔正常建仓后
+            # 就把整个策略单元熔断掉（单策略回测里表现为「第三笔单莫名其妙被拒」）。
+            cash_sign = -1 if trade.direction is Direction.BUY else 1
+            flow += cash_sign * gross - cost
+            net[trade.symbol] = net.get(trade.symbol, 0) + (-cash_sign) * int(trade.quantity)
+        floating = 0.0
+        for name, quantity in net.items():
+            position = positions.get(name)
+            # 只加多头（本系统不允许裸卖空：卖出超过持仓会被撮合器拒，
+            # 所以 `net` 正常情况下不会为负；真为负也宁可不加，不加不会凭空夸大权益）。
+            if position is not None and quantity > 0:
+                floating += float(position.current_price) * quantity
+        return capital + flow + floating
+
+    def _symbol_amount_avg(self, bar: BarData) -> float:
+        """标的「至今日均成交额」。
+
+        `bar.amount` 缺列时 `CsvDataFeed` 已用 `close × volume` 折算过（datafeed.py）；
+        这里再兜一次是留给别的 feed 的。算不出均值时**返回 0**，风控那边会因此拒绝这一单
+        （`symbol_avg_daily_amount <= 0` ⇒ 拒绝）—— 这不是退化，是 D4 fail-safe：
+        算不出冲击占比就不该放行。
+        """
+        amount = float(bar.amount or 0.0)
+        if amount <= 0:
+            amount = float(bar.close) * float(bar.volume or 0.0)
+        total, count = self._amount_totals.get(bar.symbol, (0.0, 0))
+        if amount > 0:
+            total += amount
+            count += 1
+        self._amount_totals[bar.symbol] = (total, count)
+        return total / count if count else 0.0
+
+    def _daily_order_count(self, bar: BarData, symbol: str) -> int:
+        """该标的当日**已提交给撮合器**的笔数（契约 §3.1.1：买卖合计）。
+
+        口径说明（契约只写了「单日交易笔数」，没说数到哪一步，这里定死）：数**提交**而不是
+        成交 —— 当日限笔要拦的是下单行为本身，数成交的话，一批注定不成交的单会一路放行；
+        被风控拦下的单**不计**（它没进市场），被资金不足拒的单**计**（它进了市场，只是没成交）。
+        """
+        return int(self._daily_orders.get(self._day_symbol_key(bar, symbol), 0))
+
+    def _note_daily_order(self, bar: BarData, symbol: str) -> None:
+        key = self._day_symbol_key(bar, symbol)
+        self._daily_orders[key] = int(self._daily_orders.get(key, 0)) + 1
+
+    @staticmethod
+    def _day_symbol_key(bar: BarData, symbol: str) -> str:
+        return "%s|%s" % (bar.datetime.date().isoformat(), symbol)
 
     def _data_version(self) -> str:
         """数据版本：报告里用来回答「这轮回测读的是**哪一份**数据」。

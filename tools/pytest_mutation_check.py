@@ -1,8 +1,10 @@
 """变异检查：把 quanauto 的实现逐处改坏，确认对应套件真的会红。
 
-两个目标套件：
-  * `tests/test_backtest_slice.py`（I1 回测切片，实现写在测试之前 —— 先红后绿的顺序证据不在 git 历史里）
+基线跑四个套件（即下面四个常量）：
+  * `tests/test_backtest_slice.py`（I1 回测切片）
   * `tests/test_data_center_store.py`（I2 S3 落库侧）
+  * `tests/test_backtest_db_feed.py`（I2 库喂数据的回测侧）
+  * `tests/test_backtest_risk_gate.py`（I3 风控闸门）
 （本仓库对门禁的同一条纪律：每个自建检查器都要做触发测试；测试套件就是检查器。）
 
 **纪律（每条都对应过一次真实的假绿）**：
@@ -15,8 +17,9 @@
   * `MUTATION` 触发出来的失败必须是**断言/异常**，不能是 `ImportError`/语法错
     （收集阶段就炸掉，等于测试根本没跑）。
 
-**它不进 `run_all_gates.py` 的注册表**：每个变异要跑一次 pytest（本文件 19 处变异），
-慢，且它验证的对象是测试而不是产物契约。手动跑，或改完测试后跑一次。
+**它不进 `run_all_gates.py` 的注册表**：每条样本要跑一次 pytest（2026-09-24 实测 28 条样本：
+24 条变异 + 3 条 CONTROL + 1 条 ENV-LIMIT），慢，且它验证的对象是测试而不是产物契约。
+手动跑，或改完测试后跑一次。
 
 **`env_limit`（一条变异的出口）**：有的缺陷在**本机环境里根本不可能被断言抓住**
 （例：变异把「驱动惰性导入」改成模块顶层拉驱动 —— 本机没装 psycopg，
@@ -37,6 +40,7 @@ PYTHON = os.path.join(ROOT, ".venv", "Scripts", "python.exe")
 TARGET = "tests/test_backtest_slice.py"
 TESTS_STORE = "tests/test_data_center_store.py"
 TESTS_DB_FEED = "tests/test_backtest_db_feed.py"
+TESTS_RISK_GATE = "tests/test_backtest_risk_gate.py"
 REPORT = os.path.join(ROOT, "tools", "pytest-mutation-report.txt")
 
 CONTROL = "MUST-NOT-BE-CAUGHT"
@@ -290,6 +294,41 @@ MUTATIONS = [
         "new": "    # ── 两道防线（MUTATION：只改注释，必须抓不到） ",
         "expect": CONTROL,
     },
+    # ---- I3 风控闸门 ---------------------------------------------------
+    {
+        # 把 `(-cash_sign)` 改回 `cash_sign`，即复原那个真实发生过的符号 bug：
+        # 多头持仓在净持仓表里变负数 ⇒ 浮动市值项永远加不上 ⇒ 满仓时权益为负。
+        "tag": "M15-risk-equity-sign-regression",
+        "tests": TESTS_RISK_GATE,
+        "path": "quanauto/engine.py",
+        "old": "            net[trade.symbol] = net.get(trade.symbol, 0) + (-cash_sign) * int(trade.quantity)\n",
+        "new": "            net[trade.symbol] = net.get(trade.symbol, 0) + cash_sign * int(trade.quantity)\n",
+        # 两条都是实测出来的：符号一错，满仓即假回撤 ⇒ 熔断 ⇒ 第三笔单被拦，
+        # 「放宽阈值 ≡ 不接闸门」这条等价关系当场破裂。
+        "expect": ["test_snapshot_equity_counts_floating_value_of_long_position",
+                   "test_widened_thresholds_reproduce_the_ungated_run"],
+    },
+    {
+        # 闸门空转：`_risk_gate` 无条件放行。这是最危险的退步 ——
+        # 订单照常成交，报告里看不出任何异常，只有风控统计会变成 0。
+        "tag": "M16-risk-gate-open-loop",
+        "tests": TESTS_RISK_GATE,
+        "path": "quanauto/engine.py",
+        "old": "        if self._risk is None:\n            return True\n        account = self._broker.get_account()\n",
+        "new": "        if self._risk is None:\n            return True\n        return True\n        account = self._broker.get_account()\n",
+        "expect": ["test_kill_switch_before_run_keeps_every_order_out_of_market",
+                   "test_reduce_shrinks_open_order_to_position_cap"],
+    },
+    {
+        # 拦截不再进 `_rejected`：订单既没进市场也没留在结果里，直接蒸发。
+        # 报告看起来「什么都没发生」，而口径上必须每一单都有下落。
+        "tag": "M17-risk-block-not-recorded",
+        "tests": TESTS_RISK_GATE,
+        "path": "quanauto/engine.py",
+        "old": "        order.status = OrderStatus.REJECTED\n        order.error_message = response.message\n        self._rejected.append(order)\n",
+        "new": "        order.status = OrderStatus.REJECTED\n        order.error_message = response.message\n",
+        "expect": ["test_kill_switch_before_run_keeps_every_order_out_of_market"],
+    },
 ]
 
 FAILED_RE = re.compile(r"^(FAILED|ERROR) (\S+)::(\w+)")
@@ -359,9 +398,10 @@ def main() -> int:
         say("verdict: FAIL")
         return 2
 
-    # 基线三套件一起跑：基线只要有一处不是全绿，后面的「红」就什么都证明不了。
-    say("baseline: 先跑一次干净的全绿（%s + %s + %s）" % (TARGET, TESTS_STORE, TESTS_DB_FEED))
-    code, names, counts, output = run_pytest([TARGET, TESTS_STORE, TESTS_DB_FEED])
+    # 基线四套件一起跑：基线只要有一处不是全绿，后面的「红」就什么都证明不了。
+    say("baseline: 先跑一次干净的全绿（%s + %s + %s + %s）"
+        % (TARGET, TESTS_STORE, TESTS_DB_FEED, TESTS_RISK_GATE))
+    code, names, counts, output = run_pytest([TARGET, TESTS_STORE, TESTS_DB_FEED, TESTS_RISK_GATE])
     if code != 0 or names:
         say("FINDING [BASELINE] 基线不是全绿（exit=%d, failed=%d）—— 后面的红说明不了任何事"
             % (code, len(names)))
