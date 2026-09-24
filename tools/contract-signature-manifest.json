@@ -676,6 +676,18 @@
       "reason": "契约里没有这一层的类块（契约把「取数」写成 DataCenter 的语义，不写源适配器接口），所以按实现侧登记。它比三个子类更该被登记：这 5 个抽象方法是「新增一种数据源必须实现什么」的全部答案，改一个名字（例如 fetch_financial → fetch_fundamental）会让下游按旧名调用时才炸，而不是在门禁里被提前看见。本类的静态形状由 verify_data_center_adapter.py 的 A0~A10 守着 —— 那个门禁不执行适配器，所以它证明不了「映射出来的数据是对的」，只证明「形状与列名集合对得上」。",
       "source": "quanauto/datasources.py"
     },
+    "TencentAdapter": {
+      "extras": [],
+      "impl_fields": null,
+      "impl_params": {
+        "_default_fetch": ["**kwargs"],
+        "fetch_daily_bar": ["self", "symbols", "start", "end"],
+        "fetch_financial": ["self", "symbols", "period_end"],
+        "fetch_index_members": ["self", "index_code", "as_of_date"]
+      },
+      "reason": "同前面几个源适配器，但它有一条单独的登记理由：**它不在契约 §3.2 那张表里**（表上写的是三个子类），是 2026-09-24 按实测补的日线通道（附录 B16：东财 kline 端点在本机两个 opener 下都拒连，而新浪日线没有成交额列，`dc_daily_bar.amount` 又是 NOT NULL）。登记它就是为了让「表外多出来的这个源」在清单里看得见：它的 fetch_daily_bar 形状与前三个一致，所以「换源/加源不该改下游签名」这条约束对它同样成立（形状一致才使得它是个可替换的 FALLBACK）；而它的取数与分页语义与前三个都不同（源忽略区间左边界，只能从 end 用 count 往回翻页再本地裁剪），签名一变必须有人重看，所以不能并进别人的条目。",
+      "source": "quanauto/datasources.py"
+    },
     "Strategy": {
       "extras": [],
       "impl_fields": null,
@@ -706,7 +718,7 @@
         "source_name": ["self"],
         "validate": ["self", "frame"]
       },
-      "reason": "私有类（名字以下划线开头），它的成员会被 is_public() 过滤掉、不参与公开成员的比对 —— 登记它不是为了公开接口，而是为了它承载的两件事：_call 把源侧的任何异常统一翻译成 SourceAdapterError（漏掉一处，那一处就开始向上抛 ModuleNotFoundError/KeyError/ValueError，而那些类型在上层读起来像「调用方写错了」），以及 validate 的委托（三个子类共用同一套判据）。这类共享骨架改名/删除会让三个子类同时静默失效，所以要单独看着。基类里的 _default_fetch 是抛错占位，真正的实现由子类覆盖。",
+      "reason": "私有类（名字以下划线开头），它的成员会被 is_public() 过滤掉、不参与公开成员的比对 —— 登记它不是为了公开接口，而是为了它承载的两件事：_call 把源侧的任何异常统一翻译成 SourceAdapterError（漏掉一处，那一处就开始向上抛 ModuleNotFoundError/KeyError/ValueError，而那些类型在上层读起来像「调用方写错了」），以及 validate 的委托（各子类共用同一套判据）。这类共享骨架改名/删除会让多个子类同时静默失效，所以要单独看着。基类里的 _default_fetch 是抛错占位，真正的实现由子类覆盖。",
       "source": "quanauto/datasources.py"
     }
   },

@@ -39,6 +39,7 @@ from quanauto.datasources import (
     BaostockAdapter,
     EastMoneyAdapter,
     SourceAdapter,
+    TencentAdapter,
     classify_source_failure,
     normalize_daily_bar,
     normalize_financial,
@@ -934,3 +935,421 @@ def test_fetch_financial_refuses_a_report_whose_type_is_not_registered(
 
     assert caught.value.kind == 'UNSUPPORTED'
     assert called == [], '报表类型登记不上时不该去取数'
+
+
+# ── 腾讯日线：位置数组 + 从 end 回溯分页（离线，本机 HTTP 服务） ──────────────
+# 腾讯**不在契约 §3.2 那张表里**（那张表只有三行：akshare / baostock / 东财），
+# 它是实测出来的第四条通道（附录 B16）：东财的 kline 端点在两个 opener 下都拒连、
+# 新浪只有 6 列**没有成交额**，而 `dc_daily_bar.amount` 是 `NOT NULL` —— 没有成交额的
+# 源补不上这一列（合成 `amount = volume × close` 是造数据，不叫接入）。
+#
+# 它与另外三个源在结构上有一处**本质不同**：响应里没有列名，行是**位置数组**。
+# 于是「位置映射表写的下标对不对」不能靠肉眼核对，只能靠两件事兜住：
+#   ① 单位/口径用**实测过的那一行**做算术复现（下面 `_tencent_row` 就是探针打印出来的
+#      那一行，逐字抄的）；
+#   ② 行宽守卫（位置 8 一旦漂移，会静默读到别的字段而不报错）。
+#
+# 实测到的响应形状（`.rounds/_i2b1-probe-report.txt`，判据 X-amount单位 / X-成交额列位 /
+# X-复权口径 三条全 OK）：
+#   {'code': 0, 'msg': 'ok', 'data': {'sh600000': {'day': [[...11 段...], ...]}}}
+
+
+class _ScriptedHTTP:
+    """本机 HTTP 服务，但**按请求次序换响应体**（分页测试要第二页给出更早的日期）。
+
+    与 `_LocalHTTP` 只差这一处。固定响应的服务测不了翻页：每一页回同一批日期，
+    适配器会判「源没在前进」然后停在原处 —— 那正好是另一条要测的分支，但不是这条。
+    最后一个响应体会被重复使用，免得「多发了一次请求」变成 IndexError 而不是断言失败。
+    """
+
+    def __init__(self, bodies, status: int = 200) -> None:
+        self.requests = []
+        self._bodies = list(bodies)
+        owner = self
+
+        class _Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802 —— 方法名由 BaseHTTPRequestHandler 约定
+                owner.requests.append((self.path, dict(self.headers)))
+                body = owner._bodies.pop(0) if len(owner._bodies) > 1 else owner._bodies[0]
+                payload = body.encode('utf-8')
+                self.send_response(status)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, *args):  # 别把每个请求都打进测试输出
+                pass
+
+        self._server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), _Handler)
+
+    def __enter__(self) -> "_ScriptedHTTP":
+        threading.Thread(target=self._server.serve_forever, daemon=True).start()
+        self.url = 'http://127.0.0.1:%d/ifzqgtimg/appstock/app/newfqkline/get' \
+                   % self._server.server_address[1]
+        return self
+
+    def __exit__(self, *exc) -> bool:
+        self._server.shutdown()
+        self._server.server_close()
+        return False
+
+
+def _tencent_row(trade_date, segments: int = 11) -> list:
+    """探针打印出来的那一行（`2024-01-10`，11 段），只换日期。
+
+    逐字抄实测值而不是自己编一组，是为了让**单位换算**这件事在离线测试里也能复现：
+    222409.00（手）× 100 = 22,240,900 股；14669.59（万元）× 10000 = 146,695,900 元；
+    两者相除 = 6.5958 ∈ [low=6.57, high=6.63] —— 探针的判据就是这个算式。
+    自己编一组数就复现不出来了，而「换算系数写反」只表现为**金额差 100 倍**。
+
+    位置 6 实测是 `{}`、7 是 `'0.08'`、9/10 是 `'0.00'`：**四段都落不进契约 schema**，
+    所以映射表里没有它们（多出来的列不允许跟着产出）。留下它们是刻意的 —— 它们
+    就是「位置 6 被误映射成 amount」时会当场暴露的那批值。
+    """
+    row = [trade_date, '6.61', '6.57', '6.63', '6.57', '222409.00', {}, '0.08',
+           '14669.59', '0.00', '0.00']
+    return row[:segments]
+
+
+def _tencent_envelope(rows, code: str = 'sh600000') -> str:
+    return json.dumps({'code': 0, 'msg': 'ok', 'data': {code: {'day': list(rows)}}})
+
+
+def _open_kline_against(monkeypatch, server) -> str:
+    """把模块级端点指到本机服务上 —— 生产 URL 只在一处，替换也只做一处。"""
+    monkeypatch.setattr(ds, 'TENCENT_KLINE_API', server.url)
+    return server.url
+
+
+def _tencent_params(server):
+    """每个请求的 `param` 值，按请求顺序。"""
+    return [urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)['param'][0]
+            for path, _ in server.requests]
+
+
+def test_tencent_param_is_end_anchored_and_keeps_the_trailing_segment() -> None:
+    """请求串的形状：`sh600000,day,<anchor>,<anchor>,320,` —— **必须是 6 段**。
+
+    实测（`_tencent-shape-probe.txt`）：把 `start` 段省掉的 5 段写法被带内拒
+    （`{'code': 0, 'msg': 'param error'}`、`data=[]`）—— 「少一段」不是少一点数据，
+    是根本取不到东西。**这条断言曾经写成 `== 'sh600000,day,2024-01-10,320,'`
+    并且通过了**：那是我按自己的意图压缩了形状，再用断言把我的字符串验一遍，
+    不是测量。真实取数冒烟把它抓出来了。
+
+    尾段空着 = 不复权（`qfq` ⇒ 同交易日 `5.42` 而不是 `6.57`，照抄进不复权列就是
+    前视偏差），第 3、4 段都写 anchor：`start` 实测被忽略（V1/V4/V5/V6 四种写法回
+    逐字节相同的 321 行），但万一源开始认它，`start == end == anchor` 的语义仍然
+    与翻页一致，而填窗口起点会在翻页时变成反向区间（V3 实测被接受、回窗口外的行）。
+    """
+    param = ds._tencent_param('sh600000', date(2024, 1, 10), ds.TENCENT_PAGE_ROWS)
+
+    assert param == 'sh600000,day,2024-01-10,2024-01-10,320,'
+    assert param.count(',') == 5, '段数变了：源只认 6 段的位置串'
+    assert param.split(',')[:2] == ['sh600000', 'day']
+    assert param.split(',')[5] == '', '尾段不能写成 qfq（那是复权价）'
+
+
+def test_tencent_adapter_declares_itself_as_a_fallback_source() -> None:
+    """契约表里没有它，但它必须是**同一套接口**上的一个可替换实现。
+
+    `priority` 复用 `FALLBACK` 是因为枚举只有 PRIMARY / FALLBACK 两值 —— 它显然
+    不是主源（主源是契约表里那三个）。写成 PRIMARY 会让「同一天该信哪个源」出现
+    两个答案，而这类冲突最终表现为「同一天的价格在两块屏幕上不一样」。
+    """
+    adapter = TencentAdapter()
+
+    assert adapter.source_name() == 'tencent'
+    assert adapter.priority is SourcePriority.FALLBACK
+    assert isinstance(adapter, SourceAdapter)
+
+
+def test_tencent_default_fetch_sends_exactly_one_param_and_the_documented_ua(
+        monkeypatch) -> None:
+    """真实取数请求：只有 `param` 一个查询参数，且带上 UA。"""
+    with _ScriptedHTTP([_tencent_envelope([_tencent_row('2024-01-10')])]) as server:
+        _open_kline_against(monkeypatch, server)
+        frame = TencentAdapter._default_fetch(symbol='sh.600000',
+                                              start=date(2024, 1, 10),
+                                              end=date(2024, 1, 10))
+        requests = list(server.requests)
+
+    assert len(requests) == 1, '起止同一天 ⇒ 一页就覆盖了，不该多翻'
+    query = urllib.parse.parse_qs(urllib.parse.urlsplit(requests[0][0]).query)
+    assert set(query) == {'param'}, '多发的参数没人验过：%r' % (sorted(query),)
+    assert _tencent_params(server) == ['sh600000,day,2024-01-10,2024-01-10,320,']
+    assert requests[0][1].get('User-Agent') == ds.HTTP_USER_AGENT
+    assert list(frame.columns) == [str(index) for index in range(11)], (
+        '`_default_fetch` 交出去的是**位置数组帧**（列名是下标），归一化在 '
+        '`fetch_daily_bar` 里做 —— 这里写死 11 就是「行宽由源决定」那一件事')
+
+
+def test_tencent_default_fetch_applies_both_measured_unit_conversions(
+        monkeypatch) -> None:
+    """两个换算系数各自 ×100 / ×10000，用探针那一行的算术复现。
+
+    这两条**必须能分别失效**：合成一个开关的话，「换错一个」和「两个都没换」
+    在结果上再也分不出来（一个差 100 倍，一个差 1e6 倍，但都只是「数不对」）。
+    断言里带上与 low/high 的关系，是因为单看体积/金额的绝对值说不出哪个系数错了，
+    而 `amount ÷ volume` 落在当日价格区间内这一条**同时**钉住了两个系数。
+    """
+    with _ScriptedHTTP([_tencent_envelope([_tencent_row('2024-01-10')])]) as server:
+        _open_kline_against(monkeypatch, server)
+        frame = TencentAdapter().fetch_daily_bar(['600000.SH'], date(2024, 1, 10),
+                                                 date(2024, 1, 10))
+
+    row = frame.iloc[0]
+    assert row['volume'] == pytest.approx(222409.00 * 100), '成交量单位是「手」⇒ ×100'
+    assert row['amount'] == pytest.approx(14669.59 * 10000), '成交额单位是「万元」⇒ ×10000'
+    vwap = row['amount'] / row['volume']
+    assert row['low'] <= vwap <= row['high'], (
+        '两个系数只要有一个错，反推均价就会落到当日区间外（实测 6.5958）')
+    assert row['close'] == pytest.approx(6.57), '要的是不复权原始价（qfq 那份是 5.42）'
+    assert row['symbol'] == '600000.SH', '源不返回标的列 ⇒ 用请求参数回填归一化后的代码'
+    assert row['trade_date'] == date(2024, 1, 10)
+
+
+def test_tencent_default_fetch_truncates_locally_because_start_is_ignored(
+        monkeypatch) -> None:
+    """源把 `start` 之前的行也回了 ⇒ 适配器**自己裁**，且不把 `start` 发出去。
+
+    这是「`start` 不在请求串里」的代价与它的补偿：少了那条参数，就多了一步本地裁剪。
+    少了这一步，入库的数据里会出现**契约区间之外**的交易日 —— 它看起来完全正常。
+    """
+    rows = [_tencent_row('2024-01-08'), _tencent_row('2024-01-09'),
+            _tencent_row('2024-01-10'), _tencent_row('2024-01-11')]
+    with _ScriptedHTTP([_tencent_envelope(rows)]) as server:
+        _open_kline_against(monkeypatch, server)
+        frame = TencentAdapter().fetch_daily_bar(['600000.SH'], date(2024, 1, 9),
+                                                 date(2024, 1, 10))
+        requests = list(server.requests)
+
+    assert len(requests) == 1
+    assert list(frame['trade_date']) == [date(2024, 1, 9), date(2024, 1, 10)], (
+        '区间外的 01-08 / 01-11 必须被裁掉')
+
+
+def test_tencent_default_fetch_pages_backwards_until_the_window_is_covered(
+        monkeypatch) -> None:
+    """`start` 早于第一页的最早日期 ⇒ 从「最早日期 - 1」继续往回翻，直到覆盖。
+
+    同时验去重：第二页刻意回了一行第一页给过的日期。不去重的话同一 (symbol,
+    trade_date) 会出现两行，而 `dc_daily_bar` 的主键是 (symbol, trade_date) ——
+    重复行在入库那一步才会炸，离这里很远。
+    """
+    first = [_tencent_row('2024-01-11'), _tencent_row('2024-01-10')]
+    second = [_tencent_row('2024-01-05'), _tencent_row('2024-01-04'),
+              _tencent_row('2024-01-10')]
+    with _ScriptedHTTP([_tencent_envelope(first),
+                        _tencent_envelope(second)]) as server:
+        _open_kline_against(monkeypatch, server)
+        frame = TencentAdapter().fetch_daily_bar(['600000.SH'], date(2024, 1, 4),
+                                                 date(2024, 1, 11))
+
+    assert _tencent_params(server) == ['sh600000,day,2024-01-11,2024-01-11,320,',
+                                       'sh600000,day,2024-01-09,2024-01-09,320,'], (
+        '第二页的 end 必须是「上一页最早日期 - 1」，而不是原样重发')
+    assert list(frame['trade_date']) == [date(2024, 1, 4), date(2024, 1, 5),
+                                         date(2024, 1, 10), date(2024, 1, 11)], (
+        '重复的那一行只能出现一次，且结果按日期有序')
+
+
+def test_tencent_default_fetch_stops_when_the_source_stops_advancing(
+        monkeypatch) -> None:
+    """源不再给新日期 ⇒ 立刻停，**不空转 40 页**。
+
+    没有这个闸门，一个「永远回同一批日期」的源会被翻 `TENCENT_MAX_PAGES` 次，
+    而每次都是真实网络请求 —— 限流就是这么来的。停下来之后仍然走「没覆盖到
+    start ⇒ 抛」的判据，所以停下来不等于静默接受。
+    """
+    body = _tencent_envelope([_tencent_row('2024-01-10')])
+    with _ScriptedHTTP([body]) as server:
+        _open_kline_against(monkeypatch, server)
+        with pytest.raises(SourceAdapterError) as caught:
+            TencentAdapter._default_fetch(symbol='600000.SH',
+                                          start=date(2024, 1, 1),
+                                          end=date(2024, 1, 10))
+        requests = list(server.requests)
+
+    assert caught.value.kind == 'SOURCE_SCHEMA_MISMATCH'
+    assert caught.value.retryable is False
+    assert len(requests) == 2, '第 2 页发现没有新行就该停（实际发了 %d 次）' % len(requests)
+    assert '2024-01-01' in str(caught.value), '报错要说清是哪个边界没被覆盖'
+
+
+def test_tencent_default_fetch_raises_instead_of_truncating_past_the_page_cap(
+        monkeypatch) -> None:
+    """页数撞上限而左边界仍未覆盖 ⇒ **抛**，不截断。
+
+    数据静默缺失是最坏的一种失败：少掉的交易日看起来和「那几天没开市」一模一样，
+    而回测里的表现是「收益曲线更漂亮」。
+    """
+    end = date(2024, 1, 10)
+    bodies = [_tencent_envelope([_tencent_row((pd.Timestamp(end)
+                                               - pd.Timedelta(days=index)).date()
+                                              .isoformat())])
+              for index in range(ds.TENCENT_MAX_PAGES)]
+    with _ScriptedHTTP(bodies) as server:
+        _open_kline_against(monkeypatch, server)
+        with pytest.raises(SourceAdapterError) as caught:
+            TencentAdapter._default_fetch(symbol='600000.SH',
+                                          start=date(1990, 1, 1), end=end)
+        requests = list(server.requests)
+
+    assert caught.value.kind == 'SOURCE_SCHEMA_MISMATCH'
+    assert str(ds.TENCENT_MAX_PAGES) in str(caught.value)
+    assert len(requests) == ds.TENCENT_MAX_PAGES, (
+        '上限就是上限：不能少翻（那是静默截断）也不能多翻（那是没闸门）')
+    assert _tencent_params(server)[0] == 'sh600000,day,2024-01-10,2024-01-10,320,'
+
+
+def test_tencent_default_fetch_refuses_a_qfq_only_response(monkeypatch) -> None:
+    """只给 `qfqday`（复权）时必须炸，不能「有数据就拿」。
+
+    带 fq 的那份实测是 `close=5.42`、不复权是 `6.57` —— 差 20%。把它写进不复权列
+    是日线级别的前视偏差，而且从库里**看不出来**（列名一样、类型一样、区间合法）。
+    """
+    body = json.dumps({'code': 0, 'msg': 'ok',
+                       'data': {'sh600000': {'qfqday': [_tencent_row('2024-01-10', 10)]}}})
+    with _ScriptedHTTP([body]) as server:
+        _open_kline_against(monkeypatch, server)
+        with pytest.raises(SourceAdapterError) as caught:
+            TencentAdapter._default_fetch(symbol='600000.SH',
+                                          start=date(2024, 1, 10),
+                                          end=date(2024, 1, 10))
+        requests = list(server.requests)
+
+    assert caught.value.kind == 'SOURCE_SCHEMA_MISMATCH'
+    assert caught.value.retryable is False
+    assert len(requests) == 1
+
+
+@pytest.mark.parametrize("label,body,needle", [
+    ('in-band-bad-params', json.dumps({'code': 1, 'msg': 'bad params'}), 'bad params'),
+    ('data-missing', json.dumps({'code': 0, 'msg': 'ok'}), 'data'),
+    ('no-day-key', json.dumps({'code': 0, 'msg': 'ok',
+                               'data': {'sh600000': {'version': '11.0'}}}), 'day'),
+    ('day-not-a-list', json.dumps({'code': 0, 'msg': 'ok',
+                                   'data': {'sh600000': {'day': {}}}}), 'day'),
+])
+def test_tencent_schema_mismatches_are_not_retryable(label, body, needle,
+                                                     monkeypatch) -> None:
+    """四类带内拒绝先各自触发一次：**一项一个样本**。
+
+    合在一个样本里不行：第一项 `raise` 之后后面的分支根本没跑，于是「四类都拦住了」
+    这个结论只对第一类成立。四类都落在「调用方该改请求」那一侧 —— 重试只会把
+    同一个错误再问一遍，而在重试策略里它会被当成网络抖动。
+
+    `no-day-key` 那一类值得单独看一眼：实测到的**版本号信封**（`data` 里有键、
+    但没有 `day`）外面看毫无异样，所以「先看 `data` 在不在」这个判据在这里是错的 ——
+    必须一路走到 `day`。
+    """
+    with _ScriptedHTTP([body]) as server:
+        _open_kline_against(monkeypatch, server)
+        with pytest.raises(SourceAdapterError) as caught:
+            TencentAdapter._default_fetch(symbol='600000.SH',
+                                          start=date(2024, 1, 10),
+                                          end=date(2024, 1, 10))
+        requests = list(server.requests)
+
+    assert caught.value.kind == 'SOURCE_SCHEMA_MISMATCH', label
+    assert caught.value.retryable is False, label
+    assert needle in str(caught.value), label
+    assert len(requests) == 1, '带内拒绝要当场停，别翻页'
+
+
+def test_tencent_default_fetch_rejects_a_row_shorter_than_the_position_map(
+        monkeypatch) -> None:
+    """行宽不足 ⇒ 抛。位置数组最危险的失败就是**这一条**：
+
+    源少给/换了位置之后，位置 8 会指向另一个字段，而 `_to_numbers` 照样能解析出
+    一个数 —— 于是「成交额」变成了别的东西，全程不报错。实测的两种长度（11 段 /
+    10 段）都在 9 以上，所以门槛取映射表里最大下标 + 1，而不是「看着差不多」。
+    """
+    short = _tencent_row('2024-01-10')[:5]
+    with _ScriptedHTTP([_tencent_envelope([short])]) as server:
+        _open_kline_against(monkeypatch, server)
+        with pytest.raises(SourceAdapterError) as caught:
+            TencentAdapter._default_fetch(symbol='600000.SH',
+                                          start=date(2024, 1, 10),
+                                          end=date(2024, 1, 10))
+
+    assert caught.value.kind == 'SOURCE_SCHEMA_MISMATCH'
+    assert str(ds._TENCENT_MIN_WIDTH) in str(caught.value)
+
+
+def test_tencent_default_fetch_accepts_the_measured_shorter_row(monkeypatch) -> None:
+    """10 段的行（带复权那份的长度）必须**被接受**。
+
+    只测「短了就炸」会把门槛推向「越长越好」，而实测过 10 段是正常形状 ——
+    把正常形状判成坏形状，等于这条通道在某些股票上直接不可用。
+    """
+    with _ScriptedHTTP([_tencent_envelope([_tencent_row('2024-01-10', 10)])]) as server:
+        _open_kline_against(monkeypatch, server)
+        frame = TencentAdapter().fetch_daily_bar(['600000.SH'], date(2024, 1, 10),
+                                                 date(2024, 1, 10))
+
+    assert len(frame) == 1
+    assert frame['amount'].iloc[0] == pytest.approx(14669.59 * 10000)
+
+
+def test_tencent_default_fetch_rejects_a_reversed_window_before_any_request() -> None:
+    """区间反了 ⇒ 抛，且**一个请求都不发**。没有本机服务就是断言本身。"""
+    with pytest.raises(SourceAdapterError) as caught:
+        TencentAdapter()._default_fetch(symbol='600000.SH',
+                                        start=date(2024, 1, 10),
+                                        end=date(2024, 1, 1))
+
+    assert caught.value.kind == 'UNSUPPORTED'
+    assert caught.value.retryable is False
+
+
+def test_tencent_fetch_daily_bar_returns_the_standard_columns_for_every_symbol(
+        monkeypatch) -> None:
+    """多标的：逐个取数、拼成一帧，且**每个标的的响应键都不同**。
+
+    响应键是**带前缀的代码**（`sh600000`），而请求参数里也是它 —— 两者只要有一处
+    写错，源回的就是「没有这个键」，而那条错误长得很像「这段区间没数据」。
+    """
+    bodies = [_tencent_envelope([_tencent_row('2024-01-10')], code='sh600000'),
+              _tencent_envelope([_tencent_row('2024-01-10')], code='sz000001')]
+    with _ScriptedHTTP(bodies) as server:
+        _open_kline_against(monkeypatch, server)
+        frame = TencentAdapter().fetch_daily_bar(['600000.SH', '000001.SZ'],
+                                                 date(2024, 1, 10),
+                                                 date(2024, 1, 10))
+
+    assert _tencent_params(server) == ['sh600000,day,2024-01-10,2024-01-10,320,',
+                                       'sz000001,day,2024-01-10,2024-01-10,320,']
+    assert list(frame.columns) == list(DAILY_BAR_COLUMNS), '列的集合与顺序都是契约的'
+    assert list(frame['symbol']) == ['600000.SH', '000001.SZ']
+
+
+def test_tencent_fetch_daily_bar_returns_an_empty_frame_when_the_source_has_no_rows(
+        monkeypatch) -> None:
+    """`day: []` ⇒ 空帧、**不抛**（与东财那条同口径：空结果不是失败）。
+
+    同时钉住一件容易漏的事：空帧也必须带标准列。少了列的下游会报一个与「没数据」
+    毫不相干的 `KeyError`，排查方向会被彻底带偏。
+    """
+    with _ScriptedHTTP([_tencent_envelope([])]) as server:
+        _open_kline_against(monkeypatch, server)
+        frame = TencentAdapter().fetch_daily_bar(['600000.SH'], date(2024, 1, 1),
+                                                 date(2024, 1, 10))
+
+    assert frame.shape[0] == 0
+    assert list(frame.columns) == list(DAILY_BAR_COLUMNS)
+
+
+def test_tencent_capabilities_outside_daily_bar_are_unsupported() -> None:
+    """财务 / 指数成分股：这一源没有，`UNSUPPORTED` 且不可重试。"""
+    adapter = TencentAdapter()
+    with pytest.raises(SourceAdapterError) as financial:
+        adapter.fetch_financial(['600000.SH'], date(2024, 6, 30))
+    with pytest.raises(SourceAdapterError) as members:
+        adapter.fetch_index_members('000300.SH', date(2024, 6, 28))
+
+    assert financial.value.kind == 'UNSUPPORTED'
+    assert financial.value.retryable is False
+    assert members.value.kind == 'UNSUPPORTED'
+    assert members.value.retryable is False

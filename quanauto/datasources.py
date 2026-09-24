@@ -83,7 +83,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from datetime import date
+from datetime import date, timedelta
 import json
 import re
 import socket
@@ -229,6 +229,53 @@ EASTMONEY_PAGE_SIZE = 100
 # 口径 —— 调到多少都不改变「有没有取全」的判定。
 EASTMONEY_MAX_PAGES = 200
 
+# ── 腾讯行情（`proxy.finance.qq.com`）日线 ─────────────────────────────────────
+# 端点与全部单位、口径都是 **2026-09-24 实测**（数据中心契约附录 B16，探针
+# `.rounds/_i2b1_probe.py`）：320 个交易日逐日与新浪对账，四价 0 处不一致。
+#
+# **这个源是契约 §3.2 那张表之外的第 4 个**，理由是实测的：东财 kline 端点在本机
+# 两个 opener 下都拒连（`AKShareAdapter` 走的正是它），而新浪日线只有 6 列、**没有
+# 成交额** —— `dc_daily_bar.amount` 是 `NOT NULL`，拿不到就只能合成一个，那是造数据。
+# 腾讯这条是实测里唯一天然给出「契约 8 列」且价格是**不复权原始价**的一条。
+TENCENT_KLINE_API = ('https://proxy.finance.qq.com/ifzqgtimg/appstock/app/newfqkline/get')
+
+# 行是**字符串数组、没有列名** ⇒ 映射表的键是下标字符串。位置 2/3 的顺序反直觉
+# （2 是收盘、不是最高），所以这里逐条写出下标而不是写「OHLC」。
+# 位置 6 是 `{}`、7 是涨跌幅、9/10 是 `'0.00'` —— **没有一列能落进契约 schema**，
+# 不登记即不映射（多余的列不允许跟着产出，见门禁 A8）。
+TENCENT_DAILY_BAR = {
+    '0': 'trade_date',
+    '1': 'open',
+    '2': 'close',
+    '3': 'high',
+    '4': 'low',
+    '5': 'volume',
+    '8': 'amount',
+}
+# 实测：与新浪「股」的比值 = 100.000099 / 99.999990 / 100.000207 ⇒ 单位是「手」。
+TENCENT_VOLUME_IN_LOTS = True
+# 实测：`成交额 ÷ (volume手 × 100)` 反推均价 6.5958 ∈ 新浪当日 [6.57, 6.63] ⇒ 单位是
+# 「万元」；按「元」读会得到 0.0007 的均价。**两个假设恰好一个成立**才算数（探针的
+# `pick_amount_unit`），所以这一条不是「看着像万元」。
+TENCENT_AMOUNT_IN_WAN = True
+
+# 单次请求要几个交易日。**取 320 是因为实测过 `count=320` 被接受**；
+# 上限**没有实测**，所以刻意不往上试探 —— 真需要更长的区间就多翻几页（下面的
+# `_default_fetch` 按 `end` 回溯分页），而不是去猜一个更大的 count 能不能被接受。
+# 实测（2026-09-24，`_tencent-shape-probe.txt`）：`count=n` 回的是 **n+1 行**
+# （`count=3` ⇒ 4 行、`count=320` ⇒ 321 行）。下面那「回满 320 行」的旧说法已按
+# 实测改成 n+1；分页逻辑只依赖「最早那行的日期」，所以这个 off-by-one 不影响它。
+TENCENT_PAGE_ROWS = 320
+# 翻页上限：321 × 40 ≈ 12840 个交易日（约 50 年）。同东财那一条 —— 它是防跑飞的
+# 闸门，不是数据口径；撞到它**报错**，不截断。
+TENCENT_MAX_PAGES = 40
+
+# 映射表用到的最大下标 + 1。**这是一个防「源换了布局」的守卫**：行是位置数组，
+# 一旦源多/少一列，位置 8 会**静默变成别的字段**而不是报错 —— 探针实测到的两种
+# 长度（不带复权 11 段 / 带复权 10 段）本身就说明长度是会变的，所以宽度要显式要求，
+# 不能靠「反正测试时是对的」。由映射表算出，不手写数字（手写的那个会和表慢慢分家）。
+_TENCENT_MIN_WIDTH = max(int(key) for key in TENCENT_DAILY_BAR) + 1
+
 EXCHANGES = ('SH', 'SZ', 'BJ')
 
 # 归一化入口要接受的四种写法。**`re` 模块级编译而不是每次调用现编**：这类函数在
@@ -294,6 +341,7 @@ def normalize_daily_bar(
     column_map: Mapping[str, str],
     *,
     volume_in_lots: bool = False,
+    amount_in_wan: bool = False,
     symbol: Optional[str] = None,
 ) -> pd.DataFrame:
     """源日线帧 → 标准日线帧（只含 `DAILY_BAR_COLUMNS`，顺序固定）。
@@ -302,6 +350,9 @@ def normalize_daily_bar(
         raw: 源返回的原始帧。
         column_map: 源列名 → 标准列名的映射（模块级常量，见「源字段名不得泄漏」）。
         volume_in_lots: 源的成交量单位是否为「手」（是则 ×100）。
+        amount_in_wan: 源的成交额单位是否为「万元」（是则 ×10000）。**刻意是独立开关**，
+            不并入 `volume_in_lots`：两者是**两个源**、两个理由、两个换算系数，
+            合并成一个看似更省的参数之后，「换错一个」与「两个都没换」再也分不出来。
         symbol: 源不返回 symbol 列时，用请求参数回填的标的代码。
 
     异常:
@@ -329,6 +380,10 @@ def normalize_daily_bar(
     if volume_in_lots:
         # 契约 §2.3 / `dc_daily_bar.volume` 注释：单位是股；源给手 ⇒ ×100。
         frame['volume'] = frame['volume'] * 100
+    if amount_in_wan:
+        # 契约 §2.3 / `dc_daily_bar.amount` 注释：单位是元；源给万元 ⇒ ×10000。
+        # 单位是实测的（DC 契约附录 B16），不是按「看起来像」定的。
+        frame['amount'] = frame['amount'] * 10000
     return frame.loc[:, list(DAILY_BAR_COLUMNS)]
 
 
@@ -883,13 +938,101 @@ def _eastmoney_page(payload: Any, report_name: str) -> Tuple[List[Any], int]:
     return list(rows), pages
 
 
-class _AdapterBase(SourceAdapter):
-    """三个子类共用的管道。**不是契约类** —— 契约 §3.2 只画了基类与三个子类。
+def _tencent_param(symbol: str, anchor: date, count: int) -> str:
+    """拼腾讯的 `param` —— 它是**逗号分隔的位置串**，不是键值对，且**必须是 6 段**。
 
-    放在这里而不复制进三个子类的东西只有两样：`validate` 的委托，和
+    实测（2026-09-24，`_tencent-shape-probe.txt`）：
+
+    * 5 段（把 `start` 省掉，`symbol,day,<end>,<count>,`）⇒ 带内拒：
+      `{'code': 0, 'msg': 'param error'}`、`data=[]`。**这不是「少一段就少一点
+      数据」，是根本取不到东西**，而冒烟就是在这里红的。
+    * 6 段的 6 种写法全部被接受（完整区间 / `count=3` / 反区间 / 空 `start` /
+      `start == end` / 换一个 `start`），且 `start` 段**实测被忽略** ——
+      V1/V4/V5/V6 四种写法回的是**逐字节相同**的 321 行（同为 `2025-06-06`
+      至 `2026-09-24`）。
+
+    尾随那个空段是第 6 段的 `fq`：空 ⇒ 不复权（实测 close=6.57 = 新浪不复权值），
+    `qfq` ⇒ 复权（同交易日 close=5.42）。要入库的是不复权原始价（契约 §2.3）。
+
+    第 3 段写 `anchor` 而**不是**请求区间的 `start`：它反正被忽略，而万一源哪天开始
+    认它，`start == end == anchor` 的语义（「以 anchor 结尾往前 count+1 行」）与
+    翻页的含义一致；填窗口起点则会在翻页时变成**反向区间** —— 而反向区间实测被
+    接受（V3）却回出 `max(start, end)` 之前的行，也就是窗口外的数据。左边界仍然
+    完全由调用方按 `end` 回溯 + 事后裁剪保证。
+    """
+    return '%s,day,%s,%s,%d,' % (symbol, anchor.isoformat(), anchor.isoformat(), count)
+
+
+def _tencent_rows(payload: Any, code: str) -> List[Any]:
+    """解腾讯信封 → 行列表。信封形状是**实测**的，不是照文档写的。
+
+    实测到的两种形状（附录 B16）：
+
+    * 正常：`{'code': 0, 'msg': '', 'data': {'sh600000': {'day': [[...], ...]}}}`
+    * 拒绝：`{'code': 1, 'msg': 'bad params', 'data': {'sh600000': {'version': '16'}}}`
+
+    拒绝那个形状值得盯住：**`data` 照样在，外面看毫无异样**，进去才发现是版本号。
+    所以「先看 `data` 在不在」这个判据在这里是错的 —— 必须一路走到 `day` 并检查
+    它是不是列表，否则「参数写错」会伪装成「这段区间没有数据」。
+
+    三个判定，理由与 `_eastmoney_page` 完全一致：
+
+    * 路径上任何一层缺失或类型不对 ⇒ 源在带内拒绝了这次请求（HTTP 200 不代表
+      这次查询合法），或返回了别的东西。重试不会让参数变合法 ⇒
+      `SOURCE_SCHEMA_MISMATCH`，并把源自己的 `code`/`msg` 抄进消息里。
+    * `day` 在、但为空 ⇒ 源正常回复、只是这段区间没有数据 ⇒ 空帧。**不抛**：
+      `errors.py` 的分类表刻意没有「源没给数据」这一类。
+    * 只给 `qfqday` 而不给 `day` ⇒ **抛**。那是**复权**价；契约 §2.3 要的是不复权
+      原始价，静默把复权价写进不复权列，是日线级别的前视偏差，而且从库里看不出来。
+    """
+    if not isinstance(payload, Mapping):
+        raise SourceAdapterError(
+            '腾讯 %s 的响应不是 JSON 对象（收到 %s）'
+            % (code, type(payload).__name__),
+            source='tencent', kind='SOURCE_SCHEMA_MISMATCH')
+    # 源自己说的话。带进消息里，比我们替它总结一句准。
+    tag = 'code=%r msg=%r' % (payload.get('code'), payload.get('msg'))
+    data = payload.get('data')
+    if not isinstance(data, Mapping):
+        raise SourceAdapterError(
+            '腾讯 %s 的响应里 data 不是 JSON 对象（收到 %s，%s）—— 拒绝是带内的，'
+            '动作是改请求参数，不是重试' % (code, type(data).__name__, tag),
+            source='tencent', kind='SOURCE_SCHEMA_MISMATCH')
+    node = data.get(code)
+    if not isinstance(node, Mapping):
+        raise SourceAdapterError(
+            '腾讯 %s 的响应里 data.%s 不是 JSON 对象（收到 %s，%s）'
+            % (code, code, type(node).__name__, tag),
+            source='tencent', kind='SOURCE_SCHEMA_MISMATCH')
+    if 'day' not in node and 'qfqday' in node:
+        raise SourceAdapterError(
+            '腾讯 %s 只给了复权行（qfqday），没有 day —— 契约 §2.3 要的是不复权原始价，'
+            '复权价写进不复权列是前视偏差（%s）' % (code, tag),
+            source='tencent', kind='SOURCE_SCHEMA_MISMATCH')
+    rows = node.get('day')
+    if rows is None:
+        raise SourceAdapterError(
+            '腾讯 %s 的响应里没有 day 键（%s）' % (code, tag),
+            source='tencent', kind='SOURCE_SCHEMA_MISMATCH')
+    if not isinstance(rows, list):
+        raise SourceAdapterError(
+            '腾讯 %s 的 day 不是数组（收到 %s，%s）'
+            % (code, type(rows).__name__, tag),
+            source='tencent', kind='SOURCE_SCHEMA_MISMATCH')
+    return rows
+
+
+class _AdapterBase(SourceAdapter):
+    """各子类共用的管道。**不是契约类** —— 契约 §3.2 只画了基类与三个子类。
+
+    放这里而不复制进每个子类的东西只有两样：`validate` 的委托，和
     「源这一侧的任何异常都翻译成 `SourceAdapterError`」的包装。后者尤其不该复制 ——
     漏掉一处，那一处就会开始向上层抛 `ModuleNotFoundError` / `KeyError` / `ValueError`，
     而那些类型在上层读起来是「调用方写错了」，会被当成 bug 去查错地方。
+
+    **子类不止三个**：契约表上的三个之外还有 `TencentAdapter`（它为何存在见自己的
+    类注释与附录 B16）。子类数量与契约那张表**不是一回事**，所以「照表实现了三个」
+    这句话在本模块里不能当成兜底理由。
     """
 
     #: 子类覆盖。契约给 `source_name` 写的是抽象方法而不是类属性，所以这里保留
@@ -1196,6 +1339,129 @@ class EastMoneyAdapter(_AdapterBase):
                                        weight_is_percent=EASTMONEY_WEIGHT_IS_PERCENT)
 
 
+class TencentAdapter(_AdapterBase):
+    """腾讯行情（`proxy.finance.qq.com`）—— **只覆盖日线**，`SourcePriority.FALLBACK`。
+
+    **它不在契约 §3.2 那张表里**（表上是 AKShare / Baostock / 东财三个子类），这件事
+    必须说清楚，不能靠「反正能跑」蒙过去。加它的理由是**实测**的（附录 B16）：
+
+    * 东财的 kline 端点在本机两个 opener 下都拒连（`RemoteDisconnected` / `HTTP 502`），
+      而 `AKShareAdapter` 走的正是它 ⇒ 主源**当前取不到数**。
+    * 新浪日线可达，但只有 6 列、**没有成交额**，而 `dc_daily_bar.amount` 是 `NOT NULL`
+      ⇒ 填不满契约。合成一个（`volume × close`）是造数据，不是取数。
+    * 腾讯这条是实测里唯一天然给出**契约 8 列**、且价格是**不复权原始价**的一条。
+
+    所以它是个**补充源**，不是第四个「必须实现」的子类：契约表不改，它的覆盖面也只有
+    日线（财务报表与指数成分股在这里是 `UNSUPPORTED`），`priority` 复用 `FALLBACK` ——
+    枚举只有 PRIMARY / FALLBACK 两值，而它显然不是主源。
+    """
+
+    _SOURCE = 'tencent'
+    priority = SourcePriority.FALLBACK
+
+    # 不带 `self` 的 staticmethod，**形状是约束不是风格**：另外三个源的 `_default_fetch`
+    # 都是这样，且这个形状被 `tools/contract-signature-manifest.json` 的 `impl_params`
+    # 逐字登记（`['**kwargs']`，没有 self）。取数函数是**注入**进 `_AdapterBase` 的
+    # （`self._fetch = self._default_fetch`），它不需要实例；给它加一个 `self` 会被
+    # S4 判成参数漂移 —— 而那条发现是对的：形状一改，注入路径上的所有人都得重看。
+    # 于是 `source=` 在这里只能写字面量（`self` 不可用），与东财那份写法一致。
+    @staticmethod
+    def _default_fetch(**kwargs: Any) -> pd.DataFrame:
+        """真实取数：**单标的**一段区间，从 `end` 往回翻页，再裁到 `[start, end]`。
+
+        为什么要自己翻页 + 自己裁（都是实测的，附录 B16）：源只认「末端日期 + 往回取
+        几个交易日」，区间左边界被忽略（`count=3` 时回的是 **4 行**：`end` 往前 3 天
+        到 `end`；`start` 段换什么值都回同一批行）⇒ 「把 `start` 发过去就算划定了区间」
+        是错的 —— `start` 早于 `end - 320` 时会**静默少数据**。
+
+        撞到 `TENCENT_MAX_PAGES` 而左边界仍未覆盖 ⇒ **抛**，不截断：少取的交易日会变成
+        回测里的静默缺口，而契约 §2.4 的总原则是宁可跑不起来。
+
+        行宽按观测到的最大值补齐再建帧；**被映射的 0~5、8 号位在实测的两种长度里都在**，
+        补出来的是尾部空位、不在映射表里，因此不会有一列凭空进到标准帧。
+        """
+        symbol = code_glued(kwargs['symbol'])
+        start = pd.Timestamp(kwargs['start']).date()
+        end = pd.Timestamp(kwargs['end']).date()
+        if start > end:
+            raise SourceAdapterError(
+                '腾讯 %s 的区间是反的：start=%s > end=%s' % (symbol, start, end),
+                source='tencent', kind='UNSUPPORTED')
+        opener = kwargs.get('opener')
+
+        rows: List[Any] = []
+        seen = set()
+        earliest = ''
+        covered = False
+        cursor = end
+        for _page in range(TENCENT_MAX_PAGES):
+            page_rows = _tencent_rows(_http_get_json(
+                TENCENT_KLINE_API,
+                {'param': _tencent_param(symbol, cursor, TENCENT_PAGE_ROWS)},
+                opener=opener), symbol)
+            fresh = []
+            for row in page_rows:
+                # 行宽守卫：位置数组一旦换了布局，位置 8 会变成别的字段而**不报错**。
+                if not isinstance(row, list) or len(row) < _TENCENT_MIN_WIDTH:
+                    raise SourceAdapterError(
+                        '腾讯 %s 的 day 里有一行不是长度 ≥ %d 的数组（实测 11 段）：%r —— '
+                        '位置映射表按位置写死，宽度变了就必须重测，不能猜'
+                        % (symbol, _TENCENT_MIN_WIDTH, row),
+                        source='tencent', kind='SOURCE_SCHEMA_MISMATCH')
+                if row[0] not in seen:
+                    seen.add(row[0])
+                    fresh.append(row)
+            if not fresh:
+                # 源没在前进（或本页为空）。**不再翻**：再翻就是死循环。
+                break
+            rows.extend(fresh)
+            earliest = min(str(row[0]) for row in fresh)
+            if earliest <= start.isoformat():
+                covered = True
+                break
+            cursor = date.fromisoformat(earliest) - timedelta(days=1)
+        if rows and not covered:
+            raise SourceAdapterError(
+                '腾讯 %s 翻了 %d 页仍然没覆盖到 start=%s（最早只到 %s）：**不截断**，'
+                '宁可报错 —— 少取的交易日会变成回测里的静默缺口'
+                % (symbol, TENCENT_MAX_PAGES, start.isoformat(), earliest or None),
+                source='tencent', kind='SOURCE_SCHEMA_MISMATCH')
+
+        kept = [row for row in rows if start.isoformat() <= str(row[0]) <= end.isoformat()]
+        if not kept:
+            # 空帧也要带上映射表里的列：`normalize_daily_bar` 是**先选列、后看行数**，
+            # 交一张没有这些列的帧过去，会在它那儿变成一个和「没数据」毫不相干的 KeyError。
+            return pd.DataFrame(columns=sorted(TENCENT_DAILY_BAR))
+        kept.sort(key=lambda row: str(row[0]))
+        width = max(len(row) for row in kept)
+        padded = [list(row) + [None] * (width - len(row)) for row in kept]
+        return pd.DataFrame(padded, columns=[str(index) for index in range(width)])
+
+    def fetch_daily_bar(self, symbols: List[str], start: date, end: date) -> pd.DataFrame:
+        """逐标的取数后拼接。接口给的是列表、源吃的是单标的，差值在这里抹平。"""
+        frames = []
+        for symbol in symbols:
+            raw = self._call(symbol=symbol, start=start, end=end)
+            frames.append(normalize_daily_bar(
+                raw, TENCENT_DAILY_BAR,
+                volume_in_lots=TENCENT_VOLUME_IN_LOTS,
+                amount_in_wan=TENCENT_AMOUNT_IN_WAN,
+                symbol=symbol))
+        if not frames:
+            return _empty(*DAILY_BAR_COLUMNS)
+        return pd.concat(frames, ignore_index=True)
+
+    def fetch_financial(self, symbols: List[str], period_end: date) -> pd.DataFrame:
+        raise SourceAdapterError(
+            '腾讯这条通道只有日线（实测过的也只有日线；财务走东财，见契约 §3.2）',
+            source=self._SOURCE, kind='UNSUPPORTED')
+
+    def fetch_index_members(self, index_code: str, as_of_date: date) -> pd.DataFrame:
+        raise SourceAdapterError(
+            '腾讯这条通道只有日线（实测过的也只有日线；指数成分股走东财，见契约 §3.2）',
+            source=self._SOURCE, kind='UNSUPPORTED')
+
+
 def code_digits(symbol: Any) -> str:
     """`600000.SH` → `600000`。给「只要裸代码」的源用（akshare）。
 
@@ -1203,6 +1469,17 @@ def code_digits(symbol: Any) -> str:
     直接 `split('.')` 会把它切成 `sh` 和 `600000` 两半，然后静默地取错那半。
     """
     return normalize_symbol(symbol).split('.')[0]
+
+
+def code_glued(symbol: Any) -> str:
+    """`600000.SH` → `sh600000`（腾讯的写法：小写前缀、无分隔符）。
+
+    同 `code_digits` / `_baostock_code`：**先生成后缀归一化再切**。这根字符串会直接
+    拼进 `param` 的位置串里，拼错的表现是源回一句 `bad params`，而不是抛异常。
+    """
+    normalized = normalize_symbol(symbol)
+    digits, exchange = normalized.split('.')
+    return '%s%s' % (exchange.lower(), digits)
 
 
 def _baostock_code(symbol: Any) -> str:

@@ -105,7 +105,10 @@ SOURCE_RELS = (ADAPTER_REL, ROWCLASS_REL, ERRORS_REL, CONTRACT_REL)
 # 对也不算错（A3 会因此报错，而不是静默放行）。
 # 东财两张：一个 `reportName` 一张表（契约附录 B12 实测，不是选择）——
 # 它们到底分别是哪张报表，写在 `datasources.py` 的 `_FINANCIAL_REPORTS` 里。
-COLUMN_MAPS = ('AKSHARE_DAILY_BAR', 'BAOSTOCK_DAILY_BAR', 'EASTMONEY_INCOME_FINANCIAL',
+# 腾讯那张的键是**下标字符串**：那个源回的是没有列名的位置数组（附录 B16），
+# 所以它比别的表更怕源换布局 —— 「位置 8 还在不在」只能靠适配器里的宽度守卫。
+COLUMN_MAPS = ('AKSHARE_DAILY_BAR', 'BAOSTOCK_DAILY_BAR', 'TENCENT_DAILY_BAR',
+               'EASTMONEY_INCOME_FINANCIAL',
                'EASTMONEY_BALANCE_FINANCIAL', 'EASTMONEY_INDEX_MEMBER')
 # 取值域映射表：{源取值: 标准取值}。键不是列名，所以不参与 A1/A2 的列名判定。
 VALUE_MAPS = ('EASTMONEY_REPORT_TYPE',)
@@ -152,8 +155,8 @@ STAT_KEYS = ('scanned_modules', 'str_maps', 'column_maps', 'value_maps',
 # A10 的下限：必须是「这个仓库当前实测到的东西」的最小值，不是愿望值。
 # 阈值定高一点是刻意的 —— 提取器一旦失配，这些数会整体掉到 0，而 0 必须红。
 MIN_STATS = (
-    ('str_maps', 6, '模块级 str->str 映射表（5 张列名表 + 1 张取值表）'),
-    ('column_maps', 5, '解析到的列名映射表'),
+    ('str_maps', 7, '模块级 str->str 映射表（6 张列名表 + 1 张取值表）'),
+    ('column_maps', 6, '解析到的列名映射表'),
     ('value_maps', 1, '解析到的取值域映射表'),
     ('schema_bindings', 4, '标准 schema 列名元组'),
     ('module_imports', 1, '模块级 import'),
@@ -647,6 +650,10 @@ AKSHARE_DAILY_BAR = {
 }
 BAOSTOCK_DAILY_BAR = {
     'volume': 'volume',
+}
+TENCENT_DAILY_BAR = {
+    '0': 'trade_date',
+    '8': 'amount',
 }
 EASTMONEY_INCOME_FINANCIAL = {
     'SECURITY_CODE': 'symbol',
