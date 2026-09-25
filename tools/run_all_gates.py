@@ -320,6 +320,30 @@ GATES = [
         'selftest': ['tools/verify_class_coverage.py', '--selftest'],
     },
     {
+        'name': 'error-codes',
+        'tier': 'A',
+        # 三份契约各有一张错误码表，`quanauto/errors.py` 是唯一的实现侧真相，而这两侧
+        # **此前没有一条机器判据** —— 这个洞被登记过三次（数据中心契约的附录 A8 与附录 C6
+        # 都写着「无机器判据，已知缺口」；风控契约 §3.7 那句「两处定义必须保持一致，不得
+        # 冲突。」本身就是一条没有判据的要求）。登记了三次却一直没关，是因为它看着像
+        # 「人读一遍就行」：11 行表、30 个码。实跑一次就打脸 —— 主契约的附录 D 把 `RISK_001`
+        # 写成 CRITICAL，风控契约 §3.7 写 ERROR，而那一行还标着「（主契约原有）」：
+        # 转抄时抄错了，两边「各自都绿」了很久。同一轮还抓出一处拼写分歧（看板码少一个
+        # 下划线），连它自己给出的那条理由都是自证不成立的。
+        # 判据 = 码 / 拼写 / 级别 / 类名四样对拍；两张登记表（契约定义而刻意不实现 PENDING、
+        # 实现自有 IMPL_ONLY）**反向也查**：登记的东西一旦落地或消失就报 EC-STALE-PENDING /
+        # EC-IMPL-ONLY-STALE，否则它们会长成永久免检的挡箭牌。
+        # 边界：**不查描述与建议措施**（那是人写的话，不是标识），也不比继承关系（有一处
+        # 已登记的刻意偏差会让 issubclass 判据误报）；方向**有意单向** —— 契约可以定义
+        # 实现里还没有的码（errors.py 的原则是「只定义真的会抛的异常」，预支的死代码会让
+        # 「已实现」看起来比实际多），反向才报 EC-CODE-INVENTED。扫描面只有三份契约 +
+        # `quanauto/*.py`，**不含** `迭代计划.md` / `缺口清单.md`：它们是记录，不是契约。
+        'what': '三份契约的错误码表与 quanauto/errors.py 在码/拼写/级别/类名上双向对齐'
+                '（PENDING/IMPL_ONLY 两张登记反向也查）',
+        'runner': ['tools/verify_error_codes.py'],
+        'selftest': ['tools/verify_error_codes.py', '--selftest'],
+    },
+    {
         'name': 'core-contract-refs',
         'tier': 'B',
         # The two supplements contribute definitions only. DataFeed/MarketStatus/
