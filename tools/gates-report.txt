@@ -67,6 +67,7 @@ argv: tools/verify_skeleton.py
 ------------------------------------------------------------------------------
 root: D:\project-quan\quan-auto
 denominator: 10 detector(s) ran: PYPROJECT, VERSION, PACKAGE, TESTS, CI, CI-SWALLOW, GATE-COUNT, IMPL-STATUS, MAP-PATHS, DRIVER-EXTRA
+status scan: fixed 3 + 5 .github markdown file(s): .github/copilot-instructions.md, .github/skills/quan-auto-db-change/SKILL.md, .github/skills/quan-auto-doc-drift/SKILL.md, .github/skills/quan-auto-gate-authoring/SKILL.md, .github/skills/quan-auto-iteration-delivery/SKILL.md
 verdict: PASS (0 issue(s))
 
 ==============================================================================
@@ -155,10 +156,10 @@ GATE appendix-refs (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 契约文档里被引用的附录标签（含条目号、点名归属）都真实存在
 argv: tools/verify_appendix_refs.py
 ------------------------------------------------------------------------------
-scan scope: git ls-files=90 file(s), read as text=87, skipped=3
+scan scope: git ls-files=94 file(s), read as text=91, skipped=3
   skipped (binary/undecodable): docs/智能量化交易平台-数据中心数据源选型与接入规范.docx, docs/智能量化交易平台-核心模块接口契约文档.docx, docs/智能量化交易平台.docx
 appendix index: core=7L/23I dc=4L/66I prd=1L/0I risk=0L/0I
-citations: 193 total, 100 with an item label, 44 naming an owner, in 28 file(s)
+citations: 194 total, 100 with an item label, 44 naming an owner, in 29 file(s)
 verdict: PASS (0 issue(s))
 
 ==============================================================================
