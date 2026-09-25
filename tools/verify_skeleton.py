@@ -25,6 +25,13 @@ Usage
     python tools/verify_skeleton.py <root>      # 检查别的目录（用于触发测试）
 
 Exit codes: 0 = PASS, 1 = FAIL, 2 = selftest 自身的断言失败（说明这个门禁坏了，不是产物坏了）
+
+`--selftest` 的退出码**只报自测**（0 = 自测过，2 = 自测自己失败）。真实仓库的结论照常
+打印（`FINDING` 行 + `verdict:` 行）但不进退出码 —— 门禁框架的契约是「self-test argv 必须
+打印 `SELFTEST OK` 标记并 exit 0」（`tools/run_all_gates.py` 注册表说明），它另有**不带
+`--selftest`** 的那一次运行专门判真实产物。2026-09-25 之前这里返回真实仓库的结论，于是仓库
+一红，框架的 `rc != 0` 分支就把「真产物红了」写成 `selftest=FAIL` +「这个门禁没证明自己有牙」
+—— 一句假话，而且专挑你最需要「自测还好不好」的时刻（真仓库红的时候）出现。
 """
 
 from __future__ import annotations
@@ -72,10 +79,12 @@ DETECTORS = ('PYPROJECT', 'VERSION', 'PACKAGE', 'TESTS', 'CI', 'CI-SWALLOW',
 #      规矩（「一律现取 git log --oneline，不要写死数字」），只是那条一直没有判据。
 #   3. 带日期的写法是**证据快照**（「2026-09-23 实测 8 个门禁」），它过期是正常的，
 #      故予豁免。要禁的是不带日期的「当前状态」断言。
-# 两个探测器共用这份清单：`GATE-COUNT`（不许写死计数）与 `MAP-PATHS`（引用必须存在）。
+# 这份清单原本只喂 `MAP-PATHS`（引用必须存在），`GATE-COUNT` 也吃它；2026-09-25 起
+# `GATE-COUNT` 与 `IMPL-STATUS` 的实际扫描面还要加上 `.github/**/*.md`，见 `GITHUB_MD_GLOB`。
 STATE_FILES = ('CONTEXT.md',)
 
-# 实现状态陈述要同时管三个地方：地图、包元数据、包入口。三处都写过同一句错话。
+# 实现状态陈述要同时管四个面：地图、包元数据、包入口，以及 `.github/**/*.md`
+# （前三处都写过同一句错话；第四个面是 2026-09-25 扩的，理由见 `GITHUB_MD_GLOB`）。
 IMPL_STATUS_TARGETS = ('CONTEXT.md', PYPROJECT, os.path.join(PKG_NAME, '__init__.py'))
 
 # 这些句子描述「现在有没有实现」。实现一旦存在，它们就从「当时正确」变成永久错误。
@@ -90,6 +99,36 @@ OBSOLETE_STATUS_PHRASES = (
 
 GATE_COUNT_RE = re.compile(r'\d+\s*个门禁')
 DATE_RE = re.compile(r'\d{4}-\d{2}-\d{2}')
+
+# ── 扫描面：固定三处 + `.github/**/*.md`（2026-09-25 扩面） ──────────────────
+#
+# 扩面之前 `.github/` 是**唯一的零判据区**，而它恰恰是**自动加载层**：每次会话都会进上下文。
+# 过期前提在这一层最贵。实测代价：`.github/copilot-instructions.md` 里那句
+# 「I0 空骨架、没有任何业务实现」一直活到 I3b 交付之后才被人发现，期间所有门禁全绿
+# （上面 IMPL_STATUS_TARGETS 的注释记着同一件事，但当时只修了三个写死的文件）。
+# 2026-09-25 追加 `.github/skills/`（渐进式披露层）之后这一层变大了，再不扫就等于
+# 把最贵的一块继续放在无判据区。
+#
+# **只扩「会过期的措辞」这一类判据，不扩 `MAP-PATHS`。** 理由：路径存在性在散文上的
+# 假阳性率已在 `check_map_paths` 上方实测记过（132 个含 `/` 的 token 里就有时区
+# `Asia/Shanghai` 与字段对 `effective_from/effective_to`），而 skill 正文里必然出现
+# `db/**`、`applyTo`、`2>&1` 这类非地址 token ⇒ 扩过去只会把正确的文档判红十几次，
+# 最后一定被人用「放宽」的方式关掉。**边界：这条路只看措辞，看不见 skill 的结构是否合法。**
+GITHUB_MD_GLOB = os.path.join('.github', '**', '*.md')
+
+
+def _status_targets(root, base):
+    """`base` 里的固定文件 + `.github/**/*.md`（相对仓库根、稳定排序、不重复）。
+
+    排成稳定顺序是为了让 FINDING 的次序可复现（报告要能逐字节对拍）。
+    路径统一成 `/` 分隔：Windows 上 `os.path.relpath` 给的是反斜杠，会让报告随平台变。
+    """
+    found = list(base)
+    for path in sorted(glob.glob(os.path.join(root, GITHUB_MD_GLOB), recursive=True)):
+        rel = os.path.relpath(path, root).replace(os.sep, '/')
+        if rel not in found:
+            found.append(rel)
+    return found
 
 # ── 地图幽灵路径探测器 ─────────────────────────────────────────────────────
 #
@@ -118,7 +157,8 @@ def read_text(path):
     """返回规范化后的文本（BOM 去掉、CRLF -> LF），读不到返回 None。
 
     必须先规范化再匹配：本仓库的 md/sql 可能是 CRLF，裸 `\\n` 正则对 CRLF 会静默失配，
-    于是所有探测器一起空转却打印 PASS（规范 §六 案例一）。
+    于是所有探测器一起空转却打印 PASS（规范 §3.5 第 3 条：提取为空必须判 FAIL）。
+    （原文写的是「§六 案例一」，而规范 §6 是改动清单、里面没有案例 —— 引用指向了不存在的小节。）
     """
     try:
         with open(path, 'r', encoding='utf-8-sig') as fp:
@@ -166,7 +206,7 @@ def check_pyproject(root):
 #      `psycopg` 的条目 —— 不能用子串命中，否则 `notpsycopg` 也会被当成声明；
 #   2. `quanauto/pgstore.py` 里能提取到安装提示（提取为空时下面那条比较永远不开火）；
 #   3. 两处的版本下限是同一串。
-# 名字解析故意不引 `packaging`：`tools/` 只用标准库（规范 §7），而 extra 的写法是
+# 名字解析故意不引 `packaging`：`tools/` 只用标准库（规范 §5 红线清单），而 extra 的写法是
 # 本仓库自己定的、形状可控，正则够用。
 DRIVER_EXTRA = 'postgres'
 DRIVER_REQUIREMENT = 'psycopg'
@@ -399,7 +439,7 @@ def _impl_modules(root):
 def check_gate_count(root):
     """文档里不许写死**不带日期**的门禁数量 —— 那个数字每轮都会过期。"""
     findings = []
-    for name in STATE_FILES:
+    for name in _status_targets(root, STATE_FILES):
         text = read_text(os.path.join(root, name))
         if text is None:
             # 文件不存在不是这个探测器的职责（CONTEXT.md 缺失自有别的判据去管），
@@ -423,7 +463,7 @@ def check_impl_status(root):
     impl = _impl_modules(root)
     if not impl:
         return findings  # 此刻说「还没有实现」是**对的**，报红反而是假阳性
-    for name in IMPL_STATUS_TARGETS:
+    for name in _status_targets(root, IMPL_STATUS_TARGETS):
         text = read_text(os.path.join(root, name))
         if text is None:
             continue
@@ -481,7 +521,13 @@ def _classify_ref(tok):
 
 
 def check_map_paths(root):
-    """L0 地图里的每个文件引用都必须真的存在 —— 防「地图把人送到空地址」。"""
+    """L0 地图里的每个文件引用都必须真的存在 —— 防「地图把人送到空地址」。
+
+    扫描面**故意只用 `STATE_FILES`**（= `CONTEXT.md`），不吃 `_status_targets` 加的
+    `.github/**/*.md`：理由见 `GITHUB_MD_GLOB` 上方那段实测记录（散文里满是时区名、
+    字段对、命令行片段这类非地址 token，当路径查会十几次误报）。
+    `MUT-map-*` 样本守着这条没被放宽。
+    """
     findings = []
     for name in STATE_FILES:
         text = read_text(os.path.join(root, name))
@@ -586,8 +632,12 @@ DRIVER_HINT_OK = ('def _import_psycopg():\n'
 
 def _sandbox(tmp, *, pyproject=CLEAN_PYPROJECT, version='"1.2.3"', ci=CLEAN_CI,
              packages='"quanauto"', make_pkg=True, make_tests=True,
-             context_md=None, impl_modules=(), driver_hint=DRIVER_HINT_OK):
-    """造一个最小仓库。每个样本只动一处，其余保持干净 —— 这样报出来的必定是那一处。"""
+             context_md=None, impl_modules=(), driver_hint=DRIVER_HINT_OK,
+             github_md=None):
+    """造一个最小仓库。每个样本只动一处，其余保持干净 —— 这样报出来的必定是那一处。
+
+    `github_md` 是 `{'.github' 下的相对路径: 文本}`，用来构造 `.github/**/*.md` 扫描面的样本。
+    """
     root = tempfile.mkdtemp(dir=tmp)
     with open(os.path.join(root, PYPROJECT), 'w', encoding='utf-8', newline='\n') as fp:
         fp.write(pyproject.replace('packages = ["quanauto"]', 'packages = [%s]' % packages))
@@ -617,6 +667,11 @@ def _sandbox(tmp, *, pyproject=CLEAN_PYPROJECT, version='"1.2.3"', ci=CLEAN_CI,
         os.makedirs(d)
         with open(os.path.join(d, 'ci.yml'), 'w', encoding='utf-8', newline='\n') as fp:
             fp.write(ci)
+    for rel, text in (github_md or {}).items():
+        path = os.path.join(root, '.github', *rel.split('/'))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w', encoding='utf-8', newline='\n') as fp:
+            fp.write(text)
     return root
 
 
@@ -786,8 +841,44 @@ def selftest():
                _sandbox(tmp, pyproject=CLEAN_PYPROJECT.replace(
                    'psycopg[binary]>=3.1', 'notpsycopg>=3.1')),
                ('DRIVER-EXTRA',))
+        # 18) `.github/**/*.md` 也在扫描面内（2026-09-25 扩面）
+        #     这一层是**自动加载层**，原先零判据：写过期状态陈述、写死门禁数量都不会被抓。
+        #     18a) skill 正文里写死**不带日期**的门禁数量 -> GATE-COUNT
+        expect('MUT-github-md-gate-count',
+               _sandbox(tmp, github_md={'skills/foo/SKILL.md':
+                                        '# foo\n\n当前共 6 个门禁。\n'}),
+               ('GATE-COUNT',))
+        #     18b) skill 正文里写着过期的实现状态 -> IMPL-STATUS
+        expect('MUT-github-md-impl-status',
+               _sandbox(tmp, github_md={'skills/foo/SKILL.md':
+                                        '# foo\n\n注意：真正的实现一行都还没写。\n'}),
+               ('IMPL-STATUS',))
+        #     18c) 二级文件（skill 的 references/）也必须扫到 -> IMPL-STATUS。
+        #         本条守着通配的**递归**那一段：若写成 `.github/*/*.md`，这个样本会静默
+        #         变绿，而“探测器不在”与“变异没打到”在报告里长得一模一样。
+        expect('MUT-github-md-nested',
+               _sandbox(tmp, github_md={'skills/foo/references/traps.md':
+                                        '# traps\n\n真正的实现一行都还没写。\n'}),
+               ('IMPL-STATUS',))
+        #     18d) 干净样本（防误报）：带日期的实测快照 + 「现取」写法必须保持安静
+        expect('CLEAN-github-md-dated',
+               _sandbox(tmp, github_md={'skills/foo/SKILL.md':
+                                        '# foo\n\n2026-09-23 实测 6 个门禁；'
+                                        '现在的数量现取 `--list`。\n'}),
+               ())
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+    # 退出码归属：`--selftest` 只报自测（框架契约）。这条不能用 expect() 测 ——
+    # 它管的是**进程退出码**，而 samples 全在内存里。真实仓库那一次 e2e 实测记在
+    # `selftest_exit_code` 的注释里。
+    rc_cases = (((0, 1, True), 0), ((0, 1, False), 1), ((0, 0, True), 0), ((2, 0, True), 2))
+    for rc_args, rc_want in rc_cases:
+        rc_got = selftest_exit_code(*rc_args)
+        if rc_got != rc_want:
+            failures.append('selftest_exit_code%s -> %s, want %s'
+                            % (rc_args, rc_got, rc_want))
+    print('  exit-code-owner: %d case(s) checked' % len(rc_cases))
 
     print('  detectors=%d samples=%d' % (len(DETECTORS), checked))
     if failures:
@@ -800,21 +891,50 @@ def selftest():
     return 0
 
 
+def selftest_exit_code(selftest_rc, real_rc, selftest_mode):
+    """谁是退出码的主人。
+
+    自测模式（`--selftest`）下退出码只报自测结果，真实仓库的结论不进退出码。
+    非自测模式下退出码就是真实仓库的结论。
+
+    e2e 实测（2026-09-25，手工一次）：把 `CONTEXT.md` 拷到临时根里制造一条
+    `MAP-PATHS` FINDING，再跑 `python tools/verify_skeleton.py --selftest <该根>` ——
+    输出里有 `SELFTEST OK` + `FINDING [MAP-PATHS]`（那个根里只有 CONTEXT.md，
+    所以另有 7 条缺文件类 FINDING）+ `verdict: FAIL (8 issue(s))` 而 `rc=0`；
+    不带 `--selftest` 跑同一个根则 `rc=1`。这正是框架需要的形状。
+    """
+    return selftest_rc if selftest_mode else real_rc
+
+
 def main(argv):
     args = [a for a in argv[1:] if a != '--selftest']
-    if '--selftest' in argv[1:]:
+    selftest_mode = '--selftest' in argv[1:]
+    if selftest_mode:
         rc = selftest()
         if rc:
             return rc
         # 自测通过后仍然要在真实仓库上跑一遍，否则「SELFTEST OK」会被读成产物也是好的。
+        # 但退出码只报自测 —— 见 selftest_exit_code。
     root = os.path.abspath(args[0]) if args else ROOT
     findings = verify(root)
     for code, msg in findings:
         print('FINDING [%s] %s' % (code, msg))
     print('root: %s' % root)
     print('denominator: %d detector(s) ran: %s' % (len(DETECTORS), ', '.join(DETECTORS)))
+    # 扩面后的可见分母：这一层一个文件都没扫到时，上面的 PASS 只覆盖了固定三处。
+    # 不报 FAIL 的理由：`.github/` 下没有任何 markdown 的仓库是合法的（固定三处仍在扫），
+    # 而本仓库一定有（copilot-instructions.md）—— 所以打印出来就够，写死不写死的样本
+    # （MUT-github-md-*）才是守着这个通配真的生效的人。
+    gh_md = _status_targets(root, ())
+    print('status scan: fixed 3 + %d .github markdown file(s): %s'
+          % (len(gh_md), ', '.join(gh_md) if gh_md else '(none)'))
     print('verdict: %s (%d issue(s))' % ('PASS' if not findings else 'FAIL', len(findings)))
-    return 0 if not findings else 1
+    real_rc = 0 if not findings else 1
+    if selftest_mode:
+        print('note: --selftest 的退出码只报自测；上面真实仓库的结论是 %s，'
+              '由不带 --selftest 的那一次运行负责判。'
+              % ('PASS' if real_rc == 0 else 'FAIL'))
+    return selftest_exit_code(0, real_rc, selftest_mode)
 
 
 if __name__ == '__main__':

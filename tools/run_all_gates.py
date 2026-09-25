@@ -309,7 +309,12 @@ GATES = [
     },
 ]
 
-FINDING_RE = re.compile(r'^(?:FINDING|ISSUE) \[([A-Z0-9_]+)\]', re.M)
+# 检查码里的连字符要认。原写法 `[A-Z0-9_]+` 匹配不上 `MAP-PATHS` / `CI-SWALLOW`
+# 这类**本仓库自己在用**的代码，于是 parse()['total'] 偏小：tier-A 只是把计数印错
+# （另有 verdict 行的数字兜底），tier-B 的棘轮却直接吃这个数 —— 带连字符的欠账会被
+# 算成 0，`debt shrank` 与 `composition moved` 两档都可能因此放行。2026-09-25 修，
+# 样本见 selftest() 的 [hyphen-code-counted]。
+FINDING_RE = re.compile(r'^(?:FINDING|ISSUE) \[([A-Za-z0-9_-]+)\]', re.M)
 VERDICT_RE = re.compile(r'^verdict:\s*(\w+)', re.M)
 SELFTEST_RE = re.compile(r'^SELFTEST\s+(OK|FAIL)', re.M)
 
@@ -756,6 +761,17 @@ def selftest():
             'error': None, 'seconds': 0.1},
            {'b': {'total': None, 'detail': None}}, False)
     expect('B-baseline-and-gate-disagree', gb, stok, good, base, False)
+
+    # 带连字符的检查码必须被算进 total：棘轮（tier-B）直接拿 total 与基线比，
+    # 少算一个就等于把那一份欠账放行。这条用纯函数断言，因为走 expect() 的话
+    # 「认不出代码 ⇒ total=0 ⇒ 欠账缩水 ⇒ FAIL」与「认出了但确实缩水」同样都是
+    # ok=False，样本根本分不出对错。
+    pk_h = parse('FINDING [MAP-PATHS] x\nFINDING [T1] y\nverdict: FAIL (2 issue(s))\n')
+    hit = (pk_h['total'] == 2 and pk_h['findings'] == {'MAP-PATHS': 1, 'T1': 1})
+    print('  [hyphen-code-counted] total=%s codes=%s %s'
+          % (pk_h['total'], dict(sorted(pk_h['findings'].items())),
+             'OK' if hit else 'MISSED'))
+    ok = ok and hit
 
     # Registry guards: an empty or tier-A-less registry must not produce a green run.
     reg_ok = bool(GATES) and any(g['tier'] == 'A' for g in GATES)

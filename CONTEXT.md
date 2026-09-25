@@ -98,7 +98,7 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 
 | 文件 | 作用 |
 |---|---|
-| `tools/run_all_gates.py` | ★ **统一入口**，一条命令跑全部门禁并给出一个总判据 |
+| `tools/run_all_gates.py` | ★ **统一入口**，一条命令跑全部门禁并给出一个总判据。两条口径（2026-09-25 修，见规范 §3.6 案例十）：① 每个门禁跑两次，`--selftest` 的**退出码只报自测**（接着跑真实产物得出的结论照常打印，但不进 rc）—— 否则真产物一红，框架的 `rc != 0` 就把「产物红了」写成 `selftest=FAIL`；② 它解析检查码时**认连字符**（`MAP-PATHS` / `CI-SWALLOW` 这类是本仓库自己的代码），tier-B 棘轮的欠账计数直接吃这个数 |
 | `tools/gates-report.txt` | 上一次运行的完整输出 —— **看结果读它，不要重跑** |
 | `tools/dev.py` | 本地开发环的**单一入口**（`check` / `full` / `gate` / `test` / `status` / `--selftest`）：一次调用拿 pytest + 门禁的总判据，省掉 PS 5.1 的编码税。**故意不做**：缓存判定（缓存判定＝假绿工厂）、建第二份门禁注册表、按改动路由门禁（少跑却报绿）；**只打 ASCII**，中文细节留在 `tools/gates-report.txt` |
 | `tools/gates-baseline.json` | tier-B 棘轮基线，**手工维护**，禁止自动写入 |
@@ -112,7 +112,7 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 | `tools/verify_data_center_pit.py` | ★ **I2 S1 新门禁**：`DataFeed` 取数路径的 `as_of` **两层防线**（显式日期参数越界必须抛 / 经 guard 逐行登记）+ 回测会话下 `QFQ`/`BFILL` 必须被拒 + 只有 `DataCenter.as_of()` 能产出 `DataFeed`。「越界＝抛而非裁剪」这条语义的机器判据就在这里。**只解析 AST，从不执行被检代码、不跑 pytest** |
 | `tools/verify_data_center_adapter.py` | ★ **I2 S2 新门禁**（`data-center-adapter`）：采集侧适配器把源列名/取值翻成标准 schema（A1/A2/A4/A8）、采集层不含数据库驱动（A5）、源 SDK 只能惰性 import（A6）、行对象不暴露源字段名（A7）、新映射表/列名元组未登记即报错（A3/A9）、两个空转守卫（A0/A10）。**只解析源码文本**：不执行适配器、不联网、不 import pandas |
 | `tools/verify_iteration_plan.py` | 迭代计划里每个标「已交付」的迭代是否引用了一条**真实存在**的证据路径（防幽灵 ✅）+ DoD 四件套形状 |
-| `tools/verify_skeleton.py` | I0 骨架是否还在（pyproject / 包 / 测试 / CI 的 `run:` 接线），**不跑 pytest**；另守 `CONTEXT.md` 三件事不许过期 —— 状态陈述（`IMPL-STATUS`）、写死的门禁计数（`GATE-COUNT`）、**地图里的路径必须真实存在**（`MAP-PATHS`）。⚠️ 它们只管结构，**看不见错字/乱码**：改完中文文案要回读核对 |
+| `tools/verify_skeleton.py` | I0 骨架是否还在（pyproject / 包 / 测试 / CI 的 `run:` 接线），**不跑 pytest**；另守三件事不许过期 —— 状态陈述（`IMPL-STATUS`）、写死的门禁计数（`GATE-COUNT`）、**地图里的路径必须真实存在**（`MAP-PATHS`）。2026-09-25 起 `IMPL-STATUS` / `GATE-COUNT` 的扫描面扩到 **`.github/**/*.md`**（原先这一层零判据，而它是**自动加载层**，过期前提在这里最贵；扩面时给这层补了 4 个样本，含一个放在 skill 二级目录（references 子目录）的样本守着通配**递归**那一支），`MAP-PATHS` **仍只管 `CONTEXT.md`**（散文里的时区/字段对假阳性实测过）。报告里有一行 `status scan: fixed 3 + N .github markdown file(s)` 是这一层的可见分母。⚠️ 它们只管结构，**看不见错字/乱码**：改完中文文案要回读核对 |
 | `tools/verify_backtest_reproducibility.py` | 回测可复现性：同种子两次跑 `deterministic` 段逐字节一致、换种子必须真的改变、样本非空、段结构合规、入库证据不可是过期快照（R1~R5）；**默认只读**，重录证据要显式 `--record` |
 | `tools/verify_contract_signature.py` | 契约签名与实现**双向**一致（S1~S7）+ 未登记成员 / 未实现缺口清单；机器可读投影是 `tools/contract-signature-manifest.json` |
 | `tools/contract-signature-manifest.json` | 契约签名的机器可读投影。**顶层键只有** `schema` / `contract` / `classes` / `impl_only` / `non_normative_blocks` / `note`（2026-09-25 实测；**没有** `local_types` 这个键 —— 实现侧好几处 docstring 曾引它，见缺口清单 B9.3）；`classes` 里每个类条目下面另有 `not_implemented` / `not_implemented_why` / `extras` 等字段。`impl_only` 是**只有实现、契约没写**的类（如数据源适配器三角色），只能做反向漂移检查；**枚举不在这两张表里**（它们由 `enum-members` 单独比） |
@@ -133,6 +133,21 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 | `tools/sql-smoke-report.txt` | 运行时证据（含镜像 digest）—— **快照**，改 `db/*.sql` 后作废；这份是默认路径那份 = `postgres:17`(17.11) |
 | `tools/sql-smoke-report-pg14.txt` / `tools/sql-smoke-report-pg15.txt` / `tools/sql-smoke-report-pg16.txt` | 版本阶梯的另三份证据（`postgres:14` 14.24 / `15` 15.18 / `16` 16.15，各 23/0 与 42/0）—— 由 `--report=` 另存，互不覆盖；同样是**快照** |
 | `tools/falsify-report.txt` | 上述证伪的逐案例证据 —— **快照**，改 `db/*.sql` 或 `*.smoke.sql` 后作废 |
+
+### F. 渐进式披露层（2026-09-25 新增；给 agent 的作业规程，**不是判据**）
+
+| 文件 | 何时被读 |
+|---|---|
+| `.github/skills/quan-auto-iteration-delivery/SKILL.md` | 「收工 / 提交这一轮 / 推送 / 等 CI」这类动作：先取总判据、读报告而不是重跑、回填会变假的状态陈述、按证据快照抬头决定提交粒度、提交后刷新以 `git ls-files` 为范围的门禁证据 |
+| `.github/skills/quan-auto-gate-authoring/SKILL.md` | 新增或修改门禁：铁律（绝不削弱检查 / 提取为空必须 FAIL / 一个探测器一个样本 / 先在真实产物上证伪）+ 注册与自测步骤 |
+| `.github/skills/quan-auto-db-change/SKILL.md` | 改 `db/*.sql` 或 `db/*.smoke.sql`：容器通道是**唯一**能证明「约束真的会拒绝」的手段、另存快照要用 `--report=`、DDL 头部那行声明是唯一主张、改过任何 DDL 后旧快照即作废 |
+| `.github/skills/quan-auto-doc-drift/SKILL.md` | 改文档：docx 派生 md 只可追加、追加物要登记进 `ADDENDA`、行号引用改完必须重测、两类会过期的措辞由 `skeleton` 门禁抓 |
+
+> 它们是**分层加载**的：平时只进 `name` + `description`（约 100 token），正文在相关时才进上下文
+> ⇒ 与本文件 §4 的 token 分层是同一回事，**不是新增一层真相来源**。
+> 因此**任何数字都现取**（§6 与 `docs/迭代计划.md`），skill 里不许复制计数 —— 那正是
+> `GATE-COUNT` 抓的写法。**边界**：skill 是规程，没有牙；它说得再对也不构成证据，
+> 判据只有门禁与测试。
 
 ## 4. 怎么跑门禁
 
