@@ -29,8 +29,9 @@
 这类变异必须**逐条写明理由**并标为 `ENV-LIMIT`：它只证明「这里验不了」，
 **不等于 PASS**，也不允许把一条没被抓到的变异事后追认为 `env_limit`。
 
-⚠️ `env_limit` 的取值**随环境变**，不是常数：本仓库 `psycopg` **不发在 `pyproject.toml` 里**
-（`dependencies` 只有 pandas，`dev` 只有 pytest），所以 CI 里 `S9` 会退化成 `ENV-LIMIT`，
+⚠️ `env_limit` 的取值**随环境变**，不是常数：本仓库 `psycopg` 只声明在
+`[project.optional-dependencies] postgres` 里（2026-09-25 裁决），而 extra 是 opt-in ——
+CI 只装 `.[dev]`，所以 CI 里 `S9` 会退化成 `ENV-LIMIT`，
 而本机 `.venv` 手工装了 `psycopg` 之后它就是**真的 CAUGHT**（2026-09-25 实测 `env_limited=0`）。
 改环境后要重看这一栏，不要把上一轮的 `env_limited` 当现状引用。
 """
@@ -224,9 +225,10 @@ MUTATIONS = [
         "new": "from .datacenter import BarStore, DailyBar\n\nimport psycopg  # MUT",
         "expect": ["test_import_pgstore_does_not_import_the_driver"],
         "env_limit": (
-            "**只有在本机没装驱动时**才走这条退路：顶层拉驱动会是收集期 ImportError，"
+            "**只有在这个环境没装驱动时**才走这条退路：顶层拉驱动会是收集期 ImportError，"
             "在断言之前就炸。2026-09-25 起仓库 `.venv` 已装了 psycopg（落库侧要用）"
-            "⇒ 正常情况下这条走不到这里，而是像别的变异一样真的变红；"
+            "⇒ 本机这条走不到这里，而是像别的变异一样真的变红；CI 只装 `.[dev]`、"
+            "`[postgres]` extra 是 opt-in ⇒ 那边仍然会退到这里。"
             "留着它只是为了在没装驱动的环境里不被误当成 CAUGHT"
         ),
     },

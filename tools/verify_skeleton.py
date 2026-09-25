@@ -54,7 +54,7 @@ SWALLOW_RE = re.compile(r'continue-on-error:[ \t]*true|\|\|[ \t]*true\b')
 
 # 本门禁一共几个探测器。用来在报告里打出分母 —— 分母为 0 的报告不许被读成通过。
 DETECTORS = ('PYPROJECT', 'VERSION', 'PACKAGE', 'TESTS', 'CI', 'CI-SWALLOW',
-             'GATE-COUNT', 'IMPL-STATUS', 'MAP-PATHS')
+             'GATE-COUNT', 'IMPL-STATUS', 'MAP-PATHS', 'DRIVER-EXTRA')
 
 # ── 状态陈述探测器（为什么需要它们） ────────────────────────────────────────
 #
@@ -94,7 +94,7 @@ DATE_RE = re.compile(r'\d{4}-\d{2}-\d{2}')
 # ── 地图幽灵路径探测器 ─────────────────────────────────────────────────────
 #
 # `CONTEXT.md` 的职责是导航：它写下的每个文件路径都是一句「去这里看」。路径一旦
-# 改名或被删，这句话就把人送到空地址，而**其它八个探测器全都看不见**（它们不读
+# 改名或被删，这句话就把人送到空地址，而**其它九个探测器全都看不见**（它们不读
 # CONTEXT.md 里的路径）。这与 `verify_iteration_plan.py` 的 C4（证据路径必须存在）
 # 是同一类判据 —— 那边守「已交付的证据」，这边守「地图的指路」。
 #
@@ -150,6 +150,90 @@ def check_pyproject(root):
         if not data.get('project', {}).get('requires-python'):
             findings.append(('PYPROJECT', '%s 缺 [project].requires-python（解释器下限没有声明）'
                              % PYPROJECT))
+    return findings
+
+
+# ── 驱动声明探测器 ──────────────────────────────────────────────────────────
+#
+# 2026-09-25 裁决：`psycopg` 写进 `[project.optional-dependencies] postgres`。但
+# 「怎么装驱动」这件事有**两处手写副本**：pyproject 里的声明下限，与
+# `quanauto/pgstore.py` 报错文案里教用户敲的那条命令。两处漂开不会有任何东西报红，
+# 而用户照着提示装出来的东西与声明的不是一回事。`[datasources]` extra 至今也是这个
+# 状态（没有判据），这条探测器至少把驱动那一半钉住。
+#
+# 判据形状三条，缺一即 FAIL（第三条是空转守卫）：
+#   1. `[project.optional-dependencies].postgres` 存在，且里面有需求名**恰好**是
+#      `psycopg` 的条目 —— 不能用子串命中，否则 `notpsycopg` 也会被当成声明；
+#   2. `quanauto/pgstore.py` 里能提取到安装提示（提取为空时下面那条比较永远不开火）；
+#   3. 两处的版本下限是同一串。
+# 名字解析故意不引 `packaging`：`tools/` 只用标准库（规范 §7），而 extra 的写法是
+# 本仓库自己定的、形状可控，正则够用。
+DRIVER_EXTRA = 'postgres'
+DRIVER_REQUIREMENT = 'psycopg'
+DRIVER_MODULE = os.path.join(PKG_NAME, 'pgstore.py')
+HINT_RE = re.compile(r"pip install '([A-Za-z0-9_.\-]+)>=([0-9][0-9.]*)'")
+FLOOR_RE = re.compile(r'>=[ \t]*([0-9][0-9.]*)')
+
+
+def _requirement_name(spec):
+    """从 PEP 508 片段里抠出需求名：`psycopg[binary]>=3.1` -> `psycopg`。"""
+    m = re.match(r'[ \t]*([A-Za-z0-9_.\-]+)', str(spec))
+    if not m:
+        return ''
+    return m.group(1).replace('_', '-').lower()
+
+
+def check_driver_extra(root):
+    """驱动既要有声明位置，也要有一条和它下限一致的安装提示。"""
+    findings = []
+    shown = DRIVER_MODULE.replace('\\', '/')
+    text = read_text(os.path.join(root, DRIVER_MODULE))
+    _, data = _load_pyproject(root)
+    declared = []
+    if data is None:
+        findings.append(('DRIVER-EXTRA',
+                         '%s 读不到或不可解析 —— 驱动声明的下限无从核对（不是「一致」）'
+                         % PYPROJECT))
+    else:
+        extras = data.get('project', {}).get('optional-dependencies') or {}
+        specs = extras.get(DRIVER_EXTRA)
+        if not specs:
+            findings.append(('DRIVER-EXTRA',
+                             '%s 的 [project.optional-dependencies] 里没有 %r —— %s 惰性导入的 '
+                             '%s 没有声明位置，文案教的装法无法从依赖图复现'
+                             % (PYPROJECT, DRIVER_EXTRA, shown, DRIVER_REQUIREMENT)))
+        else:
+            for spec in specs:
+                if _requirement_name(spec) == DRIVER_REQUIREMENT:
+                    m = FLOOR_RE.search(str(spec))
+                    declared.append(m.group(1) if m else '')
+            if not declared:
+                findings.append(('DRIVER-EXTRA',
+                                 '%s 的 %r extra=%r 里没有需求名恰好是 %r 的条目'
+                                 % (PYPROJECT, DRIVER_EXTRA, specs, DRIVER_REQUIREMENT)))
+    if text is None:
+        findings.append(('DRIVER-EXTRA',
+                         '%s 不存在 —— 取不到安装提示，与 %s 的声明无从互相印证'
+                         % (shown, PYPROJECT)))
+        return findings
+    hints = HINT_RE.findall(text)
+    if not hints:
+        # 空转守卫：提取为空时「下限一致」那一半永远不会开火，却会打印 PASS。
+        findings.append(('DRIVER-EXTRA',
+                         '%s 里提取不到安装提示（期望 `pip install \'%s>=X.Y\'` 这种形状）—— '
+                         '提取为空时下限比较形同虚设，拒绝通过'
+                         % (shown, DRIVER_REQUIREMENT)))
+        return findings
+    hinted = sorted({floor for name, floor in hints if name == DRIVER_REQUIREMENT})
+    if not hinted:
+        findings.append(('DRIVER-EXTRA',
+                         '%s 的安装提示提到的是别的包（%s），没有 %r'
+                         % (shown, ', '.join(sorted({n for n, _ in hints})), DRIVER_REQUIREMENT)))
+    elif declared and hinted != sorted(set(declared)):
+        findings.append(('DRIVER-EXTRA',
+                         '版本下限两处不一致：%s 的 %r extra 写 %s，而 %s 教用户装的写 %s'
+                         % (PYPROJECT, DRIVER_EXTRA, ', '.join(sorted(set(declared))), shown,
+                            ', '.join(hinted))))
     return findings
 
 
@@ -442,6 +526,7 @@ DETECTOR_FUNCS = {
     'GATE-COUNT': check_gate_count,
     'IMPL-STATUS': check_impl_status,
     'MAP-PATHS': check_map_paths,
+    'DRIVER-EXTRA': check_driver_extra,
 }
 
 
@@ -469,6 +554,9 @@ version = "1.2.3"
 requires-python = ">=3.11"
 dependencies = []
 
+[project.optional-dependencies]
+postgres = ["psycopg[binary]>=3.1"]
+
 [tool.setuptools]
 packages = ["quanauto"]
 
@@ -490,10 +578,15 @@ jobs:
       - run: python tools/run_all_gates.py
 '''
 
+# 驱动安装提示的替身：真文件里那句话长得多，这里只要能被 HINT_RE 提取到就够。
+# 故意写成 ASCII，免得样例输出依赖控制台编码。
+DRIVER_HINT_OK = ('def _import_psycopg():\n'
+                  '    raise InvalidConfigError("driver: pip install \'psycopg>=3.1\'")\n')
+
 
 def _sandbox(tmp, *, pyproject=CLEAN_PYPROJECT, version='"1.2.3"', ci=CLEAN_CI,
              packages='"quanauto"', make_pkg=True, make_tests=True,
-             context_md=None, impl_modules=()):
+             context_md=None, impl_modules=(), driver_hint=DRIVER_HINT_OK):
     """造一个最小仓库。每个样本只动一处，其余保持干净 —— 这样报出来的必定是那一处。"""
     root = tempfile.mkdtemp(dir=tmp)
     with open(os.path.join(root, PYPROJECT), 'w', encoding='utf-8', newline='\n') as fp:
@@ -507,6 +600,10 @@ def _sandbox(tmp, *, pyproject=CLEAN_PYPROJECT, version='"1.2.3"', ci=CLEAN_CI,
             with open(os.path.join(root, PKG_NAME, mod), 'w',
                       encoding='utf-8', newline='\n') as fp:
                 fp.write('"""fake impl."""\n')
+        if driver_hint is not None:
+            with open(os.path.join(root, PKG_NAME, os.path.basename(DRIVER_MODULE)), 'w',
+                      encoding='utf-8', newline='\n') as fp:
+                fp.write(driver_hint)
     if context_md is not None:
         with open(os.path.join(root, 'CONTEXT.md'), 'w', encoding='utf-8', newline='\n') as fp:
             fp.write(context_md)
@@ -547,16 +644,18 @@ def selftest():
     try:
         # 0) 干净样本：必须一条都不报（防误报 —— 没有它，负样本全红也证明不了什么）
         expect('CLEAN (no findings)', _sandbox(tmp), ())
-        # 1) pyproject 整个消失 -> PYPROJECT（VERSION/TESTS 也会连带报，因为它们的
-        #    判据依赖 pyproject 里的配置 —— 「读不到」必须报红，不得静默当成干净）
+        # 1) pyproject 整个消失 -> PYPROJECT（VERSION/TESTS/DRIVER-EXTRA 也会连带报，
+        #    因为它们）的判据都依赖 pyproject 里的声明 —— 「读不到」必须报红，不得
+        #    静默当成干净）
         root = _sandbox(tmp)
         os.remove(os.path.join(root, PYPROJECT))
-        expect('MUT-no-pyproject', root, ('PYPROJECT', 'TESTS', 'VERSION'))
+        expect('MUT-no-pyproject', root,
+               ('DRIVER-EXTRA', 'PYPROJECT', 'TESTS', 'VERSION'))
         # 2) pyproject 语法坏掉 -> PYPROJECT（解析失败不得被读成「检查通过」；
         #    依赖它的 VERSION/TESTS 也必须报红而不是沉默）
         expect('MUT-pyproject-unparseable',
                _sandbox(tmp, pyproject=CLEAN_PYPROJECT + 'this is not toml\n'),
-               ('PYPROJECT', 'TESTS', 'VERSION'))
+               ('DRIVER-EXTRA', 'PYPROJECT', 'TESTS', 'VERSION'))
         # 3) 版本号只改一处 -> VERSION（两个来源的漂移）
         expect('MUT-version-drift', _sandbox(tmp, version='"9.9.9"'), ('VERSION',))
         # 4) [tool.setuptools].packages 不含包名 -> PACKAGE
@@ -564,7 +663,8 @@ def selftest():
         # 5) tests/ 没有测试文件 -> TESTS
         expect('MUT-no-test-files', _sandbox(tmp, make_tests=False), ('TESTS',))
         # 6) 包目录整个没有 -> PACKAGE（连 __init__.py 也没了）
-        expect('MUT-no-package-dir', _sandbox(tmp, make_pkg=False), ('PACKAGE', 'VERSION'))
+        expect('MUT-no-package-dir', _sandbox(tmp, make_pkg=False),
+               ('DRIVER-EXTRA', 'PACKAGE', 'VERSION'))
         # 7) CI 里少掉门禁那一行 -> CI（CI 变成只跑 pytest = 门禁再也不执行）
         expect('MUT-ci-drops-gates',
                _sandbox(tmp, ci=CLEAN_CI.replace('      - run: python tools/run_all_gates.py\n', '')),
@@ -589,11 +689,11 @@ def selftest():
                ())
         # 11) 完全没有产物的目录 -> 六个里至少 PYPROJECT/PACKAGE/TESTS/CI/VERSION 都要报
         expect('MUT-empty-root', _sandbox(tmp, pyproject='', make_pkg=False, make_tests=False,
-                                          ci=None), ('CI', 'PACKAGE', 'PYPROJECT', 'TESTS',
-                                                     'VERSION'))
+                                          ci=None), ('CI', 'DRIVER-EXTRA', 'PACKAGE',
+                                                     'PYPROJECT', 'TESTS', 'VERSION'))
         # 12) 输入目录根本不存在时也必须判红（而不是「没找到问题」）
         expect('MUT-nonexistent-root', os.path.join(tmp, 'no-such-root'),
-               ('CI', 'PACKAGE', 'PYPROJECT', 'TESTS', 'VERSION'))
+               ('CI', 'DRIVER-EXTRA', 'PACKAGE', 'PYPROJECT', 'TESTS', 'VERSION'))
         # 13) 实现已存在，CONTEXT.md 还写着「一行都还没写」-> IMPL-STATUS
         #     ⚠️ 每个样本的 CONTEXT.md 都必须带**至少一个能解析的文件引用**，否则
         #     MAP-PATHS 的空转守卫会一起开火；那样报出来是两个码，就看不出 IMPL-STATUS
@@ -603,9 +703,14 @@ def selftest():
                         context_md='契约、DDL、门禁 —— 真正的实现一行都还没写。见 `pyproject.toml`。\n'),
                ('IMPL-STATUS',))
         # 13b) 同一句话，但**还没有实现模块** -> 此刻它是对的，必须保持安静（防误报）
+        #      ⚠️ 这里必须显式 `driver_hint=None`：默认沙箱为了 DRIVER-EXTRA 会放一个
+        #      `pgstore.py`，而它本身就是「一个实现模块」⇒ 不拿掉就构造不出「零实现模块」
+        #      这个前置条件。拿掉之后 DRIVER-EXTRA 会**理应**开火（那个文件确实不见了），
+        #      本条真正断言的是 IMPL-STATUS **没有**跟着开火。
         expect('CLEAN-impl-status-accurate',
-               _sandbox(tmp, context_md='契约、DDL、门禁 —— 真正的实现一行都还没写。见 `pyproject.toml`。\n'),
-               ())
+               _sandbox(tmp, driver_hint=None,
+                        context_md='契约、DDL、门禁 —— 真正的实现一行都还没写。见 `pyproject.toml`。\n'),
+               ('DRIVER-EXTRA',))
         # 13c) 同一个过期陈述写在 pyproject description 里 -> 同样被抓（三处都要管）
         expect('MUT-impl-status-in-description',
                _sandbox(tmp, impl_modules=('broker.py',),
@@ -659,6 +764,28 @@ def selftest():
                _sandbox(tmp, impl_modules=('broker.py',),
                         context_md='依赖清单是空的：现在一行实现都没有。见 `pyproject.toml`。\n'),
                ('IMPL-STATUS',))
+        # 17) 驱动声明 ↔ 安装提示（2026-09-25 裁决后补）
+        #     17a) extra 整个消失 -> DRIVER-EXTRA（声明位置没了）
+        expect('MUT-driver-extra-missing',
+               _sandbox(tmp, pyproject=CLEAN_PYPROJECT.replace(
+                   'postgres = ["psycopg[binary]>=3.1"]\n', '')),
+               ('DRIVER-EXTRA',))
+        #     17b) 两处下限漂开（声明 3.2 / 提示 3.1）—— 照提示装出来的与声明的不是一回事
+        expect('MUT-driver-floor-drift',
+               _sandbox(tmp, pyproject=CLEAN_PYPROJECT.replace(
+                   'psycopg[binary]>=3.1', 'psycopg[binary]>=3.2')),
+               ('DRIVER-EXTRA',))
+        #     17c) 空转守卫：源码里提取不到安装提示 -> 拒绝通过（而不是「比较通过」）
+        expect('GATE-driver-hint-gone',
+               _sandbox(tmp, driver_hint='def _import_psycopg():\n    raise RuntimeError("boom")\n'),
+               ('DRIVER-EXTRA',))
+        #     17d) extra 里声明的是别的包（`notpsycopg`）-> DRIVER-EXTRA。
+        #         本条是「名字要恰好相等」的主人：子串命中（`'psycopg' in spec`）会把
+        #         `notpsycopg>=3.1` 当成合法声明而放行，所以它必须报红。
+        expect('MUT-driver-extra-wrong-pkg',
+               _sandbox(tmp, pyproject=CLEAN_PYPROJECT.replace(
+                   'psycopg[binary]>=3.1', 'notpsycopg>=3.1')),
+               ('DRIVER-EXTRA',))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

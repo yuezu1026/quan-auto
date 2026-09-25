@@ -449,9 +449,10 @@ def test_import_pgstore_does_not_import_the_driver():
     """子进程里真跑一次 `import`：两边都要求「导入期不拉驱动」。
 
     环境事实（**会变，别照抄**）：本机 `.venv` 自 2026-09-25 起**装着** psycopg（手工装，
-    `psycopg[binary] 3.3.6`；`pyproject.toml` 里**没有**声明它）⇒ 本机这条断言是**有牙的**
-    （变异 `S9` 在本机真的 CAUGHT）。CI 只装 `.[dev]`（= pytest）⇒ 那边没装，这条退化成
-    恒真。两边都跑同一条，所以「本机红」比「CI 绿」强。
+    `psycopg[binary] 3.3.6`）⇒ 本机这条断言是**有牙的**（变异 `S9` 在本机真的 CAUGHT）。
+    驱动同日起声明在 `pyproject.toml` 的 `[postgres]` extra 里，**但 extra 是 opt-in** ——
+    CI 只装 `.[dev]`（= pytest）⇒ 那边没装，这条退化成恒真。两边都跑同一条，
+    所以「本机红」比「CI 绿」强。
     """
     code = "import sys; import quanauto.pgstore; print('psycopg' in sys.modules)"
     proc = subprocess.run(
