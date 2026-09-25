@@ -121,6 +121,7 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 | `tools/docx2md.py` | docx→md 转换器（**重跑会覆盖产物 A**） |
 | `tools/dump_docx_paras.py` | 定位 docx 段落，排查 md-fidelity 差异时的取证工具 |
 | `docker-compose.smoke.yml` | 一次性 PostgreSQL 容器（无 `ports:`、无命名卷 ⇒ `down -v` 必得空库） |
+| `docker-compose.dev.yml` | **本机开发库**（发布 127.0.0.1:55432、带命名卷 ⇒ 数据会留在 `quan-auto-dev` 项目里，`down -v` 才清）。为「用客户端连库看数据」而建；项目名与 smoke 的 `quan-auto` 不同 ⇒ 与 `run_sql_smoke.py` 可同时存在、互不拆。**它不是证据通道**：那份文件的头部注释里写清了它一个字都不许被门禁/DoD/契约引用。它之所以另立一份而不是给 smoke 加 `ports:`，为了守住 smoke 头部那两条设计约束（不发布端口 = 不和真实实例抢端口；发布端口会让门禁在端口被占时以环境性失败变红） |
 | `tools/run_sql_smoke.py` | ★ **运行时验证通道**：起库 → 验空 → 两份 DDL+触发测试 → 落报告 |
 | `tools/falsify_smoke.py` | 证伪器：逐条放宽 CHECK 表达式，确认触测会变红（目前 31/31 CAUGHT / 30 条约束，**只在 `postgres:17` 上做过**） |
 | `tools/sql-smoke-report.txt` | 运行时证据（含镜像 digest）—— **快照**，改 `db/*.sql` 后作废；这份是默认路径那份 = `postgres:17`(17.11) |
@@ -168,7 +169,19 @@ python tools/falsify_smoke.py            # 证伪那两份绿（逐条放宽约�
 
 退出码：`0` 两份都 `SMOKE PASS` / `1` 有触发测试失败（**约束没拦住**）/ `2` 空库守卫或脚本自检失败 / `3` 无 docker。
 
-**它为什么不在 `run_all_gates.py` 里**：没 docker 的机器上，注册进去要么报一条环境性 FAIL，
+**想拿客户端连库看数据**（DBeaver / psql / VS Code 数据库扩展）走的是**另一份** compose，不是上面这份：
+
+```powershell
+docker compose -f docker-compose.dev.yml up -d --wait db   # 127.0.0.1:55432 / 库 quan / 用户 postgres
+docker compose -f docker-compose.dev.yml down -v           # 删库重置
+```
+
+它发布端口、带命名卷，所以**数据会留下来** —— 这也意味着它的库会**非空**，而 `db/*.sql` 全是
+`CREATE TABLE IF NOT EXISTS`：在里面重跑 DDL 会**静默什么都不做**（改了约束却看不到变化时，
+先 `down -v` 重置，别怀疑自己没跑对）。它跑出来的任何结果**都不是证据**（smoke 报告里的
+结论只出自 `docker-compose.smoke.yml` 那条通道），原因见上面 §E 表格里 `docker-compose.dev.yml` 那一行。
+
+**`run_sql_smoke.py` 为什么不在 `run_all_gates.py` 里**：没 docker 的机器上，注册进去要么报一条环境性 FAIL，
 要么被静默 SKIP 后**打印绿色** —— 后者正是本项目反复踩的假门禁。要接进来必须先做到
 「无 docker ⇒ 明确 `SKIPPED` 且计入跳过数」。想看它的结论就读 `tools/sql-smoke-report.txt`。
 

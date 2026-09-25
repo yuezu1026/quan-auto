@@ -1,0 +1,76 @@
+# 本地开发用 PostgreSQL —— 把端口映射到宿主机，供数据库客户端连接。
+#
+# ⚠️ 它与 docker-compose.smoke.yml 是两份**不同用途**的文件。不要合并、不要互相 -f 叠加：
+#
+#     docker-compose.smoke.yml   一次性验证通道，由 tools/run_sql_smoke.py 驱动。
+#                                无 ports:、无命名卷 ⇒ down -v 必得空库。
+#                                只有它跑出来的结论才是 sql-smoke-report*.txt 里的证据。
+#     本文件                      本机开发便利。发布端口、带命名卷 ⇒ 数据会留下来。
+#                                🔴 它的内容不是任何门禁 / DoD / 契约的证据，一个字都不许引用。
+#
+# 为什么不给 smoke 文件加一行 ports:（本轮要守住的判断，理由都在本仓库里）：
+#   1. 那份文件头部第 2 条设计约束写的就是「不发布端口」，理由是 host 上不暴露端口才不会和
+#      将来真实的 PG 实例 / 部署环境抢端口。直接改它 = 让那句约束变成假话。
+#   2. run_sql_smoke.py 每次跑都会起容器。若它发布的端口被别的进程占了，门禁会以
+#      **环境性失败**的名义变红 —— 判据依赖环境就是判据的缺陷（本仓库已踩过一次）。
+#   3. 空库守卫的前提是「每次都是新库」。带持久卷的开发库不能并进那条通道。
+#
+# 起：        docker compose -f docker-compose.dev.yml up -d --wait db
+# 停（留数据）：docker compose -f docker-compose.dev.yml stop
+# 重置（删数据）：docker compose -f docker-compose.dev.yml down -v
+#
+# 连接信息（psql / DBeaver / 任意客户端）：
+#   host 127.0.0.1   port 55432   database quan   user postgres
+#   password quan_local_smoke_only  （与 smoke 同款一次性字面量，故只绑 127.0.0.1 不绑 0.0.0.0）
+#
+# host 端口可用 PG_PORT 覆盖、镜像可用 PG_IMAGE 覆盖（例：PG_IMAGE=postgres:14 验证跨版本行为）。
+#
+# 🔴 卷留下的陷阱（smoke 文件头第 1 条就是为它设的，tools/falsify_smoke.py 真被它咬过）：
+#      db/*.sql 全是 CREATE TABLE IF NOT EXISTS，在**非空**库上重跑会**静默什么都不做**。
+#      改了 DDL 却看不到结构变化 ⇒ 先 down -v 重置，别怀疑自己没跑对。
+#
+# 想在容器里手工上 DDL（注意：这不是证据，只是开发便利）：
+#   docker compose -f docker-compose.dev.yml exec -T db psql -U postgres -d quan \
+#     -v ON_ERROR_STOP=1 -f /work/db/data_center.sql
+# 要看「约束真会拒绝非法值」的结论，请跑 tools/run_sql_smoke.py —— 它自带空库守卫与编码断言，
+# 手工 up 之后不等于验证过了。
+#
+# 项目名固定为 quan-auto-dev（与 smoke 的 quan-auto 不同）⇒ run_sql_smoke.py 的
+# pre-clean down -v 不会拆掉这个库，两者可以同时存在。
+name: quan-auto-dev
+
+services:
+  db:
+    # 与 smoke 同款镜像，便于「开发库结构与冒烟库结构一致」。
+    image: ${PG_IMAGE:-postgres:17}
+    environment:
+      POSTGRES_DB: quan
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-quan_local_smoke_only}
+      # 中文注释要求 UTF8；locale 缺失时 initdb 会直接报错而不是静默降级（那是我们要的）。
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C.UTF-8"
+      PGCLIENTENCODING: UTF8
+    ports:
+      # 只绑 127.0.0.1：上面的密码是仓库里公开的字面量，不能暴露到局域网。
+      # 默认 55432（避开本机可能被占用的 5432；与 I2b-3 落库闭环探针用的端口一致）。
+      - "127.0.0.1:${PG_PORT:-55432}:5432"
+    volumes:
+      # SQL 文件只读挂进容器，方便 psql -f /work/db/...（与 smoke 同款写法）。
+      - ./:/work:ro
+      # 命名卷：数据在 down 之后仍在 —— 这是本文件与 smoke 文件最大的区别，
+      # 也是上面那条「静默跳过」陷阱的来源，重置就用 down -v。
+      - pgdata-dev:/var/lib/postgresql/data
+    healthcheck:
+      # -h 127.0.0.1 是关键：官方镜像在 initdb 期间会跑一个临时服务，那个临时服务的
+      # listen_addresses 为空（不监听 TCP），而 unix socket 可能已被 pg_isready 探到
+      # ⇒ 用 socket 探会**提前报健康**，--wait 会在 initdb 还没结束时返回。
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d quan"]
+      interval: 1s
+      timeout: 3s
+      retries: 90
+      start_period: 5s
+    # 开发库希望「重启机器后还在」，故不用 smoke 的 "no"。
+    restart: unless-stopped
+
+volumes:
+  pgdata-dev:
