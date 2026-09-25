@@ -1,5 +1,5 @@
-baseline: 先跑一次干净的全绿（tests/test_backtest_slice.py + tests/test_data_center_store.py + tests/test_backtest_db_feed.py + tests/test_backtest_risk_gate.py + tests/test_risk_store.py）
-baseline: 全绿 OK (passed=145)
+baseline: 先跑一次干净的全绿（tests/test_backtest_slice.py + tests/test_data_center_store.py + tests/test_backtest_db_feed.py + tests/test_backtest_risk_gate.py + tests/test_risk_store.py + tests/test_dashboard.py）
+baseline: 全绿 OK (passed=181)
 APPLIED M1-account-double-frozen @ quanauto/broker.py (newline='\r\n', tests=tests/test_backtest_slice.py)
   CAUGHT=yes exit=1 failed=2 (test_max_drawdown_is_plausible, test_pending_buy_does_not_change_total_capital)
 APPLIED M2-fill-at-close-not-open @ quanauto/broker.py (newline='\r\n', tests=tests/test_backtest_slice.py)
@@ -86,6 +86,28 @@ APPLIED S15-breaker-upsert-clobbers-resume-reason @ quanauto/risk.py (newline='\
   CAUGHT=yes exit=1 failed=1 (test_breaker_upsert_never_touches_the_resume_reason_column)
 APPLIED CONTROL-comment-only-risk-store @ quanauto/risk.py (newline='\r\n', tests=tests/test_risk_store.py)
   control OK: 没抓到（本检查器确实会报 caught=NO）
-mutations=39 caught=39 control=4 env_limited=0
+APPLIED D1-max-drawdown-uses-min @ quanauto/dashboard.py (newline='\r\n', tests=tests/test_dashboard.py)
+  CAUGHT=yes exit=1 failed=3 (test_curve_stats_are_taken_from_the_curve, test_max_drawdown_uses_max_not_min, test_real_report_curve_agrees_with_two_performance_metrics)
+APPLIED D2-curve-last-point-is-the-first @ quanauto/dashboard.py (newline='\r\n', tests=tests/test_dashboard.py)
+  CAUGHT=yes exit=1 failed=2 (test_curve_stats_are_taken_from_the_curve, test_real_report_curve_agrees_with_two_performance_metrics)
+APPLIED D3-fractional-count-silently-truncated @ quanauto/dashboard.py (newline='\r\n', tests=tests/test_dashboard.py)
+  CAUGHT=yes exit=1 failed=1 (test_fractional_count_raises)
+APPLIED D4-missing-metric-key-not-named @ quanauto/dashboard.py (newline='\r\n', tests=tests/test_dashboard.py)
+  CAUGHT=yes exit=1 failed=1 (test_missing_metric_key_is_named)
+APPLIED D5-nan-shown-as-a-number @ quanauto/dashboard.py (newline='\r\n', tests=tests/test_dashboard.py)
+  CAUGHT=yes exit=1 failed=1 (test_nan_metric_raises)
+APPLIED D6-empty-curve-accepted @ quanauto/dashboard.py (newline='\r\n', tests=tests/test_dashboard.py)
+  CAUGHT=yes exit=1 failed=1 (test_missing_curve_raises)
+APPLIED D7-missing-segment-reads-as-zero @ quanauto/dashboard.py (newline='\r\n', tests=tests/test_dashboard.py)
+  CAUGHT=yes exit=1 failed=1 (test_missing_structure_segment_reads_as_dash_not_zero)
+APPLIED D8-cli-dashboard-dispatch-gone @ quanauto/cli.py (newline='\r\n', tests=tests/test_dashboard.py)
+  CAUGHT=yes exit=1 failed=1 (test_cli_main_dispatches_the_dashboard_command_to_stdout)
+APPLIED D9-cli-format-branches-swapped @ quanauto/cli.py (newline='\r\n', tests=tests/test_dashboard.py)
+  CAUGHT=yes exit=1 failed=3 (test_cli_dashboard_html_format_writes_the_html_render, test_cli_dashboard_writes_the_library_render_to_the_out_file, test_cli_main_dispatches_the_dashboard_command_to_stdout)
+APPLIED D10-cli-swallows-unreadable-report @ quanauto/cli.py (newline='\r\n', tests=tests/test_dashboard.py)
+  CAUGHT=yes exit=1 failed=1 (test_cli_dashboard_refuses_a_report_it_cannot_read)
+APPLIED CONTROL-comment-only-dashboard @ quanauto/dashboard.py (newline='\r\n', tests=tests/test_dashboard.py)
+  control OK: 没抓到（本检查器确实会报 caught=NO）
+mutations=49 caught=49 control=5 env_limited=0
 report=D:\project-quan\quan-auto\tools\pytest-mutation-report.txt
 verdict: PASS

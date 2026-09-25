@@ -15,6 +15,13 @@
 默认为 0 的话「换种子结果会不会变」这个问题就恒等于「不会」—— 随机源有没有接进结果
 这件事永远测不出来。默认给一个非零滑点，`--seed` 才是一个**有后果**的参数；
 要跑纯确定性的回测就显式 `--slippage-pct 0`。
+
+## 两个子命令（I4 加了第二个）
+
+* `backtest`：跑一次回测，导出一份确定性报告。
+* `dashboard`：**读**一份上面产出的报告，渲染绩效看板（`--format text|html`）。
+  它刻意和 `backtest` 分开、只吃文件路径：看板要能看的是「磁盘上那份报告」，
+  而不是「这次运行刚好在内存里的那份」—— 前者可复现，后者换个进程就没了。
 """
 
 from __future__ import annotations
@@ -27,10 +34,11 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from .broker import SimulatedBroker
+from .dashboard import read_view, render_html, render_text
 from .datafeed import CsvDataFeed
 from .engine import BacktestEngine, dump_report, report_payload
 from .enums import CapitalAllocation
-from .errors import QuanAutoError
+from .errors import DashboardError, QuanAutoError
 from .models import (
     BacktestConfig,
     CommissionConfig,
@@ -92,6 +100,21 @@ def build_parser() -> argparse.ArgumentParser:
     backtest.add_argument("--risk-free-rate", type=float, default=0.0, metavar="X", help="无风险年化利率")
     backtest.add_argument("--out", default=None, metavar="PATH", help="报告输出路径；不给则打到 stdout")
     backtest.add_argument("--strategy-id", default="ma-cross", metavar="ID", help="策略 id")
+
+    board = sub.add_parser(
+        "dashboard",
+        help="读一份回测报告，渲染绩效看板",
+        description="读一份 `backtest --out` 产出的报告 JSON，渲染绩效看板；看板只读报告里的数，不重算任何指标。",
+        allow_abbrev=False,
+    )
+    board.add_argument("--report", required=True, metavar="PATH", help="报告 JSON 路径")
+    board.add_argument(
+        "--format",
+        choices=("text", "html"),
+        default="text",
+        help="输出格式：text（终端，GBK 可打印）或 html（单文件，离线可看）",
+    )
+    board.add_argument("--out", default=None, metavar="PATH", help="输出路径；不给则打到 stdout")
     return parser
 
 
@@ -231,6 +254,45 @@ def run_backtest(args: argparse.Namespace) -> Dict[str, Any]:
     return payload
 
 
+def run_dashboard(args: argparse.Namespace) -> int:
+    """读一份**已经落盘**的报告，渲染看板。
+
+    刻意不复用 `run_backtest` 的内存对象：I4 DoD 要求看板「读一份结果文件」——
+    读文件与拿内存对象是两件事（前者会在序列化/反序列化上出问题，后者不会）。
+    """
+    try:
+        with open(args.report, encoding="utf-8") as fp:
+            payload = json.load(fp)
+    except OSError as exc:
+        sys.stderr.write("ERROR: 报告读取失败: %s\n" % exc)
+        return 1
+    except ValueError as exc:
+        sys.stderr.write("ERROR: 报告不是合法 JSON: %s\n" % exc)
+        return 1
+    try:
+        text = render_html(read_view(payload)) if args.format == "html" else render_text(read_view(payload))
+    except DashboardError as exc:
+        sys.stderr.write("ERROR: %s\n" % exc)
+        return 1
+    if args.out:
+        try:
+            directory = os.path.dirname(os.path.abspath(args.out))
+            if directory:
+                os.makedirs(directory, exist_ok=True)
+            with open(args.out, "w", encoding="utf-8", newline="\n") as fp:
+                fp.write(text)
+        except OSError as exc:
+            sys.stderr.write("ERROR: 看板写入失败: %s\n" % exc)
+            return 1
+        # 纯 ASCII 摘要：与 backtest 一样，别让控制台编码决定这次运行成不成功。
+        sys.stdout.write(
+            "dashboard: %s\nformat: %s\nreport: %s\n" % (args.out, args.format, args.report)
+        )
+        return 0
+    sys.stdout.write(text)
+    return 0
+
+
 def format_summary(payload: Dict[str, Any], out_path: str) -> str:
     """纯 ASCII 摘要。数字用 `repr`，不用千分位、不用货币符号 —— 避免任何非 GBK 字符。"""
     summary = payload["summary"]
@@ -255,6 +317,8 @@ def format_summary(payload: Dict[str, Any], out_path: str) -> str:
 def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command == "dashboard":
+        return run_dashboard(args)
     if args.command != "backtest":
         parser.print_help(sys.stderr)
         return 2

@@ -206,6 +206,27 @@ GATES = [
         'selftest': ['tools/verify_contract_signature.py', '--selftest'],
     },
     {
+        'name': 'dashboard-consistency',
+        'tier': 'A',
+        # I4 的看板是**纯读数**组件（DoD：「不得另立一套指标定义」）。它最容易出的错
+        # 不是崩溃，而是「自己再算一遍」：看板里多一行 `sum(...) / len(...)` 会照常
+        # 渲染、照常好看，只是从此它和 PerformanceAnalyzer 各有一套指标，两边哪天不
+        # 一致也没人知道。本门禁的 C6 直接禁掉落进看板模块的统计函数与统计模块，
+        # C8 再把「改一个数，读数必须跟着动」双向扫一遍。
+        # ★ C10 是这个门禁的**参照物**：它现场重跑真的 PerformanceAnalyzer（用报告里
+        # 自带的 trades/orders/account_history），与报告里存的 14 个指标逐字段比。
+        # 没有它，整个门禁就是恒等式 —— C3 比的是「看板读出的数」和「同一份 payload
+        # 里的字段」，两个数同源，手改报告会把两边一起改掉，于是永远相等。第一版正是
+        # 这么写的，14 个假样本一个都没证明。**判据的两端必须来自不同来源。**
+        # 边界：C10 的参照物就是写出这些数的同一个分析器，所以「公式本身算错了」它看不
+        # 见（两边一起错、自洽通过）；它证明的是「报告里的数 = 这份报告自己的成交重新
+        # 算出来的数」，即报告是新鲜的、没被手改过。实盘实时看板不在本轮。
+        'what': '看板读数只来自 BacktestResult（禁自建统计），且报告里存的 14 个指标与'
+                '现场重跑 PerformanceAnalyzer 的结果逐字段一致',
+        'runner': ['tools/verify_dashboard.py'],
+        'selftest': ['tools/verify_dashboard.py', '--selftest'],
+    },
+    {
         'name': 'appendix-refs',
         'tier': 'A',
         # 前两个契约侧门禁守的是签名与 ```python 块里的类型，**散文里的交叉引用没人管**。

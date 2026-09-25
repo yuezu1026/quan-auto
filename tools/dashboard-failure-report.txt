@@ -1,0 +1,71 @@
+I4 DoD trigger test -- a hand edit of one metric inside a BacktestResult
+==============================================================================
+produced by: python -X utf8 tools/dashboard_failure_demo.py
+report shape: quanauto.backtest-report/1 (cli backtest --out)
+seed 7 / tests/fixtures/sample_prices.csv / slippage 0 / python 3.13.9
+this file is not a gate: the gate is tools/verify_dashboard.py.
+the head of this file pins no commit -- it describes a working tree.
+
+$ python -X utf8 -m quanauto.cli backtest --strategy-csv tests/fixtures/sample_prices.csv --slippage-pct 0 --seed 7 --out <tmp>/report-clean.json
+EXIT=0
+schema: quanauto.backtest-report/1
+symbol: 000001.SZ
+window: 2024-01-02T00:00:00 .. 2024-03-25T00:00:00
+bars: 60
+orders: 3
+trades: 3
+final_equity: 97198.25346030001
+total_return: -0.028017465396999907
+annual_return: -0.11429930198119376
+max_drawdown: 0.0500174653969999
+sharpe_ratio: -1.318988100677292
+report: C:\Users\39002\AppData\Local\Temp\dashboard-failure-jzgecqwo\report-clean.json
+
+--- the hand edit -------------------------------------------------
+file: <tmp>/report-clean.json  ->  <tmp>/report-mutated.json
+edit: deterministic.performance.sharpe_ratio  -1.318988100677292 -> -1.796014
+applied: anchor '"sharpe_ratio": -1.318988100677292' matched exactly 1 time (line 1041)
+applied: mutated file differs from the clean file on exactly 1 path: deterministic.performance.sharpe_ratio
+
+--- diff ----------------------------------------------------------
+--- report-clean.json
++++ report-mutated.json
+@@ -1039,5 +1039,5 @@
+       "profit_factor": 0.0,
+       "profit_loss_ratio": 0.0,
+-      "sharpe_ratio": -1.318988100677292,
++      "sharpe_ratio": -1.796014,
+       "sortino_ratio": -1.5285226068609412,
+       "total_commission": 182.7465397,
+
+$ python -X utf8 tools/verify_dashboard.py --report=<tmp>/report-clean.json
+EXIT=0   (control: the untouched report must stay green)
+report: C:\Users\39002\AppData\Local\Temp\dashboard-failure-jzgecqwo\report-clean.json
+extracted: metrics=14 curve_points=60 trades=3 c8_falsification=18/18 (skipped 0)
+analyzer: re-ran PerformanceAnalyzer over trades=3 orders=3 snapshots=60 -> 14 metric(s) compared against the stored ones
+static: quanauto\dashboard.py (22035 bytes, 16 import statements)
+verdict: PASS (0 issue(s))
+NOTE: C2 only says the board field names match PerformanceMetrics. It does not say the metric is computed correctly -- the board faithfully showing a wrong number passes every check here.
+NOTE: C8a moves one performance field at a time (the read-out must follow on that key), C8b moves the curve/trades/orders/account_history segments (the read-out must not move at all). C8b is the one that would catch a board that quietly recomputes; neither sweep says anything about whether the metric is computed correctly -- the board faithfully showing a wrong number is green here.
+
+$ python -X utf8 tools/verify_dashboard.py --report=<tmp>/report-mutated.json
+EXIT=1   (experiment: the wrong number must be caught)
+report: C:\Users\39002\AppData\Local\Temp\dashboard-failure-jzgecqwo\report-mutated.json
+extracted: metrics=14 curve_points=60 trades=3 c8_falsification=18/18 (skipped 0)
+analyzer: re-ran PerformanceAnalyzer over trades=3 orders=3 snapshots=60 -> 14 metric(s) compared against the stored ones
+static: quanauto\dashboard.py (22035 bytes, 16 import statements)
+ISSUE [C10] sharpe_ratio: the report stores -1.796014 but re-running PerformanceAnalyzer over this report's own trades/orders/account_history yields -1.318988100677292 -- the stored metric is stale, or it was edited by hand
+verdict: FAIL (1 issue(s))
+NOTE: C2 only says the board field names match PerformanceMetrics. It does not say the metric is computed correctly -- the board faithfully showing a wrong number passes every check here.
+NOTE: C8a moves one performance field at a time (the read-out must follow on that key), C8b moves the curve/trades/orders/account_history segments (the read-out must not move at all). C8b is the one that would catch a board that quietly recomputes; neither sweep says anything about whether the metric is computed correctly -- the board faithfully showing a wrong number is green here.
+
+RESULT: PASS
+  control (clean report)      : EXIT=0, 0 issues
+  experiment (one field edited): EXIT=1, and the issue list names C10 and 'sharpe_ratio'
+  the C10 line               : ISSUE [C10] sharpe_ratio: the report stores -1.796014 but re-running PerformanceAnalyzer over this report's own trades/orders/account_history yields -1.318988100677292 -- the stored metric is stale, or it was edited by hand
+
+What this proves: changing one number inside a BacktestResult turns this gate red, and the red is C10 -- the check that re-runs the analyzer over the report's own inputs -- noticing, not a crash and not a schema error.
+Why C10 and not C3: C3 compares the board read-out with the report field, and a hand edit moves both sides at once, so C3 stays green (it is structurally blind to this failure). Any consistency check whose two sides come from the same file is an identity.
+What this does NOT prove: that the rest of the report is sane, or that the metric was computed correctly. It is one field, one run, one seed.
+
+EXIT=0

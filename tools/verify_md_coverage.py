@@ -55,10 +55,24 @@ ADDENDA = {
         'MA_Cross_Strategy(short_window: int, long_window: int)',
         # E5~E8：追加块丢了 = 裁决没了。这几个编号本身也是锚（下面每一条都写在自己的
         # 段落里），删掉一段就等于删掉一个「已登记的偏差」。
-        'E5. Strategy.on_data 的纯度偏差：MA_Cross_Strategy 持有有界状态',
-        'E6. SimulatedBroker 与 BacktestEngine 的三个附加成员',
-        'E7. volume_impact_factor 按成交额比例近似',
-        'E8. BacktestResult 不生成 ATR 报告与基准对比报告',
+        # ⚠️ 必须写成**文件里的字面文本**（含 `**` 与反引号）。原先登记的是「裸文字」
+        # （`E5. Strategy.on_data ...`），它只靠 norm() 去标记才匹配得上 —— 于是自测里
+        # `str.replace` 删不动它，那个样本**从来没有真的测过这四条锚**，而报告里看不出来。
+        # 现在 selftest 会断言每条锚都是字面文本（删不动就是 HARNESS 级 FAIL）。
+        '**E5. `Strategy.on_data` 的纯度偏差：`MA_Cross_Strategy` 持有有界状态。**',
+        '**E6. `SimulatedBroker` 与 `BacktestEngine` 的三个附加成员。**',
+        '**E7. `volume_impact_factor` 按成交额比例近似。**',
+        '**E8. `BacktestResult` 不生成 ATR 报告与基准对比报告。**',
+        # F1~F6（I4 绩效看板）：同 E 节。锚点以**正文内容**为主（F1 那句口径、F3 的符号
+        # 约定、F4 的「取不到就报错」、F5 的参照物口径都是 I4 的判据来源），标题只作补充
+        # —— 只留标题不留正文的重生成最容易被漏掉。
+        'F. I4 绩效看板的读数口径登记',
+        '看板是纯读数组件 —— 屏幕上出现的每一个数，都是 §2.5 的 `PerformanceAnalyzer` 在本次回测里算出来的数，看板一个都不重算',
+        'F1. 「只读数不算数」是本轮的第一条口径',
+        'F3. 回撤是正数百分比',
+        'F4. 取不到就报错，不退回 0',
+        'F5. 一致性判据的参照物必须来自报告之外（这才是 DoD 触发测试瞄的那条边）',
+        'F6. 本迭代不做',
     ],
 }
 
@@ -218,26 +232,51 @@ if sys.argv[1] == '--selftest':
     # reported. Deleting it leaves every docx paragraph in place, so the paragraph diff
     # stays silent by construction -- without this control a re-conversion would wipe the
     # appended corrections and the gate would print a CLEANER report than a real pass.
-    # The sample must keep the basename (ADDENDA is keyed by file name).
-    add = ADDENDA.get(os.path.basename(prd_md))
-    gate(add, 'ADDENDA control needs a declared entry for %s' % os.path.basename(prd_md))
-    t2 = open(prd_md, encoding='utf-8').read()
-    t2b = t2.replace(add[0], '')
-    gate(t2b != t2, 'ADDENDA marker %r not found in %s -> the guard has drifted away '
-                    'from the file it claims to describe' % (add[0], prd_md))
+    # EVERY file with a declared entry gets its own sample, and every declared anchor of
+    # that file is deleted at once: a sample that leaves one anchor behind says nothing
+    # about the guard on that one (2026-09-25: I4 added the F anchors -- one PRD sample
+    # must not be asked to stand in for them).
+    # The samples must keep the basename (ADDENDA is keyed by file name).
     ctrl_dir = os.path.join(os.environ.get('TEMP', '.'), 'md-addenda-ctrl')
     os.makedirs(ctrl_dir, exist_ok=True)
-    lost2 = os.path.join(ctrl_dir, os.path.basename(prd_md))
-    with open(lost2, 'w', encoding='utf-8', newline='\n') as f:
-        f.write(t2b)
-    n4 = verify(prd_docx, lost2, 'ADDENDA-CONTROL')
-    gate(n4 > 0, 'a missing post-conversion addendum was NOT reported -> re-conversion '
-                 'would silently delete it')
-    # clean sample for the SAME detector: the shipped file must report 0 (otherwise the
-    # addenda check fires on a correct file and the negative control proves nothing)
-    n5 = verify(prd_docx, prd_md, 'PRD-REAL-ADDENDA')
-    gate(n5 == 0, 'the shipped %s reported %d issue(s) -> ADDENDA drifted away from the file'
-                  % (os.path.basename(prd_md), n5))
+    n4 = {}
+    n5 = {}
+    for add_name in sorted(ADDENDA):
+        add_docx = os.path.join(d, os.path.splitext(add_name)[0] + '.docx')
+        add_md = os.path.join(d, add_name)
+        gate(os.path.exists(add_docx) and os.path.exists(add_md),
+             'ADDENDA control needs %s and its .docx' % add_name)
+        anchors = ADDENDA[add_name]
+        gate(anchors, 'ADDENDA entry for %s is empty -> nothing to guard' % add_name)
+        t2 = open(add_md, encoding='utf-8').read()
+        for a in anchors:
+            # A norm()-only match hides markdown drift and, worse, makes this control
+            # unable to delete the anchor: the sample silently stops exercising it while
+            # still reporting OK. So every declared anchor must be LITERAL file text.
+            gate(a in t2, 'ADDENDA anchor %r is not literal text of %s -> deleting it is a '
+                          'no-op, so this control could never exercise it (2026-09-25: the '
+                          'E5~E8 anchors were registered without their markdown, exactly '
+                          'this way)' % (a, add_name))
+        t2b = t2
+        for a in anchors:
+            t2b = t2b.replace(a, '')
+        gate(t2b != t2, 'ADDENDA markers of %s not found in the file -> the guard has '
+                        'drifted away from the file it claims to describe' % add_name)
+        lost2 = os.path.join(ctrl_dir, add_name)
+        with open(lost2, 'w', encoding='utf-8', newline='\n') as f:
+            f.write(t2b)
+        n4[add_name] = verify(add_docx, lost2, 'ADDENDA-CONTROL')
+        # EXACT expectation: the docx paragraphs are all still there, so the ONLY way to
+        # reach this number is "every declared anchor was reported missing". `> 0` would
+        # also pass if just one of five anchors fired.
+        gate(n4[add_name] == len(anchors),
+             'deleting all %d declared addendum(s) of %s reported %d issue(s) -> the guard '
+             'does not fire once per anchor' % (len(anchors), add_name, n4[add_name]))
+        # clean sample for the SAME detector: the shipped file must report 0 (otherwise
+        # the addenda check fires on a correct file and the negative control proves nothing)
+        n5[add_name] = verify(add_docx, add_md, 'REAL-ADDENDA')
+        gate(n5[add_name] == 0, 'the shipped %s reported %d issue(s) -> ADDENDA drifted '
+                                'away from the file' % (add_name, n5[add_name]))
 
     # struct_check must actually fire: one INDEPENDENT sample per detector, ordered
     # so that no detector shadows another (an earlier unbalanced fence would swallow
@@ -253,9 +292,11 @@ if sys.argv[1] == '--selftest':
                  'unclosed code fence', 'heading without space'):
         gate(any(want in g for g in got), 'struct_check missed detector: ' + want)
     print('SELFTEST OK: detects removed content (missing=%d), no false alarm on intact md, '
-          'lost replacement caught (missing=%d), lost addendum caught (missing=%d), '
-          'clean addenda sample (missing=%d), struct_check fires on all %d detectors'
-          % (n, n3, n4, n5, len(got)))
+          'lost replacement caught (missing=%d), lost addenda caught for all %d file(s) '
+          '(%s), clean addenda samples (missing=%s), struct_check fires on all %d detectors'
+          % (n, n3, len(n4),
+             ', '.join('%s=%d/%d' % (k, n4[k], len(ADDENDA[k])) for k in sorted(n4)),
+             ', '.join('%s=%d' % (k, n5[k]) for k in sorted(n5)), len(got)))
     sys.exit(0)
 
 d = sys.argv[1]

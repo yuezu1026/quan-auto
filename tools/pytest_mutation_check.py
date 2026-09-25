@@ -6,6 +6,7 @@
   * `tests/test_backtest_db_feed.py`（I2 库喂数据的回测侧）
   * `tests/test_backtest_risk_gate.py`（I3 风控闸门）
   * `tests/test_risk_store.py`（I3b 规则存储 + 拦截留痕）
+  * `tests/test_dashboard.py`（I4 绩效看板：只读数不算数 + CLI 接线）
 （本仓库对门禁的同一条纪律：每个自建检查器都要做触发测试；测试套件就是检查器。）
 
 **纪律（每条都对应过一次真实的假绿）**：
@@ -18,8 +19,8 @@
   * `MUTATION` 触发出来的失败必须是**断言/异常**，不能是 `ImportError`/语法错
     （收集阶段就炸掉，等于测试根本没跑）。
 
-**它不进 `run_all_gates.py` 的注册表**：每条样本要跑一次 pytest（2026-09-25 I3b 后实测 **43 条样本：
-39 条变异 + 4 条 CONTROL + 0 条 ENV-LIMIT**；上一轮 B20 后是 32 条 = 29 + 3 + 0），慢，且它验证的对象是测试而不是产物契约。
+**它不进 `run_all_gates.py` 的注册表**：每条样本要跑一次 pytest（2026-09-25 I4 后实测 **54 条样本：
+49 条变异 + 5 条 CONTROL + 0 条 ENV-LIMIT**；I3b 那轮是 43 条 = 39 + 4 + 0，再上一轮 B20 后是 32 条 = 29 + 3 + 0），慢，且它验证的对象是测试而不是产物契约。
 手动跑，或改完测试后跑一次。
 
 **`env_limit`（一条变异的出口）**：有的缺陷在**当前环境里根本不可能被断言抓住**
@@ -48,6 +49,7 @@ TESTS_STORE = "tests/test_data_center_store.py"
 TESTS_DB_FEED = "tests/test_backtest_db_feed.py"
 TESTS_RISK_GATE = "tests/test_backtest_risk_gate.py"
 TESTS_RISK_STORE = "tests/test_risk_store.py"
+TESTS_DASHBOARD = "tests/test_dashboard.py"
 REPORT = os.path.join(ROOT, "tools", "pytest-mutation-report.txt")
 
 CONTROL = "MUST-NOT-BE-CAUGHT"
@@ -579,6 +581,125 @@ MUTATIONS = [
         "new": "_CHECK_VIOLATION_SQLSTATE = \"23514\"  # MUT: 只改注释\n",
         "expect": CONTROL,
     },
+    # ── I4：看板（quanauto/dashboard.py + quanauto/cli.py ↔ tests/test_dashboard.py） ──
+    {
+        # 回撤是**正数百分比**（`drawdown_series` 的约定），最大回撤取 max。
+        # 写成 min 会恒等于 0.000000 —— 不报错，只是安静地告诉读者「这策略从没
+        # 回过撤」。这一条与 `tools/verify_dashboard.py` 的 C9 守的是同一件事，
+        # 但两边守的对象不同：那边守**门禁脚本**有没有写反，这边守**看板**有没有。
+        "tag": "D1-max-drawdown-uses-min",
+        "tests": TESTS_DASHBOARD,
+        "path": "quanauto/dashboard.py",
+        "old": "        max_drawdown=max(point.drawdown for point in view.curve),\n",
+        "new": "        max_drawdown=min(point.drawdown for point in view.curve),\n",
+        "expect": ["test_max_drawdown_uses_max_not_min",
+                   "test_curve_stats_are_taken_from_the_curve",
+                   "test_real_report_curve_agrees_with_two_performance_metrics"],
+    },
+    {
+        # 「期末净值」取的不是最后一个点。曲线只剩一个点时也「对」，所以这条
+        # 需要长度 > 1 的样本：合成报告 5 点、真报告 60 点。
+        "tag": "D2-curve-last-point-is-the-first",
+        "tests": TESTS_DASHBOARD,
+        "path": "quanauto/dashboard.py",
+        "old": "        last=equities[-1],\n",
+        "new": "        last=equities[0],\n",
+        "expect": ["test_curve_stats_are_taken_from_the_curve",
+                   "test_real_report_curve_agrees_with_two_performance_metrics"],
+    },
+    {
+        # 计数类指标出现小数时静默截断：报告写 3.7、看板显示 3，两边从此对不上。
+        "tag": "D3-fractional-count-silently-truncated",
+        "tests": TESTS_DASHBOARD,
+        "path": "quanauto/dashboard.py",
+        "old": "        if float(number) != int(number):\n",
+        "new": "        if False:\n",
+        "expect": ["test_fractional_count_raises"],
+    },
+    {
+        # 缺指标时不再报错而是直接取 —— `performance[spec.key]` 会抛 KeyError
+        # （不是 DashboardError）。这正是要抓的：异常类型变了，调用方
+        # 那个 `except DashboardError` 就接不住了。
+        "tag": "D4-missing-metric-key-not-named",
+        "tests": TESTS_DASHBOARD,
+        "path": "quanauto/dashboard.py",
+        "old": ("    missing = [spec.key for spec in METRIC_SPECS if spec.key not in performance]\n"
+                "    if missing:\n"),
+        "new": ("    missing = [spec.key for spec in METRIC_SPECS if spec.key not in performance]\n"
+                "    if False:\n"),
+        "expect": ["test_missing_metric_key_is_named"],
+    },
+    {
+        # NaN/Inf 当正常值显示。上游算出非数是个必须停下来的事实，
+        # 而 `"%.4f" % nan` 会安静地打成 `nan`，看上去像某种指标。
+        "tag": "D5-nan-shown-as-a-number",
+        "tests": TESTS_DASHBOARD,
+        "path": "quanauto/dashboard.py",
+        "old": "    if not math.isfinite(number):\n",
+        "new": "    if False:\n",
+        "expect": ["test_nan_metric_raises"],
+    },
+    {
+        # 曲线长度下界没了：0 个点也能读出「一张空曲线」，与「真的没有数据」
+        # 长得一模一样（防空转守卫）。
+        "tag": "D6-empty-curve-accepted",
+        "tests": TESTS_DASHBOARD,
+        "path": "quanauto/dashboard.py",
+        "old": "    if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)) or len(raw) < 2:\n",
+        "new": "    if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)) or len(raw) < 0:\n",
+        "expect": ["test_missing_curve_raises"],
+    },
+    {
+        # 结构计数缺段时退回 0：「报告里没有 trades 段」被显示成「0 笔成交」。
+        "tag": "D7-missing-segment-reads-as-zero",
+        "tests": TESTS_DASHBOARD,
+        "path": "quanauto/dashboard.py",
+        "old": "        counts[key] = len(value) if isinstance(value, Sequence) and not isinstance(value, (str, bytes)) else None\n",
+        "new": "        counts[key] = len(value) if isinstance(value, Sequence) and not isinstance(value, (str, bytes)) else 0\n",
+        "expect": ["test_missing_structure_segment_reads_as_dash_not_zero"],
+    },
+    {
+        # CLI 分派被拆掉：库函数全绿、`quanauto dashboard` 却只会打印帮助并退 2。
+        # 本仓库踩过三次「两边各自都绿、缝上没跑过」，这条是缝上的那颗钉子。
+        "tag": "D8-cli-dashboard-dispatch-gone",
+        "tests": TESTS_DASHBOARD,
+        "path": "quanauto/cli.py",
+        "old": "    if args.command == \"dashboard\":\n",
+        "new": "    if False:\n",
+        "expect": ["test_cli_main_dispatches_the_dashboard_command_to_stdout"],
+    },
+    {
+        # `--format` 两支接反：要 html 给文本、要文本给 html。
+        "tag": "D9-cli-format-branches-swapped",
+        "tests": TESTS_DASHBOARD,
+        "path": "quanauto/cli.py",
+        "old": ("        text = render_html(read_view(payload)) if args.format == \"html\" else render_text(read_view(payload))\n"),
+        "new": ("        text = render_text(read_view(payload)) if args.format == \"html\" else render_html(read_view(payload))\n"),
+        "expect": ["test_cli_dashboard_html_format_writes_the_html_render",
+                   "test_cli_dashboard_writes_the_library_render_to_the_out_file",
+                   "test_cli_main_dispatches_the_dashboard_command_to_stdout"],
+    },
+    {
+        # 读不出来的报告改为「退 0、什么都不打印」：fail-closed 变成 fail-silent。
+        # 调用方（脚本/CI）看到的是成功。
+        "tag": "D10-cli-swallows-unreadable-report",
+        "tests": TESTS_DASHBOARD,
+        "path": "quanauto/cli.py",
+        "old": ("    except DashboardError as exc:\n"
+                "        sys.stderr.write(\"ERROR: %s\\n\" % exc)\n"
+                "        return 1\n"),
+        "new": "    except DashboardError:\n        return 0\n",
+        "expect": ["test_cli_dashboard_refuses_a_report_it_cannot_read"],
+    },
+    {
+        # 对照组：只改 docstring 的一句话，必须**不**被抓到。
+        "tag": "CONTROL-comment-only-dashboard",
+        "tests": TESTS_DASHBOARD,
+        "path": "quanauto/dashboard.py",
+        "old": "    \"\"\"等距抽样 + 分档字符。纯 ASCII，确定性（同输入同输出）。\"\"\"\n",
+        "new": "    \"\"\"等距抽样 + 分档字符。纯 ASCII，确定性（同输入同输出）。（MUT：只改注释）\"\"\"\n",
+        "expect": CONTROL,
+    },
 ]
 
 FAILED_RE = re.compile(r"^(FAILED|ERROR) (\S+)::(\w+)")
@@ -648,11 +769,13 @@ def main() -> int:
         say("verdict: FAIL")
         return 2
 
-    # 基线五套件一起跑：基线只要有一处不是全绿，后面的「红」就什么都证明不了。
-    say("baseline: 先跑一次干净的全绿（%s + %s + %s + %s + %s）"
-        % (TARGET, TESTS_STORE, TESTS_DB_FEED, TESTS_RISK_GATE, TESTS_RISK_STORE))
+    # 基线六套件一起跑：基线只要有一处不是全绿，后面的「红」就什么都证明不了。
+    say("baseline: 先跑一次干净的全绿（%s + %s + %s + %s + %s + %s）"
+        % (TARGET, TESTS_STORE, TESTS_DB_FEED, TESTS_RISK_GATE, TESTS_RISK_STORE,
+           TESTS_DASHBOARD))
     code, names, counts, output = run_pytest(
-        [TARGET, TESTS_STORE, TESTS_DB_FEED, TESTS_RISK_GATE, TESTS_RISK_STORE])
+        [TARGET, TESTS_STORE, TESTS_DB_FEED, TESTS_RISK_GATE, TESTS_RISK_STORE,
+         TESTS_DASHBOARD])
     if code != 0 or names:
         say("FINDING [BASELINE] 基线不是全绿（exit=%d, failed=%d）—— 后面的红说明不了任何事"
             % (code, len(names)))

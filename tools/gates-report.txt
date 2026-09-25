@@ -1,4 +1,4 @@
-SCOPE: FULL -- all 11 registered gate(s) ran.
+SCOPE: FULL -- all 12 registered gate(s) ran.
 
 ==============================================================================
 GATE md-fidelity (tier A) selftest=PASS verdict=PASS 0 finding(s)
@@ -45,7 +45,7 @@ GATE data-center-adapter (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 适配器把源列名/取值翻成标准 schema、采集层不含数据库驱动、上游 SDK 只在函数内惰性 import、且行对象不暴露源字段名
 argv: tools/verify_data_center_adapter.py
 ------------------------------------------------------------------------------
-CRLF-normalised: quanauto\datasources.py=86637 bytes, quanauto\datacenter.py=24577 bytes, quanauto\errors.py=16934 bytes, docs\智能量化交易平台-数据中心接口契约文档.md=146163 bytes
+CRLF-normalised: quanauto\datasources.py=86637 bytes, quanauto\datacenter.py=24577 bytes, quanauto\errors.py=17585 bytes, docs\智能量化交易平台-数据中心接口契约文档.md=146163 bytes
 extracted: scanned_modules=3 str_maps=7 column_maps=6 value_maps=1 schema_bindings=4 module_imports=14 lazy_source_imports=2 row_classes=3 denylist_names=33 contract_schemas=3 taxonomy_declared=8 taxonomy_producers=8 taxonomy_wiring=1
 verdict: PASS (0 issue(s))
 NOTE: 这个门禁只解析源码、从不执行、不导入 pandas、不跑 pytest。它证明的是「结构上没被绕过」，**不是**「映射表的内容是对的」—— 源列名是从各源文档抄来的，从未联网核对（akshare/baostock 都没装），那条欠账登记在数据中心契约附录 B。东财两张财务表是照实测重排的（附录 B12），但那是**人工冒烟**的结论，不是这里出来的。运行时行为由 tests/test_data_center_adapter.py 负责。
@@ -55,8 +55,8 @@ GATE iteration-plan (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 迭代计划里每个标「已交付」的迭代都引用了一条真实存在的证据路径
 argv: tools/verify_iteration_plan.py
 ------------------------------------------------------------------------------
-CRLF-normalised: plan=56450 bytes (迭代计划.md)
-extracted: iterations=5 delivered=3 dod_sections=5
+CRLF-normalised: plan=60948 bytes (迭代计划.md)
+extracted: iterations=5 delivered=4 dod_sections=5
 verdict: PASS (0 issue(s))
 NOTE: this gate checks the plan is internally well-formed and that no completion claim dangles. It cannot judge whether an iteration was actually delivered -- someone still has to open the cited evidence file.
 
@@ -137,13 +137,27 @@ contract=docs/智能量化交易平台-核心模块接口契约文档.md issues=
 verdict: PASS
 
 ==============================================================================
+GATE dashboard-consistency (tier A) selftest=PASS verdict=PASS 0 finding(s)
+what: 看板读数只来自 BacktestResult（禁自建统计），且报告里存的 14 个指标与现场重跑 PerformanceAnalyzer 的结果逐字段一致
+argv: tools/verify_dashboard.py
+------------------------------------------------------------------------------
+engine run: 0 line(s) of summary captured from stdout
+report: in-process backtest (seed 7, tests/fixtures/sample_prices.csv)
+extracted: metrics=14 curve_points=60 trades=3 c8_falsification=18/18 (skipped 0)
+analyzer: re-ran PerformanceAnalyzer over trades=3 orders=3 snapshots=60 -> 14 metric(s) compared against the stored ones
+static: quanauto\dashboard.py (22035 bytes, 16 import statements)
+verdict: PASS (0 issue(s))
+NOTE: C2 only says the board field names match PerformanceMetrics. It does not say the metric is computed correctly -- the board faithfully showing a wrong number passes every check here.
+NOTE: C8a moves one performance field at a time (the read-out must follow on that key), C8b moves the curve/trades/orders/account_history segments (the read-out must not move at all). C8b is the one that would catch a board that quietly recomputes; neither sweep says anything about whether the metric is computed correctly -- the board faithfully showing a wrong number is green here.
+
+==============================================================================
 GATE appendix-refs (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 契约文档里被引用的附录标签（含条目号、点名归属）都真实存在
 argv: tools/verify_appendix_refs.py
 ------------------------------------------------------------------------------
 scan scope: git ls-files=83 file(s), read as text=80, skipped=3
   skipped (binary/undecodable): docs/智能量化交易平台-数据中心数据源选型与接入规范.docx, docs/智能量化交易平台-核心模块接口契约文档.docx, docs/智能量化交易平台.docx
-appendix index: core=5L/8I dc=4L/66I prd=1L/0I risk=0L/0I
+appendix index: core=6L/14I dc=4L/66I prd=1L/0I risk=0L/0I
 citations: 131 total, 83 with an item label, 27 naming an owner, in 23 file(s)
 verdict: PASS (0 issue(s))
 
