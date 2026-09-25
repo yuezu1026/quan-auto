@@ -155,10 +155,10 @@ GATE appendix-refs (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 契约文档里被引用的附录标签（含条目号、点名归属）都真实存在
 argv: tools/verify_appendix_refs.py
 ------------------------------------------------------------------------------
-scan scope: git ls-files=89 file(s), read as text=86, skipped=3
+scan scope: git ls-files=90 file(s), read as text=87, skipped=3
   skipped (binary/undecodable): docs/智能量化交易平台-数据中心数据源选型与接入规范.docx, docs/智能量化交易平台-核心模块接口契约文档.docx, docs/智能量化交易平台.docx
 appendix index: core=7L/23I dc=4L/66I prd=1L/0I risk=0L/0I
-citations: 191 total, 100 with an item label, 43 naming an owner, in 27 file(s)
+citations: 193 total, 100 with an item label, 44 naming an owner, in 28 file(s)
 verdict: PASS (0 issue(s))
 
 ==============================================================================
@@ -171,7 +171,7 @@ contract:        docs\智能量化交易平台-核心模块接口契约文档.md
 G section:       line 2204
 python blocks:   5
 declarations:    41
-impl scan:       quanauto/*.py files=16 classes=145
+impl scan:       quanauto/*.py files=16 classes=144 newtypes=1
 compared:        matched=35 contract-first=6
 verdict: PASS (0 finding(s))
 

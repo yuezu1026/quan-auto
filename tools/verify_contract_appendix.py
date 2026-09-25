@@ -256,8 +256,8 @@ def audit(root, contract_first=None, t1_required=None):
     t1_required = T1_REQUIRED if t1_required is None else t1_required
     findings = []
     summary = {'root': root, 'section_line': 0, 'blocks': 0, 'decls': 0,
-               'impl_files': 0, 'impl_classes': 0, 'matched': 0, 'first': 0,
-               'skipped': False}
+               'impl_files': 0, 'impl_classes': 0, 'impl_newtypes': 0,
+               'matched': 0, 'first': 0, 'skipped': False}
 
     core_path = os.path.join(root, CORE_REL)
     if not os.path.isfile(core_path):
@@ -292,6 +292,11 @@ def audit(root, contract_first=None, t1_required=None):
     impl, impl_files, impl_problems = scan_impl(root)
     summary['impl_files'] = impl_files
     summary['impl_classes'] = len(impl)
+    # 这张表把 `NewType` 别名也当一个可比对对象收进来了 ⇒ 计数必须拆开打印。
+    # 否则报告里的 `classes=N` 会比真实的类数多出「别名」那部分（2026-09-25 实测：
+    # 145 = 144 个类 + 1 个 `OrderId`），与缺口清单 B9.2 的 144 看似矛盾。
+    summary['impl_newtypes'] = sum(
+        1 for shape in impl.values() if shape.get('kind') == 'newtype')
     for problem in impl_problems:
         findings.append(('AX-IMPL-SCAN', problem))
     for name, shape in sorted(impl.items()):
@@ -346,8 +351,10 @@ def report(summary, findings):
     print('G section:       line %d' % summary['section_line'])
     print('python blocks:   %d' % summary['blocks'])
     print('declarations:    %d' % summary['decls'])
-    print('impl scan:       %s/*.py files=%d classes=%d'
-          % (IMPL_REL, summary['impl_files'], summary['impl_classes']))
+    print('impl scan:       %s/*.py files=%d classes=%d newtypes=%d'
+          % (IMPL_REL, summary['impl_files'],
+             summary['impl_classes'] - summary['impl_newtypes'],
+             summary['impl_newtypes']))
     print('compared:        matched=%d contract-first=%d'
           % (summary['matched'], summary['first']))
     for code, message in findings:
