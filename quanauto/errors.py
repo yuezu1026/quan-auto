@@ -323,7 +323,12 @@ class RiskError(QuanAutoError):
 
 
 class RiskInterceptError(RiskError):
-    """风控拦截（RISK_001）—— 裁决为 REJECT/HALT。"""
+    """风控拦截（RISK_001）—— 裁决为 REJECT/HALT。
+
+    第二个用途（I3b 小步加入）：**留痕写入方**收到不该留痕的响应时抛它。
+    「拦了却没有一行留痕」与「没拦却写了一行留痕」都会让日志失去证据价值，
+    两种错都要当场炸，而不是安静地少写/多写一行。
+    """
 
     code = "RISK_001"
 
@@ -351,6 +356,24 @@ class RiskConfigLoadError(RiskError):
     """规则加载失败（RISK_005）—— 存储层不可达**且**没有本地 LKG 缓存。"""
 
     code = "RISK_005"
+
+
+class RiskConfigWriteError(RiskConfigLoadError):
+    """规则写入失败（RISK_005）—— 契约 §3.3.1 点名存储层的阈值写入方法抛它。
+
+    契约里这个类名一直只出现在风控契约的 `Raises:` 段里，仓库中**从未定义**（I3b 补上，
+    因为存储层的写入现在真的会抛它）。
+
+    **为什么继承 `RiskConfigLoadError` 而不是与它平级的 `RiskError`**：两者是同一件事的
+    两面（存储层不可用），而风控引擎的阈值变更入口已经按 `RiskConfigLoadError` 收口 ——
+    「写不进去 ⇒ 旧值继续生效」（RISK_004 的语义：宁可旧值，不可无值，更不可半新半旧）。
+    做成平级会绕过那个收口，把一次写失败变成**逃出那条收口的未知异常**，调用方拿到的
+    是「栈里冒出来的东西」而不是一条 RISK 码。
+
+    本 docstring 刻意**不写出**那三个阈值写入符号的名字：`test_risk_engine.py` 有一条
+    D10 静态断言在扫 `quanauto/*.py` 的字面量。这不是为了绕过检查 —— 那条纪律本来就是
+    靠「除 `risk.py` 外不许出现这些字面量」守着的，写在这里等于把闸门本身磨掉一点。
+    """
 
 
 class RiskDegradedError(RiskError):

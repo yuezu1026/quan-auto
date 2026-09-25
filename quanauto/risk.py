@@ -1,14 +1,22 @@
 """风控层 —— 契约《智能量化交易平台-风控层接口契约文档》v1.1 §三 的实现。
 
-⚠️ **本文件的实现状态（2026-09-24）**：契约面（枚举、注册表、数据类、方法签名）逐字落全，
+⚠️ **本文件的实现状态（2026-09-25）**：契约面（枚举、注册表、数据类、方法签名）逐字落全，
 回测路径所需的**行为已实现**（加载/热更新/分层解析/零 IO 校验/熔断/峰值/Kill Switch/阈值变更），
 `tests/test_risk_engine.py` 的 67 条断言覆盖契约 §3.8 的 13 行测试要求。
 
+**存储层已接线（I3b 小步起）**：`DbRiskRuleStore` 的读/写/峰值/熔断单元四组方法都真的执行 SQL
+（`tests/test_risk_store.py` 用假连接钉住语句数、参数类型与事务边界；跨层那条端到端控制组在
+`tests/test_backtest_risk_gate.py`）。留痕由 `RiskInterceptLogWriter` 负责，**写入方是调用方**
+（`engine.py` 的 `_record_risk_block()`），不是 `RiskEngine` —— 理由见 `RiskInterceptLogWriter`
+的 docstring（D1：`check()` 里不许有 IO）。
+
 **尚未接线的部分**（写在明处，免得被当成已完成）：
-* `DbRiskRuleStore` 的三个方法仍抛 `RiskConfigLoadError` —— 回测路径用 `MemoryRiskRuleStore`，
-  数据库版留到 I4 接真实交易链路时一起做（`db/risk_control.sql` 已备好）。
 * `emergency_flatten` 只返回任务标识，真正的清仓执行不在本模块（D5：清仓是显式通道）。
 * 短轮询 watchdog 只在 DB 版才需要，回测路径不启动它。
+* 真库探针（postgres:17 容器，一次性核对、不进仓）实测留下的两条缺口登记在
+  `docs/开工前缺口清单.md` §七之二：① `RuleChangeRequest` 没有 `old_threshold`，
+  审计表里的「变更前的生效值」只能由客户端算；② 库里 `numeric(18,8)` 会**静默**舍入
+  更多位的小数（`1e-9` 甚至会被舍成 0 之后才被 CHECK 拒绝）。
 
 设计要点（写给下一个改这里的人）：
 
@@ -34,14 +42,19 @@ import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
+from decimal import Decimal
 from enum import Enum
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from .enums import Direction
 from .errors import (
     IllegalStateError,
+    QuanAutoError,
     RiskConfigInvalidError,
     RiskConfigLoadError,
+    RiskConfigWriteError,
+    RiskError,
+    RiskInterceptError,
     RiskRuleNotFoundError,
     RiskRuleVersionConflictError,
 )
@@ -551,24 +564,625 @@ class MemoryRiskRuleStore(RiskRuleStore):
         return self._version
 
 
+# ── 落库公共件（`DbRiskRuleStore` / `RiskInterceptLogWriter` 共用）──────────
+# 连接缝的形状：工厂每次调用返回一个对象，它只要会两件事 ——
+#   execute(sql, params) -> 行序列（每行能按列名取值）
+#   transaction()        -> 上下文管理器（正常退出 COMMIT、抛异常 ROLLBACK）
+# `quanauto.pgstore.PsycopgConnection` 就是这样一个实现，测试注入的假连接也是。
+# 本模块**不 import 任何驱动**，所以「换驱动要改哪里」这个问题的答案是「不用改这里」。
+_CHECK_VIOLATION_SQLSTATE = "23514"
+
+
+_SQLSTATE_CHAIN_LIMIT = 8
+
+
+def _own_sqlstate(exc: BaseException) -> str:
+    """只在这一层异常自己身上找 SQLSTATE（不追链）。"""
+    for attr in ("sqlstate", "pgcode"):
+        value = getattr(exc, attr, None)
+        if isinstance(value, str) and value:
+            return value
+    diag = getattr(exc, "diag", None)
+    value = getattr(diag, "sqlstate", None)
+    return value if isinstance(value, str) else ""
+
+
+def _sqlstate(exc: BaseException) -> str:
+    """取 SQLSTATE，取不到返回 `""`。**会沿 `__cause__` / `__context__` 链追。**
+
+    两层形状都是实测逼出来的：
+
+    1. 用属性探测而不按驱动分派（psycopg3 在 `exc.sqlstate`、psycopg2 在 `exc.pgcode`、
+       老式对象在 `exc.diag.sqlstate`）：本模块没有驱动依赖，也就没有类型可判。
+    2. **必须追链**：真实调用链上驱动异常先被 `quanauto.pgstore.PsycopgConnection.execute()`
+       收口成 `DataStoreError`（数据中心错误族，`DATA_008`）并 `from exc`，于是
+       `CheckViolation.sqlstate == '23514'` 只存在于 `__cause__` 上。只探本层属性时
+       本函数对真库返回 `""` —— 实测（postgres:17 容器，`db/risk_control.sql`）：
+       `_sqlstate(exc)=''`、`exc.__cause__.sqlstate='23514'` ⇒
+       「库以 CHECK 拒绝 ⇒ RISK_004」在真驱动路径上整条判据失效。
+       假连接直接抛裸驱动异常，第一层就能探到 ⇒ 单测全绿而真库不成立。
+
+    限深 + 去环：异常链理论上可以有环（`a.__cause__ = b; b.__cause__ = a`），
+    而取 SQLSTATE 失败不该变成死循环。
+    """
+    node: Optional[BaseException] = exc
+    seen: set = set()
+    for _ in range(_SQLSTATE_CHAIN_LIMIT):
+        if node is None or id(node) in seen:
+            break
+        seen.add(id(node))
+        value = _own_sqlstate(node)
+        if value:
+            return value
+        nxt = node.__cause__
+        if nxt is None:
+            nxt = node.__context__
+        node = nxt
+    return ""
+
+
+def _is_check_violation(exc: BaseException) -> bool:
+    """是不是「库以 CHECK 约束拒绝」。**这个判据只有这一处**，见 `_sqlstate` docstring。"""
+    return _sqlstate(exc) == _CHECK_VIOLATION_SQLSTATE
+
+
+def _wrapped_sql_error(exc: BaseException, what: str, error_class: type) -> QuanAutoError:
+    """把驱动异常翻成本层错误 —— **「是哪个 RISK 码」只在这里判一次**。
+
+    两类失败必须分开（否则调用方不知道自己在什么状态）：
+      * `23514`（CHECK 约束）⇒ `RiskConfigInvalidError` / **RISK_004**，语义是
+        「这次写的内容不合法，**旧值继续生效**」——可改可重试；
+      * 其余（连不上、超时、序列化）⇒ 调用方给的族（写路径 = `RiskConfigWriteError` /
+        **RISK_005**），语义是「不知道状态，需要人看」。
+
+    **为什么这个函数存在**（不是随手抽出来的）：第一版把 `== "23514"` 的判据写在
+    `save_change()` 的外层 `except Exception` 里，而它在真实调用链上**永远走不到** ——
+    `_run_sql()` 先把驱动异常包成了 `RiskConfigWriteError`（本项目异常），外层的
+    `except QuanAutoError: raise` 就原样把它放行了。于是「库拒绝 ⇒ RISK_004」这句话
+    只存在于 docstring 里，测试一跑就露馅（`test_save_change_check_violation_becomes_risk_004`）。
+    判据放在**唯一**处理原生异常的地方，两个调用点共用它，「判过没判过」不再靠人看。
+
+    第二版（真库探针实测后）又补了一层：`except QuanAutoError: raise` 这条「不许二次包装」
+    的放行会让 **`pgstore` 已经包好的 `DataStoreError`** 直接穿过本函数 —— 因为驱动异常
+    早就不是「原生」异常了。放行判据因此不能再按 `QuanAutoError` 划，而要按**风控族**
+    （`RiskError`）划：见 `_translate_to_risk_error`。否则真库上调用方拿到的是 `DATA_008`
+    （数据中心错误族），`except RiskError` 根本接不住。
+
+    ⚠️ 已知缺口（登记在 `docs/开工前缺口清单.md`）：`23514` 一律翻成 `RiskConfigInvalidError`
+    （RISK_004 =「阈值配置非法」），**不管调用方是谁** —— 留痕写入方（`RiskInterceptLogWriter`）
+    拿到这个措辞并不贴切。之所以没顺手分家：这条路径上改前改后的行为对调用方没有区别
+    （`_record_risk_block()` 两个码都不捕，都直接逃出），而「留痕 SQL 失败该用哪个码」
+    契约里没有依据，不该在接线这一步顺手发明。
+    """
+    if _is_check_violation(exc):
+        return RiskConfigInvalidError(
+            "[RISK_004] 数据库以 CHECK 约束拒绝本次写入（SQLSTATE 23514）：%s失败（%s）：%s。"
+            "**旧值继续生效**，请检查值是否越界（RATIO 必须落在 (0, 1]、COUNT 必须是整数）"
+            % (what, type(exc).__name__, exc)
+        )
+    return error_class("%s失败（%s，SQLSTATE=%s）：%s"
+                       % (what, type(exc).__name__, _sqlstate(exc) or "?", exc))
+
+
+def _translate_to_risk_error(exc: BaseException, what: str,
+                             error_class: type) -> Optional[QuanAutoError]:
+    """把「不属于风控族」的异常翻成本层错误；**已经是风控族的返回 `None`**（原样放行）。
+
+    本层的错误族边界就是这一条：`RiskError` 及其子类。
+      * 是 `RiskError` ⇒ `None`。少了这一条会**过度转码**：`_run_sql()` 已经翻好的
+        RISK_004 到了 `save_change()` 手里链上仍带着 `23514`（`raise ... from exc`），
+        再翻一次就把消息叠成双层（实测：`阈值写入（事务边界）失败（RiskConfigInvalidError）：
+        [RISK_004] … [RISK_004] …`），cause 链也跟着变深。
+      * 不是 ⇒ 翻。除了原生驱动异常，这里**还必须接住 `pgstore` 包出来的
+        `DataStoreError`**：真库上任何驱动失败都是它（连不上、超时、约束拒绝都是），
+        原样放行等于让风控的写入失败以 `DATA_008` 逃出去 —— `except RiskError` 接不住，
+        而且「约束拒绝 RISK_004 / 其它 RISK_005」这个二分在真库上会**整体失效**。
+    """
+    if isinstance(exc, RiskError):
+        return None
+    return _wrapped_sql_error(exc, what, error_class)
+
+
+def _open_connection(factory: Callable[[], Any], error_class: type, what: str) -> Any:
+    """取连接，**工厂自己抛的异常也收口**。
+
+    连接池拿不到连接时抛的是池的异常而不是驱动的异常；只捕驱动异常会让这种最常见的
+    失败绕过本层错误族，调用方拿一个陌生类型（`except RiskError` 接不住）。
+    收口规则与 `_run_sql()` 共用一条（见 `_translate_to_risk_error`）。
+    """
+    try:
+        return factory()
+    except Exception as exc:  # noqa: BLE001 —— 收口是本层的职责，见 docstring
+        translated = _translate_to_risk_error(exc, what, error_class)
+        if translated is None:
+            raise
+        raise translated from exc
+
+
+def _run_sql(conn: Any, sql: str, params: Sequence[Any], what: str,
+             error_class: type) -> List[Mapping[str, Any]]:
+    """执行一条语句，把驱动异常收口成**本层自己的**错误族。
+
+    为什么不像 `pgstore` 那样共用一个 `_run()`：那个函数收口到 `DataStoreError`
+    （数据中心契约的错误族）。风控的写入被包成 `DataStoreError` 之后
+    `RiskEngine.apply_change()` 就认不出来了 —— 收口必须落在本层错误族里。
+
+    放行判据见 `_translate_to_risk_error`（**只看是不是 `RiskError`**）：本项目自己的
+    风控异常不许被二次包装，而 `pgstore` 的 `DataStoreError` 与外衣底下装着的
+    `CheckViolation` 都要翻。`23514` 由 `_wrapped_sql_error()` 翻成 RISK_004（不是这里
+    给的族）：约束拒绝是「内容不合法」，与「写不进去」是两件事，调用方的处置也不同。
+    """
+    try:
+        rows = conn.execute(sql, params)
+    except Exception as exc:  # noqa: BLE001
+        translated = _translate_to_risk_error(exc, what, error_class)
+        if translated is None:
+            raise
+        raise translated from exc
+    return list(rows)
+
+
+def _as_numeric(value: Any) -> Decimal:
+    """绑给 `numeric(18,8)` 列的值一律 `Decimal(str(v))`。
+
+    直接绑 float 等于把二进制尾数交给库：`0.1` 会变成 `0.1000000000000000055…`，
+    而 `numeric` 是**精确**类型 —— 那串尾巴会一直躺在库里，回读时就在那儿。
+    """
+    return Decimal(str(float(value)))
+
+
+def _audit_num(value: Any) -> str:
+    """审计表里的阈值是 `varchar(64)`（D6 要的是「变更前后可读」），用定点写法。
+
+    `Decimal.normalize()` 会把 `0.10` 收成 `0.1`、把 `1000.0` 收成 `1E+3`，
+    所以最后必须 `format(..., 'f')` 回到定点 —— 否则审计里会出现看不懂的 `1E-7`。
+    """
+    return format(Decimal(str(float(value))).normalize(), "f")
+
+
+def _as_local_dt(value: Any) -> Optional[datetime]:
+    """把库里的 `timestamptz` 归一化成**本地裸时间**（与 `_now()` 同口径）。
+
+    不归一化的话「写进去的 10:00」与「读出来的 10:00+08:00」在 `==` 上不等
+    （aware 与 naive 的 `datetime` 比较直接 `TypeError`），于是 D7/D8 的
+    「跨重启保留」在内存里看着对、一读库就错。
+    """
+    if value is None:
+        return None
+    stamp = value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
+    if stamp.tzinfo is None:
+        return stamp
+    return stamp.astimezone().replace(tzinfo=None)
+
+
 class DbRiskRuleStore(RiskRuleStore):
     """PostgreSQL 规则存储实现，生产环境使用。
 
-    唯一允许写 `risk_rule` 表的组件（D10）。连接由外部工厂提供，本模块**不**引入
-    任何数据库驱动 —— `tools/` 与 `quanauto/` 都不该为风控多背一个依赖。
+    唯一允许写 `risk_rule` 表的组件（D10）。连接由外部工厂提供，本模块不引入驱动。
+    另实现契约 §3.3.2 声明的四个运行态方法（D7/D8 用），`RiskEngine` 以 `hasattr` 探测它们。
+
+    **读路径不写库、写路径不读内存**：本类只跟库打交道，不知道引擎的存在。两处例外是
+    **故意**的，都必须写清楚：
+      * `load_rules()` 逐行做 D3 校验（RATIO 必须是 0~1 小数）—— 库里躺着一条 `10`
+        而不是 `0.10` 时要在**读**的时候就炸，而不是让它静默生效成「永不触发」；
+      * `save_change()` 重做一遍 `RiskEngine.apply_change()` 做过的应用层校验 ——
+        D10 说本类是唯一能写 `risk_rule` 的组件，那么绕过引擎直接构造本类的人
+        （运维脚本、将来的 CLI）也必须撞上同一道闸。契约 §3.3.2 的原话是
+        「不得【仅】依赖应用层校验」。
     """
+
+    # 读：一次全量取回，逐行校验（见类 docstring）。顺序固定，便于对表。
+    RULES_SQL = (
+        "SELECT rule_id, scope, scope_key, threshold, unit, comparison, enabled, "
+        "version, updated_by, updated_at, description FROM risk_rule "
+        "ORDER BY rule_id, scope, scope_key"
+    )
+    VERSION_SQL = "SELECT version FROM risk_config_version WHERE id = 1"
+    OLD_THRESHOLD_SQL = (
+        "SELECT threshold FROM risk_rule WHERE rule_id = %s AND scope = %s "
+        "AND scope_key = %s"
+    )
+    # 写：三句必须同事务。UPSERT 而不是 UPDATE，是因为 D2 的分层覆盖允许「新建一层」
+    # （给某个策略单独收紧却没有那一行）。UPDATE 在这种情况下影响 0 行，而 0 行既可能
+    # 是「行不存在」也可能是「值本来就一样」，用 `rowcount` 判会分不清。
+    UPSERT_RULE_SQL = (
+        "INSERT INTO risk_rule (rule_id, scope, scope_key, threshold, unit, comparison, "
+        "enabled, version, updated_by, updated_at, description) "
+        "VALUES (%s, %s, %s, %s, %s, %s, TRUE, %s, %s, %s, %s) "
+        "ON CONFLICT (rule_id, scope, scope_key) DO UPDATE SET "
+        "threshold = EXCLUDED.threshold, version = EXCLUDED.version, "
+        "updated_by = EXCLUDED.updated_by, updated_at = EXCLUDED.updated_at "
+        "RETURNING rule_id"
+    )
+    BUMP_VERSION_SQL = (
+        "UPDATE risk_config_version SET version = version + 1, updated_at = %s "
+        "WHERE id = 1 RETURNING version"
+    )
+    INSERT_AUDIT_SQL = (
+        "INSERT INTO risk_rule_audit (rule_id, scope, scope_key, old_threshold, "
+        "new_threshold, change_direction, applied, version, changed_by, reason, "
+        "created_at) VALUES (%s, %s, %s, %s, %s, %s, TRUE, %s, %s, %s, %s)"
+    )
+    PEAKS_SQL = "SELECT peak_key, peak_value FROM risk_equity_peak"
+    # GREATEST：峰值是单调的（D8），让「写一个更小的值」在库里也降不下来。
+    PEAK_UPSERT_SQL = (
+        "INSERT INTO risk_equity_peak (peak_key, peak_value, updated_at) "
+        "VALUES (%s, %s, %s) ON CONFLICT (peak_key) DO UPDATE SET "
+        "peak_value = GREATEST(risk_equity_peak.peak_value, EXCLUDED.peak_value), "
+        "updated_at = EXCLUDED.updated_at"
+    )
+    BREAKERS_SQL = (
+        "SELECT breaker_key, state, triggered_at, trigger_reason, resumed_at, resumed_by "
+        "FROM risk_breaker_state"
+    )
+    # `resume_reason` 不在 `BreakerState` 里（契约 §3.2.6 没有该字段），所以留给
+    # 列默认值 `''`，并且**在更新时也不去覆盖它** —— 一次恢复的理由不该被下一次
+    # 触发抹掉，那正是事后追责要看的东西。
+    BREAKER_UPSERT_SQL = (
+        "INSERT INTO risk_breaker_state (breaker_key, state, triggered_at, "
+        "trigger_reason, resumed_at, resumed_by) VALUES (%s, %s, %s, %s, %s, %s) "
+        "ON CONFLICT (breaker_key) DO UPDATE SET state = EXCLUDED.state, "
+        "triggered_at = EXCLUDED.triggered_at, "
+        "trigger_reason = EXCLUDED.trigger_reason, "
+        "resumed_at = EXCLUDED.resumed_at, resumed_by = EXCLUDED.resumed_by"
+    )
 
     def __init__(self, connection_factory: Callable[[], Any]) -> None:
         self._connect = connection_factory
 
+    # ── 读 ────────────────────────────────────────────────────────────
     def load_rules(self) -> List[RiskRule]:
-        raise RiskConfigLoadError("DbRiskRuleStore 尚未接线（I3 只跑回测路径，用 MemoryRiskRuleStore）")
+        """全量加载 + 逐行校验。
+
+        D4 的「整批校验后整体上线」**不在这里**：本方法返回的是一份还没上线的清单，
+        能完成「先整批校验再整体上线」的只有 `RiskEngine._validate()` / `_install()`。
+        让存储也做一遍会得到两套方言，将来改口径必然漏一处。
+        """
+        conn = _open_connection(self._connect, RiskConfigLoadError, "风控存储读取")
+        rows = _run_sql(conn, self.RULES_SQL, (), "读取 risk_rule", RiskConfigLoadError)
+        return [self._row_to_rule(row) for row in rows]
 
     def get_version(self) -> int:
-        raise RiskConfigLoadError("DbRiskRuleStore 尚未接线（I3 只跑回测路径，用 MemoryRiskRuleStore）")
+        """读 `risk_config_version`（单行，契约 D1 的低成本变更检测）。
 
+        行数不是 1 就直接判失败：0 行说明种子没跑（那么 `load_rules()` 会读到一份
+        「版本号不存在」的配置），多行说明单例约束被人拿掉了 —— 两种都不能「取第一行算了」。
+        """
+        conn = _open_connection(self._connect, RiskConfigLoadError, "风控存储读取")
+        rows = _run_sql(conn, self.VERSION_SQL, (), "读取 risk_config_version",
+                        RiskConfigLoadError)
+        if len(rows) != 1:
+            raise RiskConfigLoadError(
+                "risk_config_version 应有恰好 1 行（ck_risk_config_version_singleton），"
+                "实际读到 %d 行 —— %s" % (len(rows), "种子没跑" if not rows else "单例被破坏")
+            )
+        return int(rows[0]["version"])
+
+    def _row_to_rule(self, row: Mapping[str, Any]) -> RiskRule:
+        """一行 → `RiskRule`，缺列即报错（照 `pgstore._row_to_bar` 的口径）。"""
+        try:
+            rule_id = str(row["rule_id"])
+            scope = RuleScopeEnum(str(row["scope"]))
+            unit = RuleUnitEnum(str(row["unit"]))
+            threshold = float(row["threshold"])
+        except KeyError as exc:
+            raise RiskConfigLoadError(
+                "risk_rule 的一行缺少列 %r —— 本类读的列清单与 db/risk_control.sql "
+                "不一致（改过 DDL 就要同批改这里）" % (str(exc).strip("'"),)
+            ) from exc
+        except ValueError as exc:
+            raise RiskConfigLoadError(
+                "risk_rule 里存着枚举外的值（%s）—— 库里的 CHECK 约束被人绕过了"
+                % (exc,)
+            ) from exc
+
+        spec = RULE_REGISTRY.get(rule_id)
+        if spec is None:
+            raise RiskConfigInvalidError(
+                "risk_rule 里存着注册表之外的 rule_id=%r —— D3 说 rule_id 不可自定义，"
+                "这一行不会有任何规则去读它" % (rule_id,)
+            )
+        if spec.unit is not unit:
+            raise RiskConfigInvalidError(
+                "规则 %s 的单位与注册表不符：库里=%s，注册表=%s —— 单位错位会把"
+                "「0.10 的仓位上限」读成「10 倍仓位」" % (rule_id, unit.value, spec.unit.value)
+            )
+        # 逐行 D3：库的 ck_risk_rule_ratio_range 已经挡了一层，这里再挡一层是因为
+        # 本类也可能接到一个**没有约束**的库（副本、旧快照、手改过的表）。
+        validate_threshold(rule_id, threshold)
+
+        return RiskRule(
+            rule_id=rule_id,
+            rule_type=spec.rule_type,
+            scope=scope,
+            scope_key=str(row["scope_key"]),
+            threshold=threshold,
+            unit=unit,
+            comparison=str(row["comparison"]),
+            enabled=bool(row["enabled"]),
+            version=int(row["version"]),
+            updated_by=str(row.get("updated_by") or "system"),
+            updated_at=_as_local_dt(row.get("updated_at")),
+            description=str(row.get("description") or ""),
+        )
+
+    # ── 写（D6 / D10）──────────────────────────────────────────────────
     def save_change(self, change: RuleChangeRequest) -> int:
-        raise RiskConfigLoadError("DbRiskRuleStore 尚未接线（I3 只跑回测路径，用 MemoryRiskRuleStore）")
+        """写入阈值变更 + 递增版本号 + 追加审计行，**同一个事务**，返回新版本号。
+
+        顺序是量出来的不是排出来的：① 读旧值（审计要记「变更前是什么」）；② 递增版本号
+        并把新值拿回来；③ UPSERT 规则行；④ 落审计行。四步同事务，否则会出现
+        「阈值改了但版本号没动」（D1 的变更检测当场失效）或「审计里查不到这一笔」
+        （D10 要追责时查无实据）—— 两种都是**半新半旧**，比整笔失败危险得多。
+
+        异常分两类，**不同类不许混**：
+          * 库里的 CHECK 拒绝（SQLSTATE 23514）⇒ `RiskConfigInvalidError`（RISK_004），
+            语义是「这次变更不合法，旧值继续生效」；
+          * 其他任何失败（连不上、超时、序列化）⇒ `RiskConfigWriteError`（RISK_005），
+            语义是「不知道状态，需要人看」。
+
+        `23514` 可能在语句执行时冒出来，也可能在提交边界才冒出来（驱动不保证什么时候报），
+        两条路径共用 `_wrapped_sql_error()` —— 判据只有一份，不会只在一半路径上生效。
+        并且真实调用链上来的**不是裸驱动异常**：`quanauto.pgstore.PsycopgConnection` 会把
+        `CheckViolation` 包成 `DataStoreError`（`DATA_008`，数据中心错误族）再抛，所以
+        两个 `except QuanAutoError` 分支要先靠 `_is_check_violation()` 穿透 `__cause__`
+        把它认回来，否则调用方拿到的是一个 `except RiskError` 接不住的类型（真库实测）。
+
+        `old_threshold` / `change_direction` 在库里**本来没有这一行**时留空：变更前的
+        **生效**值来自更高的层（D2），存储层算不出继承链，算就是把分层再实现一遍。
+        契约 §3.3.4 的 `RuleChangeRequest` 没有 `old_threshold` 字段，所以这里只能留空
+        —— 这一条登记为缺口，见收工记录。
+        """
+        self._validate_change(change)
+        conn = _open_connection(self._connect, RiskConfigWriteError, "风控存储写入")
+        new_version = 0
+        try:
+            with conn.transaction():
+                old = self._read_old_threshold(conn, change)
+                bumped = _run_sql(conn, self.BUMP_VERSION_SQL, (self._now_stamp(),),
+                                  "递增 risk_config_version", RiskConfigWriteError)
+                if len(bumped) != 1:
+                    raise RiskConfigWriteError(
+                        "递增 risk_config_version 影响了 %d 行（应为 1）—— 单例行 id=1 不见了"
+                        % len(bumped)
+                    )
+                new_version = int(bumped[0]["version"])
+                spec = RULE_REGISTRY[change.rule_id]
+                written = _run_sql(
+                    conn, self.UPSERT_RULE_SQL,
+                    (change.rule_id, change.scope.value, change.scope_key,
+                     _as_numeric(change.new_threshold), spec.unit.value, "LTE",
+                     new_version, change.operator, self._now_stamp(), spec.description),
+                    "写入 risk_rule", RiskConfigWriteError,
+                )
+                if len(written) != 1:
+                    raise RiskConfigWriteError(
+                        "UPSERT risk_rule 没有返回行（%s/%s/%s）—— 数据没落盘"
+                        % (change.rule_id, change.scope.value, change.scope_key)
+                    )
+                _run_sql(
+                    conn, self.INSERT_AUDIT_SQL,
+                    (change.rule_id, change.scope.value, change.scope_key,
+                     "" if old is None else _audit_num(old),
+                     _audit_num(change.new_threshold),
+                     "" if old is None else self._direction(change, old),
+                     new_version, change.operator, change.reason, self._now_stamp()),
+                    "写入 risk_rule_audit", RiskConfigWriteError,
+                )
+        except Exception as exc:  # noqa: BLE001
+            # 语句级失败已经在 `_run_sql()` 里翻过；走到这里的是**事务边界**上的失败
+            # （`begin`/`commit` 自己抛，或者驱动在提交时才报的约束错），以及
+            # `ValidationError` 这类非 `QuanAutoError` 的校验失败。收口规则与 `_run_sql()`
+            # 共用同一条（见 `_translate_to_risk_error`）—— 两处各写一份判据就是两套方言，
+            # 而其中一套曾经是死代码。
+            translated = _translate_to_risk_error(
+                exc, "阈值写入（事务边界）", RiskConfigWriteError)
+            if translated is None:
+                raise
+            raise translated from exc
+        return new_version
+
+    def _validate_change(self, change: RuleChangeRequest) -> None:
+        """应用层校验的重做（见类 docstring 的第二条例外）。"""
+        validate_threshold(change.rule_id, change.new_threshold)
+        if not str(change.operator).strip():
+            raise RiskConfigInvalidError("[RISK_004] 阈值变更必须写明 operator（D10：要追到人）")
+        if not str(change.reason).strip():
+            raise RiskConfigInvalidError("[RISK_004] 阈值变更必须写明 reason（D6：审计要能解释）")
+        if not str(change.scope_key).strip():
+            raise RiskConfigInvalidError("[RISK_004] scope_key 不可为空")
+        if change.scope is RuleScopeEnum.GLOBAL and change.scope_key != GLOBAL_SCOPE_KEY:
+            raise RiskConfigInvalidError(
+                "[RISK_004] GLOBAL 层变更的 scope_key 必须是 %r（D2 的全局兜底）"
+                % GLOBAL_SCOPE_KEY
+            )
+
+    def _read_old_threshold(self, conn: Any, change: RuleChangeRequest) -> Optional[float]:
+        rows = _run_sql(
+            conn, self.OLD_THRESHOLD_SQL,
+            (change.rule_id, change.scope.value, change.scope_key),
+            "读取变更前的阈值", RiskConfigWriteError,
+        )
+        return None if not rows else float(rows[0]["threshold"])
+
+    def _direction(self, change: RuleChangeRequest, old: float) -> str:
+        """`TIGHTEN` / `RELAX` / `''`（相等）。
+
+        方向按**注册表的收紧方向**判，不按「大小」判：`max_daily_trades` 的收紧方向若是
+        INCREASE，那么把 3 改成 5 是收紧而不是放宽。写死「变小=收紧」会把方向记录反。
+        """
+        new = float(change.new_threshold)
+        if abs(new - float(old)) < 1e-12:
+            return ""
+        spec = RULE_REGISTRY[change.rule_id]
+        tightening_is_down = spec.tightening_direction is TighteningDirectionEnum.DECREASE
+        return "TIGHTEN" if (new < old) == tightening_is_down else "RELAX"
+
+    @staticmethod
+    def _now_stamp() -> datetime:
+        """写库用的时间戳：**本项目自己的** `_now()`（本地裸时间）。"""
+        return _now()
+
+    # ── 运行态持久化（契约 §3.3.2 的四个额外方法，D7/D8）───────────────
+    def load_equity_peaks(self) -> List[Tuple[str, float]]:
+        """读全部权益峰值（D8）。返回 `List[(peak_key, value)]`。"""
+        conn = _open_connection(self._connect, RiskConfigLoadError, "风控存储读取")
+        rows = _run_sql(conn, self.PEAKS_SQL, (), "读取 risk_equity_peak", RiskConfigLoadError)
+        return [(str(r["peak_key"]), float(r["peak_value"])) for r in rows]
+
+    def save_equity_peak(self, peak_key: str, value: float) -> None:
+        """写一个权益峰值（D8，单调不降）。"""
+        if not str(peak_key).strip():
+            raise RiskConfigInvalidError("[RISK_004] peak_key 不可为空")
+        conn = _open_connection(self._connect, RiskConfigWriteError, "风控存储写入")
+        _run_sql(conn, self.PEAK_UPSERT_SQL,
+                 (str(peak_key), _as_numeric(value), self._now_stamp()),
+                 "写入 risk_equity_peak", RiskConfigWriteError)
+
+    def load_breaker_states(self) -> List[BreakerState]:
+        """读全部熔断单元状态（D7）。"""
+        conn = _open_connection(self._connect, RiskConfigLoadError, "风控存储读取")
+        rows = _run_sql(conn, self.BREAKERS_SQL, (), "读取 risk_breaker_state",
+                        RiskConfigLoadError)
+        states = []
+        for row in rows:
+            try:
+                key = str(row["breaker_key"])
+                state = BreakerStateEnum(str(row["state"]))
+            except KeyError as exc:
+                raise RiskConfigLoadError(
+                    "risk_breaker_state 的一行缺少列 %r" % (str(exc).strip("'"),)
+                ) from exc
+            except ValueError as exc:
+                raise RiskConfigLoadError(
+                    "risk_breaker_state 里存着枚举外的 state（%s）" % (exc,)
+                ) from exc
+            states.append(BreakerState(
+                breaker_key=key,
+                state=state,
+                triggered_at=_as_local_dt(row.get("triggered_at")),
+                trigger_reason=str(row.get("trigger_reason") or ""),
+                resumed_at=_as_local_dt(row.get("resumed_at")),
+                resumed_by=str(row.get("resumed_by") or ""),
+            ))
+        return states
+
+    def save_breaker_state(self, state: BreakerState) -> None:
+        """写一个熔断单元状态（D7，写穿不节流 —— 熔断是安全动作）。"""
+        conn = _open_connection(self._connect, RiskConfigWriteError, "风控存储写入")
+        _run_sql(conn, self.BREAKER_UPSERT_SQL,
+                 (state.breaker_key, BreakerStateEnum(state.state).value,
+                  state.triggered_at, state.trigger_reason,
+                  state.resumed_at, state.resumed_by),
+                 "写入 risk_breaker_state", RiskConfigWriteError)
+
+
+class RiskInterceptLogWriter:
+    """把一条**被拦下**的裁决展开成 `risk_intercept_log` 的行（只追加）。
+
+    写入方为什么是它、不是 `RiskEngine` —— 这是本步最要紧的一条裁决：
+      * 契约 **D1** 明令 `check()` 内禁止访问数据库/网络。留痕是 IO，塞进 `check()`
+        就是当场违反 D1，而 D1 是「风控拥有最终否决权」在性能与确定性两方面的根基。
+      * 所以留痕只能由**拿到 `RiskCheckResponse` 的调用方**在 `check()` 之外做：
+        回测里是 `BacktestEngine`（`attach_intercept_log()`），生产里是执行层。
+      * 契约 §3.6 的归属表把这张表记在「风控引擎（异步批量）」名下，§3.6.3 又要求
+        「异步批量写入，绝不可阻塞 `check()` 路径」。本实现的落法是**在 `check()`
+        返回之后、由调用方执行的一次批量 INSERT**（一次拦截 = N 行 = 1 条语句）：
+        它不阻塞 `check()`，但它是**同步**的。真正的后台队列这一步不做，理由登记在
+        契约附录里 —— 队列会在「进程崩了但缓冲区里还有留痕」时丢证据，而订单路径上
+        多一条 INSERT 的代价远小于丢掉一次拦截的痕迹。
+
+    **一条 violation 一行**：`rule_id` / `threshold` / `observed` 都是 `RiskViolation`
+    的字段，而内存里的 `blocked_orders` 是「一订单一行、`rule_ids` 是列表」。两者粒度
+    不同，展开只能在写入时做 —— 把列表塞进一个 `rule_id` 列会让这一行无法归属到规则。
+
+    **`action` 取订单级裁决**（`response.action`），不是每条 violation 自己的 action：
+    表的 `ck_risk_intercept_action` 只允许 `('REDUCE','REJECT','HALT')`（**没有 PASS**），
+    而单条 violation 的 action 可以是 `PASS`（WARNING 级）。取订单级还让这些行与
+    `BacktestEngine.risk_summary()["blocked_orders"][].action` 是同一个值。
+    """
+
+    ROW_COLUMNS: Tuple[str, ...] = (
+        "decision_id", "account_id", "strategy_id", "symbol", "rule_id", "rule_scope",
+        "scope_key", "rule_version", "threshold", "observed", "severity", "action",
+        "message", "created_at",
+    )
+    MESSAGE_MAX = 512  # varchar(512)，宽度由 DDL 定
+
+    def __init__(self, connection_factory: Callable[[], Any]) -> None:
+        self._connect = connection_factory
+
+    @classmethod
+    def insert_sql(cls, row_count: int) -> str:
+        """N 行一条语句（批量）。`row_count <= 0` 是调用方的错，这里直接拒绝。"""
+        if row_count <= 0:
+            raise RiskInterceptError(
+                "[RISK_001] 拦截留痕至少要有 1 行 —— 0 行的 INSERT 是空操作，"
+                "它会安静地什么都不写，而调用方以为记下了"
+            )
+        group = "(" + ", ".join(["%s"] * len(cls.ROW_COLUMNS)) + ")"
+        return "INSERT INTO risk_intercept_log (%s) VALUES %s" % (
+            ", ".join(cls.ROW_COLUMNS), ", ".join([group] * row_count),
+        )
+
+    def rows_for(self, request: RiskCheckRequest, response: RiskCheckResponse,
+                 *, created_at: Optional[datetime] = None) -> List[Tuple[Any, ...]]:
+        """把响应展开成待写入的行 —— **纯函数**，不碰数据库。
+
+        展开对不对是这一层最容易错的地方（少展开一条、把 PASS 也写进去、把列表当标量），
+        所以它必须能**不连库**地被检查：`record()` 只是「展开 + 一条语句」。
+        """
+        action = RiskActionEnum(response.action)
+        if action is RiskActionEnum.PASS:
+            raise RiskInterceptError(
+                "[RISK_001] 只有**真的被拦下**的裁决才进 risk_intercept_log："
+                "收到 action=PASS（decision_id=%s）。这不是「少记一笔」，而是「记错」——"
+                "最常见的原因是调用方用 try/except 把整个闸门包起来，把没拦的也写了进去"
+                % (response.decision_id,)
+            )
+        if not response.violations:
+            raise RiskInterceptError(
+                "[RISK_001] 裁决是 %s 却没有任何 violation（decision_id=%s）—— "
+                "这样的响应展开出来是 0 行，写进去等于「拦了一次但没有原因」"
+                % (action.value, response.decision_id)
+            )
+        stamp = created_at if created_at is not None else _now()
+        rows: List[Tuple[Any, ...]] = []
+        for violation in response.violations:
+            rows.append((
+                str(response.decision_id),
+                str(request.account_id),
+                str(request.strategy_id),
+                str(request.symbol),
+                str(violation.rule_id),
+                RuleScopeEnum(violation.scope).value,
+                str(violation.scope_key),
+                int(response.rule_version),
+                _as_numeric(violation.threshold),
+                _as_numeric(violation.observed),
+                str(getattr(violation.severity, "value", violation.severity)),
+                action.value,
+                str(violation.message)[:self.MESSAGE_MAX],
+                stamp,
+            ))
+        return rows
+
+    def record(self, request: RiskCheckRequest, response: RiskCheckResponse,
+               *, created_at: Optional[datetime] = None) -> int:
+        """写入一次拦截留痕，返回写入行数（= violation 条数）。
+
+        `created_at` **必须由调用方给信号那根 K 线的时间**（回测里就是 `bar.datetime`）：
+        用 `_now()` 墙钟会让同一条命令跑两次得到不同的留痕，回测库里就没有两行能对上，
+        `R5` 那套「逐字节可复现」的纪律也就无从谈起。
+        """
+        rows = self.rows_for(request, response, created_at=created_at)
+        conn = _open_connection(self._connect, RiskConfigWriteError, "风控留痕写入")
+        params: List[Any] = []
+        for row in rows:
+            params.extend(row)
+        _run_sql(conn, self.insert_sql(len(rows)), tuple(params),
+                 "写入 risk_intercept_log", RiskConfigWriteError)
+        return len(rows)
 
 
 # ── 风控引擎（契约 §3.2.1）────────────────────────────────────────────────
@@ -1516,7 +2130,9 @@ class KillSwitch:
         """发起紧急清仓（显式通道，与 Kill Switch 解耦）。返回清仓任务标识。
 
         **故意不改开关状态**：若减仓动作顺手把 Kill Switch 关了，它就是“一键清仓”在
-        实现层的后门 —— 契约 D5 明确禁止。真正的清仓执行在 I4 的交易执行层。
+        实现层的后门 —— 契约 D5 明确禁止。真正的清仓执行**不在 I0~I4 任何一轮**：
+        它属于实盘线的交易执行层（`docs/迭代计划.md` §三：Java 平台层与实盘相关件
+        都推到实盘前）。
         """
         return _new_id("flatten")
 
@@ -1663,6 +2279,7 @@ __all__ = [
     "RiskEngine",
     "RiskEngineConfig",
     "RiskEngineHealth",
+    "RiskInterceptLogWriter",
     "RiskRule",
     "RiskRuleStore",
     "RiskRunStateEnum",

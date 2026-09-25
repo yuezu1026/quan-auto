@@ -1,5 +1,5 @@
-baseline: 先跑一次干净的全绿（tests/test_backtest_slice.py + tests/test_data_center_store.py + tests/test_backtest_db_feed.py + tests/test_backtest_risk_gate.py）
-baseline: 全绿 OK (passed=81)
+baseline: 先跑一次干净的全绿（tests/test_backtest_slice.py + tests/test_data_center_store.py + tests/test_backtest_db_feed.py + tests/test_backtest_risk_gate.py + tests/test_risk_store.py）
+baseline: 全绿 OK (passed=145)
 APPLIED M1-account-double-frozen @ quanauto/broker.py (newline='\r\n', tests=tests/test_backtest_slice.py)
   CAUGHT=yes exit=1 failed=2 (test_max_drawdown_is_plausible, test_pending_buy_does_not_change_total_capital)
 APPLIED M2-fill-at-close-not-open @ quanauto/broker.py (newline='\r\n', tests=tests/test_backtest_slice.py)
@@ -59,11 +59,33 @@ APPLIED S14-validation-report-computed-before-the-result-exists @ quanauto/engin
 APPLIED CONTROL-comment-only-db-feed @ quanauto/datacenter.py (newline='\r\n', tests=tests/test_backtest_db_feed.py)
   control OK: 没抓到（本检查器确实会报 caught=NO）
 APPLIED M15-risk-equity-sign-regression @ quanauto/engine.py (newline='\r\n', tests=tests/test_backtest_risk_gate.py)
-  CAUGHT=yes exit=1 failed=3 (test_rerun_resets_counters_but_keeps_rule_version, test_snapshot_equity_counts_floating_value_of_long_position, test_widened_thresholds_reproduce_the_ungated_run)
+  CAUGHT=yes exit=1 failed=4 (test_rerun_resets_counters_but_keeps_rule_version, test_snapshot_equity_counts_floating_value_of_long_position, test_widened_thresholds_reproduce_the_ungated_run, test_writer_attached_but_nothing_blocked_writes_nothing)
 APPLIED M16-risk-gate-open-loop @ quanauto/engine.py (newline='\r\n', tests=tests/test_backtest_risk_gate.py)
-  CAUGHT=yes exit=1 failed=9 (test_kill_switch_before_run_keeps_every_order_out_of_market, test_kill_switch_mid_run_blocks_only_subsequent_orders, test_reduce_shrinks_open_order_to_position_cap, test_report_payload_carries_no_risk_fields, test_rerun_resets_counters_but_keeps_rule_version, test_snapshot_equity_counts_floating_value_of_long_position, test_unloaded_engine_refuses_and_nothing_slips_through, test_widened_thresholds_reproduce_the_ungated_run, test_zero_share_reduction_is_a_block_not_a_zero_order)
+  CAUGHT=yes exit=1 failed=12 (test_a_blocked_order_leaves_exactly_one_log_statement_per_order, test_kill_switch_before_run_keeps_every_order_out_of_market, test_kill_switch_mid_run_blocks_only_subsequent_orders, test_reduce_shrinks_open_order_to_position_cap, test_report_payload_carries_no_risk_fields, test_rerun_keeps_logging_the_second_round, test_rerun_resets_counters_but_keeps_rule_version, test_snapshot_equity_counts_floating_value_of_long_position, test_unloaded_engine_refuses_and_nothing_slips_through, test_widened_thresholds_reproduce_the_ungated_run, test_writer_attached_but_nothing_blocked_writes_nothing, test_zero_share_reduction_is_a_block_not_a_zero_order)
 APPLIED M17-risk-block-not-recorded @ quanauto/engine.py (newline='\r\n', tests=tests/test_backtest_risk_gate.py)
   CAUGHT=yes exit=1 failed=2 (test_kill_switch_before_run_keeps_every_order_out_of_market, test_zero_share_reduction_is_a_block_not_a_zero_order)
-mutations=29 caught=29 control=3 env_limited=0
+APPLIED S15-check-violation-judgement-dead @ quanauto/risk.py (newline='\r\n', tests=tests/test_risk_store.py)
+  CAUGHT=yes exit=1 failed=4 (test_save_change_check_violation_at_the_commit_boundary_is_also_risk_004, test_save_change_check_violation_becomes_risk_004, test_save_change_check_violation_wrapped_by_pgstore_at_the_commit_boundary_too, test_save_change_check_violation_wrapped_by_pgstore_is_still_risk_004)
+APPLIED S15-passthrough-rule-goes-back-to-quanautoerror @ quanauto/risk.py (newline='\r\n', tests=tests/test_risk_store.py)
+  CAUGHT=yes exit=1 failed=4 (test_driver_facing_errors_from_pgstore_are_collected_into_the_risk_family, test_save_change_check_violation_wrapped_by_pgstore_at_the_commit_boundary_too, test_save_change_check_violation_wrapped_by_pgstore_is_still_risk_004, test_save_change_wrapped_io_failure_still_becomes_a_write_error)
+APPLIED S15-sqlstate-stops-at-the-outer-exception @ quanauto/risk.py (newline='\r\n', tests=tests/test_risk_store.py)
+  CAUGHT=yes exit=1 failed=3 (test_save_change_check_violation_wrapped_by_pgstore_at_the_commit_boundary_too, test_save_change_check_violation_wrapped_by_pgstore_is_still_risk_004, test_sqlstate_walks_the_cause_chain_and_stops_on_a_cycle)
+APPLIED S15-own-errors-get-re-wrapped @ quanauto/risk.py (newline='\r\n', tests=tests/test_risk_store.py)
+  CAUGHT=yes exit=1 failed=5 (test_our_own_errors_are_not_double_wrapped, test_save_change_check_violation_becomes_risk_004, test_save_change_check_violation_wrapped_by_pgstore_is_still_risk_004, test_save_change_other_failure_becomes_a_write_error, test_writer_wraps_a_driver_error_and_passes_our_errors_through)
+APPLIED S15-intercept-log-uses-the-violation-action @ quanauto/risk.py (newline='\r\n', tests=['tests/test_risk_store.py', 'tests/test_backtest_risk_gate.py'])
+  CAUGHT=yes exit=1 failed=2 (test_a_blocked_order_leaves_exactly_one_log_statement_per_order, test_writer_expands_one_row_per_violation_with_the_order_level_action)
+APPLIED S15-intercept-log-drops-the-other-violations @ quanauto/risk.py (newline='\r\n', tests=['tests/test_risk_store.py', 'tests/test_backtest_risk_gate.py'])
+  CAUGHT=yes exit=1 failed=2 (test_a_blocked_order_leaves_exactly_one_log_statement_per_order, test_writer_expands_one_row_per_violation_with_the_order_level_action)
+APPLIED S15-gate-logs-every-check-not-just-blocks @ quanauto/engine.py (newline='\r\n', tests=tests/test_backtest_risk_gate.py)
+  CAUGHT=yes exit=1 failed=3 (test_a_blocked_order_leaves_exactly_one_log_statement_per_order, test_rerun_keeps_logging_the_second_round, test_writer_attached_but_nothing_blocked_writes_nothing)
+APPLIED S15-intercept-log-created-at-becomes-wall-clock @ quanauto/engine.py (newline='\r\n', tests=tests/test_backtest_risk_gate.py)
+  CAUGHT=yes exit=1 failed=1 (test_a_blocked_order_leaves_exactly_one_log_statement_per_order)
+APPLIED S15-audit-direction-always-blank @ quanauto/risk.py (newline='\r\n', tests=tests/test_risk_store.py)
+  CAUGHT=yes exit=1 failed=3 (test_save_change_direction_follows_the_registry_not_the_size, test_save_change_writes_the_audit_direction_relax, test_save_change_writes_the_audit_direction_tighten)
+APPLIED S15-breaker-upsert-clobbers-resume-reason @ quanauto/risk.py (newline='\r\n', tests=tests/test_risk_store.py)
+  CAUGHT=yes exit=1 failed=1 (test_breaker_upsert_never_touches_the_resume_reason_column)
+APPLIED CONTROL-comment-only-risk-store @ quanauto/risk.py (newline='\r\n', tests=tests/test_risk_store.py)
+  control OK: 没抓到（本检查器确实会报 caught=NO）
+mutations=39 caught=39 control=4 env_limited=0
 report=D:\project-quan\quan-auto\tools\pytest-mutation-report.txt
 verdict: PASS

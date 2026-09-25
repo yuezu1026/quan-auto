@@ -19,6 +19,12 @@
 **为什么先有实现再有这份测试**：I3 的实现写在它之前，所以「先红后绿」的顺序证据不在
 git 历史里。代替它的是 `tools/pytest_mutation_check.py` —— 把闸门逐处改坏，确认本文件
 真的变红（一条永远绿的测试和没有测试是一样的）。
+
+**§5 是 I3b 小步加上来的第四件事**（拦截留痕，不在 I3 的三条 DoD 里）：接线点只有
+`BacktestEngine._record_risk_block()`（只被 `_risk_gate()` 调用），写入方是**调用方**
+而不是 `RiskEngine` —— D1 禁止 `check()` 内 IO，而留痕是 IO。这里用假连接计数语句，
+证明「一次拦截 ⇒ **恰好一条批量 INSERT**，行数与 `rule_ids` 对得上；没拦就一行都不写」。
+真库那一半只能由容器通道证明，理由与边界写在风控契约 §七。
 """
 
 from __future__ import annotations
@@ -27,6 +33,7 @@ import importlib.util
 import sys
 from dataclasses import replace
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -49,6 +56,7 @@ from quanauto.risk import (
     MemoryRiskRuleStore,
     RiskEngine,
     RiskEngineConfig,
+    RiskInterceptLogWriter,
     default_global_rules,
 )
 from quanauto.strategies import LOT_SIZE, MA_Cross_Strategy
@@ -110,11 +118,14 @@ def widened_rules(**overrides) -> list:
 
 
 def build(*, attach: bool = False, load: bool = True, rules=None, store=None,
-          kill_switch=None, strategy_factory=None):
+          kill_switch=None, strategy_factory=None, writer=None):
     """照 `cli.run_backtest` 的顺序组装引擎（用的是契约里的公开方法）。
 
     `strategy_factory(symbol, capital, args)` 只为「需要自定义策略」的用例而留；
     默认就是 I1 的双均线。
+
+    `writer` 是拦截留痕的写入方（I3b），只在 `attach=True` 时接 —— 它挂在**调用方**
+    （引擎）而不是 `RiskEngine` 里（D1 禁 `check()` 内 IO），所以接线点有两个。
     """
     args = cli_args()
     feed = CsvDataFeed(args.strategy_csv)
@@ -156,6 +167,8 @@ def build(*, attach: bool = False, load: bool = True, rules=None, store=None,
         if load:
             risk.load()
         engine.attach_risk_engine(risk)
+        if writer is not None:
+            engine.attach_intercept_log(writer)
     return SimpleNamespace(
         engine=engine, broker=broker, feed=feed, symbol=symbol, config=config,
         strategy=strategy, risk=risk,
@@ -542,3 +555,164 @@ def test_rerun_resets_counters_but_keeps_rule_version() -> None:
     assert market_orders(ctx.broker) == [
         (o.submit_time, o.direction.value, o.quantity, o.status.value) for o in second.orders
     ]
+
+
+# ── 5. 拦截留痕（I3b：闸门 → 调用方 → `risk_intercept_log`）───────────────
+class _LogConn:
+    """只记不改的假连接：留痕这条缝要看的只是「发了几条语句、绑了什么值」。
+
+    比 `tests/test_risk_store.py` 里那本少了一大半 —— 那边要测「第几条语句失败」、
+    事务边界、驱动异常映射，这边只要一个能把 `(sql, params)` 记下来的对象。
+    故意**不开事务**：留痕是一次批量 `INSERT`（自动提交），不复用规则写入那条四步事务。
+    """
+
+    def __init__(self) -> None:
+        self.calls: list = []
+
+    def execute(self, sql, params=()):
+        self.calls.append((sql, tuple(params)))
+        return []
+
+
+def _log_rows(conn) -> list:
+    """把记下来的 `INSERT INTO risk_intercept_log` 按 14 列一组切成行。"""
+    rows: list = []
+    for sql, params in conn.calls:
+        assert sql.upper().lstrip().startswith("INSERT INTO RISK_INTERCEPT_LOG"), sql
+        assert len(params) % len(RiskInterceptLogWriter.ROW_COLUMNS) == 0, (
+            "绑定值个数不是列数的整数倍：%d" % len(params)
+        )
+        width = len(RiskInterceptLogWriter.ROW_COLUMNS)
+        rows.append([tuple(params[i:i + width]) for i in range(0, len(params), width)])
+    return rows
+
+
+def test_a_blocked_order_leaves_exactly_one_log_statement_per_order() -> None:
+    """**端到端触发测试**：拦一次 ⇒ 表里恰好一行，且这行与 `response.violations` 对得上。
+
+    这条缝是「两个各自全绿的半边」（`quanauto.risk` 的存储与引擎的闸门）缝起来的那个地方，
+    也是本项目第三次踩「单侧全绿证明不了接起来能跑」——所以这里**不**直接调 `record()`，
+    而是跑完整回测，让引擎自己去发现它被拦了、自己去留痕。
+
+    断言按「形状」而不是「名字出现过」：语句条数 = 被拦订单数（一次拦截一条批量 INSERT），
+    每一行的 14 个字段逐列与**内存里的那份统计**对账（`risk_summary()["blocked_orders"]`
+    是同一批拦截的另一份记录，两边值不同就是缝上有漂移）。
+
+    本场景每单**恰好两行**：`max_order_amount_pct`（真拦下来的）与 `max_sector_pct`
+    （行业数据缺失 ⇒ WARNING + `action=PASS`）。第二行是这条测试的骨干：留痕记的是
+    **订单级**裁决（REJECT），不是那条 violation 自己的 PASS —— 表约束
+    `ck_risk_intercept_action` 只允许 `REDUCE/REJECT/HALT`，写成 violation 级的话
+    真库里这一笔会当场被拒。
+    """
+    conn = _LogConn()
+    ctx = build(
+        attach=True,
+        rules=widened_rules(max_order_amount_pct=1e-7),
+        writer=RiskInterceptLogWriter(lambda: conn),
+    )
+    result = ctx.engine.run()
+    summary = ctx.engine.risk_summary()
+    blocked = summary["blocked_orders"]
+
+    # 空转守卫：一单都没拦下时，下面「一行对一行」的断言在「没有任何行」时也会通过。
+    assert summary["blocked"] == 3 == len(blocked), "这批单必须真的被拦下过，否则本条在空转"
+    assert result.trades == []
+
+    per_statement = _log_rows(conn)
+    assert len(per_statement) == len(blocked), (
+        "留痕语句数（%d）与被拦订单数（%d）不等：拦截与留痕之间有单被漏记或多记"
+        % (len(per_statement), len(blocked))
+    )
+
+    account_id = ctx.broker.get_account().account_id
+    for chunk, record in zip(per_statement, blocked):
+        by_rule = {row[4]: row for row in chunk}
+        assert len(by_rule) == len(chunk) == 2, (
+            "本场景每单应当恰好两行（结果见 docstring：一条 REJECT + 一条 WARNING）；"
+            "行数变了（%d）说明注册表或缺失数据的处置改了 —— 值得看一眼，不该被自动吞掉"
+            % len(chunk)
+        )
+        assert set(by_rule) == set(record["rule_ids"]), (
+            "写下来的规则（%s）与这次拦截的规则清单（%s）不是同一批"
+            % (sorted(by_rule), record["rule_ids"])
+        )
+
+        row = by_rule["max_order_amount_pct"]
+        assert row[0], "decision_id 不能为空（留痕靠它跟决策对上）"
+        assert row[1] == account_id
+        assert row[2] == STRATEGY_ID and row[3] == ctx.symbol
+        assert (row[5], row[6]) == ("GLOBAL", "*"), "生效层写错了，留痕就没法回答「哪一层拦的」"
+        assert row[7] == summary["rule_version"], "记录的规则版本与本次生效版本不一致（D9）"
+        assert isinstance(row[8], Decimal) and isinstance(row[9], Decimal), (
+            "阈值/观察值必须绑 Decimal，收到 %r / %r" % (type(row[8]), type(row[9]))
+        )
+        assert row[10] in {"WARNING", "ERROR", "CRITICAL"}
+        assert row[11] == record["action"] == "REJECT", (
+            "留痕的 action 必须与内存里那份订单级裁决同值（表的 CHECK 里没有 PASS）"
+        )
+        assert 0 < len(row[12]) <= RiskInterceptLogWriter.MESSAGE_MAX
+        assert row[13] == datetime.fromisoformat(record["datetime"]), (
+            "created_at 必须是信号那根 K 线的时间（不是墙钟）—— 否则同一条命令两次跑出两份留痕"
+        )
+
+        warn = by_rule["max_sector_pct"]
+        assert (warn[10], warn[11]) == ("WARNING", "REJECT"), (
+            "这条 violation 自己的裁决是 action=PASS / severity=WARNING，留痕却必须记订单级的"
+            " REJECT —— 若这里变成 PASS，真库会被 ck_risk_intercept_action 拒掉，"
+            "而且是在**下一笔**真拦截上报错（时间上错位）"
+        )
+    assert len({chunk[0][0] for chunk in per_statement}) == len(blocked), (
+        "三次拦截的 decision_id 相同 ⇒ 留痕分不出是哪一次"
+    )
+
+
+def test_writer_attached_but_nothing_blocked_writes_nothing() -> None:
+    """**对照组**：接了写入方、但这一轮一次都没拦 ⇒ 一条语句都没有。
+
+    「接了才落」的另一半是「放行的**不落**」。写成「不接写入方 ⇒ 没有 SQL」是空转的：
+    那个假连接根本没被挂到任何东西上，断言恒真。这里的写入方真的接着，`check()` 也真的
+    跑了 3 次 —— 只有 `blocked == 0` 这一件事让留痕为空。
+    混进来的后果很具体：PASS 那一行会被表的 `ck_risk_intercept_action` 拒掉，
+    整笔拦截留痕失败，而报错发生在**下一笔真拦截**上（时间上错位，查起来最费劲）。
+    """
+    conn = _LogConn()
+    ctx = build(
+        attach=True,
+        rules=widened_rules(),
+        writer=RiskInterceptLogWriter(lambda: conn),
+    )
+    ctx.engine.run()
+    summary = ctx.engine.risk_summary()
+
+    assert summary["checked"] == 3 and summary["blocked"] == 0, "对照组的前提不成立"
+    assert conn.calls == [], "放行的订单也被写了留痕（PASS 行会被表的 CHECK 拒掉）"
+
+
+def test_rerun_keeps_logging_the_second_round() -> None:
+    """同一个引擎跑两次 ⇒ 两轮都留痕（第二轮不许静默停止）。
+
+    `_reset_risk_run_state()` 只清**运行态**（计数、熔断、峰值），清掉写入方会让第二轮
+    一条都不写，而第一轮的证据看着一切正常 —— 那种「第二次开始就没有证据」的失效最难发现。
+    """
+    conn = _LogConn()
+    ctx = build(
+        attach=True,
+        rules=widened_rules(max_order_amount_pct=1e-7),
+        writer=RiskInterceptLogWriter(lambda: conn),
+    )
+    ctx.engine.run()
+    first = ctx.engine.risk_summary()["blocked"]
+    after_first = len(_log_rows(conn))
+    ctx.engine.run()
+    second = ctx.engine.risk_summary()["blocked"]
+    after_second = len(_log_rows(conn))
+
+    assert first == 3 and after_first == first
+    # 第二轮拦下的单数不写死：策略对象带着滚动窗口状态跨 run，第二轮的信号本来就不同
+    # （见 `test_rerun_resets_counters_but_keeps_rule_version`）。要断言的是**增量**。
+    assert second > 0, "第二轮一单都没拦 ⇒ 两轮没有可比性，这条测试会空转"
+    assert after_second - after_first == second, (
+        "第二轮新增的留痕语句数（%d）与它自己拦下的单数（%d）不等："
+        "`_reset_risk_run_state()` 把写入方也清掉了，或第二轮的拦截没落库"
+        % (after_second - after_first, second)
+    )

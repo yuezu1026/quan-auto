@@ -1,10 +1,11 @@
 """变异检查：把 quanauto 的实现逐处改坏，确认对应套件真的会红。
 
-基线跑四个套件（即下面四个常量）：
+基线跑五个套件（即下面五个常量）：
   * `tests/test_backtest_slice.py`（I1 回测切片）
   * `tests/test_data_center_store.py`（I2 S3 落库侧）
   * `tests/test_backtest_db_feed.py`（I2 库喂数据的回测侧）
   * `tests/test_backtest_risk_gate.py`（I3 风控闸门）
+  * `tests/test_risk_store.py`（I3b 规则存储 + 拦截留痕）
 （本仓库对门禁的同一条纪律：每个自建检查器都要做触发测试；测试套件就是检查器。）
 
 **纪律（每条都对应过一次真实的假绿）**：
@@ -17,8 +18,8 @@
   * `MUTATION` 触发出来的失败必须是**断言/异常**，不能是 `ImportError`/语法错
     （收集阶段就炸掉，等于测试根本没跑）。
 
-**它不进 `run_all_gates.py` 的注册表**：每条样本要跑一次 pytest（2026-09-25 实测 32 条样本：
-29 条变异 + 3 条 CONTROL + 0 条 ENV-LIMIT），慢，且它验证的对象是测试而不是产物契约。
+**它不进 `run_all_gates.py` 的注册表**：每条样本要跑一次 pytest（2026-09-25 I3b 后实测 **43 条样本：
+39 条变异 + 4 条 CONTROL + 0 条 ENV-LIMIT**；上一轮 B20 后是 32 条 = 29 + 3 + 0），慢，且它验证的对象是测试而不是产物契约。
 手动跑，或改完测试后跑一次。
 
 **`env_limit`（一条变异的出口）**：有的缺陷在**当前环境里根本不可能被断言抓住**
@@ -46,6 +47,7 @@ TARGET = "tests/test_backtest_slice.py"
 TESTS_STORE = "tests/test_data_center_store.py"
 TESTS_DB_FEED = "tests/test_backtest_db_feed.py"
 TESTS_RISK_GATE = "tests/test_backtest_risk_gate.py"
+TESTS_RISK_STORE = "tests/test_risk_store.py"
 REPORT = os.path.join(ROOT, "tools", "pytest-mutation-report.txt")
 
 CONTROL = "MUST-NOT-BE-CAUGHT"
@@ -424,6 +426,159 @@ MUTATIONS = [
         "new": "        order.status = OrderStatus.REJECTED\n        order.error_message = response.message\n",
         "expect": ["test_kill_switch_before_run_keeps_every_order_out_of_market"],
     },
+
+    # ── I3b：规则存储 + 拦截留痕（quanauto/risk.py、quanauto/engine.py
+    #         ↔ tests/test_risk_store.py、tests/test_backtest_risk_gate.py） ──
+    # S14 这个名字已经被占（`S14-validation-report-computed-before-the-result-exists`），
+    # 所以本系列从 `S15` 起。
+    {
+        # 「库以 CHECK 拒绝 ⇒ RISK_004（旧值继续生效）」这条判据拿掉。
+        # 这一条是本步从**死代码**里救活的（第一版写在 `save_change` 的外层
+        # `except Exception` 里，而它在那条调用链上永远走不到）：拿掉之后两个调用点
+        # 都会静默退回 RISK_005「不知道状态，需要人看」—— 调用方据此会去重试一个
+        # 永远不可能成功的写入，而库里日志只有一根「约束错」的痕迹。
+        "tag": "S15-check-violation-judgement-dead",
+        "tests": TESTS_RISK_STORE,
+        "path": "quanauto/risk.py",
+        "old": "    if _is_check_violation(exc):\n        return RiskConfigInvalidError(\n",
+        "new": "    if False:  # MUT: 判据拿掉，库拒绍也按 RISK_005 处理\n        return RiskConfigInvalidError(\n",
+        "expect": ["test_save_change_check_violation_becomes_risk_004",
+                   "test_save_change_check_violation_at_the_commit_boundary_is_also_risk_004"],
+    },
+    {
+        # ★ 这条钉的是**只在真库上才看得见**的那个缺陷（探针 A 段实测、postgres:17）：
+        # 把放行判据退回「本项目异常一律放行」（即 `QuanAutoError`），
+        # 但真库上驱动异常早被 `pgstore` 包成了 `DataStoreError`（DATA_008）——
+        # 于是风控的写入失败以**别的族**的码逃走，`except RiskError` 接不住，
+        # 「约束拒绍 ⇒ RISK_004 / 其余 ⇒ RISK_005」这个二分在真库上**整体失效**。
+        # 假连接上永远看不见（裸驱动异常第一层就探到）⇒ 三份端口的形状必须都测。
+        "tag": "S15-passthrough-rule-goes-back-to-quanautoerror",
+        "tests": TESTS_RISK_STORE,
+        "path": "quanauto/risk.py",
+        "old": "    if isinstance(exc, RiskError):\n        return None\n",
+        "new": "    if isinstance(exc, QuanAutoError):  # MUT: 本项目异常一律放行\n        return None\n",
+        "expect": ["test_save_change_check_violation_wrapped_by_pgstore_is_still_risk_004",
+                   "test_save_change_check_violation_wrapped_by_pgstore_at_the_commit_boundary_too",
+                   "test_driver_facing_errors_from_pgstore_are_collected_into_the_risk_family"],
+    },
+    {
+        # `_sqlstate()` 不追 `__cause__` 链（只探本层属性）。
+        # 这一条就是缺陷的**原点**：包进 `DataStoreError` 的 `23514` 探不到 ⇒
+        # 约束拒绍被当成「连不上」（RISK_005）。留着它，将来把 `pgstore` 的包装层
+        # 换成另一种形状时会立刻变红。
+        "tag": "S15-sqlstate-stops-at-the-outer-exception",
+        "tests": TESTS_RISK_STORE,
+        "path": "quanauto/risk.py",
+        "old": "        nxt = node.__cause__\n",
+        "new": "        nxt = None  # MUT: 不追链，只看本层\n",
+        "expect": ["test_sqlstate_walks_the_cause_chain_and_stops_on_a_cycle",
+                   "test_save_change_check_violation_wrapped_by_pgstore_is_still_risk_004",
+                   "test_save_change_check_violation_wrapped_by_pgstore_at_the_commit_boundary_too"],
+    },
+    {
+        # 反向：连风控族也重翻一遍（去掉 `isinstance(exc, RiskError)` 这道闸）。
+        # 代码里看起来仍然「全收到本层错误族了」，代价是两处：
+        # ① `test_our_own_errors_are_not_double_wrapped` —— 本层自己抛的异常
+        #    被包成另一种码（RISK_004 → RISK_005），调用方看到的错误码变了；
+        # ② 子层已翻好的 RISK_004 在父层再翻一次，消息叠成双层。
+        "tag": "S15-own-errors-get-re-wrapped",
+        "tests": TESTS_RISK_STORE,
+        "path": "quanauto/risk.py",
+        "old": "    if isinstance(exc, RiskError):\n        return None\n",
+        "new": "    if False:  # MUT: 风控族也重翻一遍\n        return None\n",
+        "expect": ["test_our_own_errors_are_not_double_wrapped",
+                   "test_save_change_check_violation_becomes_risk_004"],
+    },
+    {
+        # 留痕的 `action` 改取**每条 violation 自己**的裁决。
+        # 单测（假连接）与端到端（真闸门）各有一条主人，因为这两个口径不同：
+        # 单测里 violation 的 action 是人造的；端到端里它是真引擎算出来的 ——
+        # `max_sector_pct` 在快照缺行业归类时发的正是 `action=PASS` 的 WARNING。
+        # 后果不是「少记一笔」，是真库用 `ck_risk_intercept_action`（只许
+        # REDUCE/REJECT/HALT）**拒掉整笔留痕**，而且要到下一笔真拦截才报出来。
+        "tag": "S15-intercept-log-uses-the-violation-action",
+        "tests": [TESTS_RISK_STORE, TESTS_RISK_GATE],
+        "path": "quanauto/risk.py",
+        "old": "                str(getattr(violation.severity, \"value\", violation.severity)),\n                action.value,\n",
+        "new": "                str(getattr(violation.severity, \"value\", violation.severity)),\n                RiskActionEnum(violation.action).value,\n",
+        "expect": ["test_writer_expands_one_row_per_violation_with_the_order_level_action",
+                   "test_a_blocked_order_leaves_exactly_one_log_statement_per_order"],
+    },
+    {
+        # 展开时只写第一条 violation。一行少一条看起来像「留痕写成功了」，
+        # 而「哪条规则拦的」在这一行之外永久失传（`blocked_orders` 是内存里的，
+        # 进程一退就没了）—— 这正是留痕存在的理由。
+        "tag": "S15-intercept-log-drops-the-other-violations",
+        "tests": [TESTS_RISK_STORE, TESTS_RISK_GATE],
+        "path": "quanauto/risk.py",
+        "old": "        for violation in response.violations:\n            rows.append((\n",
+        "new": "        for violation in response.violations[:1]:\n            rows.append((\n",
+        "expect": ["test_writer_expands_one_row_per_violation_with_the_order_level_action",
+                   "test_a_blocked_order_leaves_exactly_one_log_statement_per_order"],
+    },
+    {
+        # 留痕挪进闸门**每单都写**（而不是只在拦下时写）。这是 D1 那条张力的
+        # 常见走法：为了让「留痕由引擎负责」看着更顺，把 `record()` 上移到
+        # `check()` 之后。后果有两层：① 放行的单也进留痕表（表名与 CHECK 都不允许）；
+        # ② 实测会在 PASS 响应上直接抛 `RiskInterceptError`，整个回测当场炸。
+        # 主人是那条**对照组**（接了 writer 但一单没拦 ⇒ 一条 SQL 都不许有）——
+        # 只断言「没接 writer ⇒ 没 SQL」是空转，假连接根本没挂上去。
+        "tag": "S15-gate-logs-every-check-not-just-blocks",
+        "tests": TESTS_RISK_GATE,
+        "path": "quanauto/engine.py",
+        "old": "        response = self._risk.check(request)\n        self._risk_stats[\"checked\"] += 1\n",
+        "new": "        response = self._risk.check(request)\n        if self._risk_intercept_log is not None:\n            self._risk_intercept_log.record(request, response, created_at=bar.datetime)\n        self._risk_stats[\"checked\"] += 1\n",
+        "expect": ["test_writer_attached_but_nothing_blocked_writes_nothing"],
+    },
+    {
+        # `created_at` 不传 ⇒ `rows_for` 退回 `_now()` 墙钟。
+        # 单测那条（`created_at=stamp` 显式传参）**不会**红 —— 它自己给了时间戳，
+        # 所以这条的主人只能是端到端那条：它拿 `risk_summary()` 里的 `datetime`
+        # （来自 K 线）去对留痕行的时间戳。用墙钟 ⇒ 同一条命令两轮跑出两份对不上
+        # 的留痕，`R5` 逐字节可复现当场失效。
+        "tag": "S15-intercept-log-created-at-becomes-wall-clock",
+        "tests": TESTS_RISK_GATE,
+        "path": "quanauto/engine.py",
+        "old": "            self._risk_intercept_log.record(request, response, created_at=bar.datetime)\n",
+        "new": "            self._risk_intercept_log.record(request, response)\n",
+        "expect": ["test_a_blocked_order_leaves_exactly_one_log_statement_per_order"],
+    },
+    {
+        # 审计里 `change_direction` 永远留空。审计表不会报错、行数不变、
+        # `old_threshold` / `new_threshold` 都还在 ——「这到底是收紧还是放宽」
+        # 却只能靠人拿两个数去比。方向按**注册表**判（不是按大小判），所以
+        # 一旦加一条「次数上限」这类反向规则，事后推算还会推反。
+        "tag": "S15-audit-direction-always-blank",
+        "tests": TESTS_RISK_STORE,
+        "path": "quanauto/risk.py",
+        "old": "                     \"\" if old is None else self._direction(change, old),\n",
+        "new": "                     \"\",\n",
+        "expect": ["test_save_change_writes_the_audit_direction_tighten",
+                   "test_save_change_writes_the_audit_direction_relax",
+                   "test_save_change_direction_follows_the_registry_not_the_size"],
+    },
+    {
+        # 熔断单元 UPSERT 顺手清掉 `resume_reason`。`BreakerState` 里没有这个字段
+        # （契约 §3.2.6），所以「不覆盖它」只能靠**不去写它**——
+        # 一行 SQL 里多一个 `resume_reason = ''` 就把「上次为什么恢复」抹了，
+        # 而下次触发后没人能回答「是谁、凭什么把它恢复的」。
+        "tag": "S15-breaker-upsert-clobbers-resume-reason",
+        "tests": TESTS_RISK_STORE,
+        "path": "quanauto/risk.py",
+        "old": "        \"resumed_at = EXCLUDED.resumed_at, resumed_by = EXCLUDED.resumed_by\"\n",
+        "new": "        \"resumed_at = EXCLUDED.resumed_at, resumed_by = EXCLUDED.resumed_by, \"\n        \"resume_reason = ''\"\n",
+        "expect": ["test_breaker_upsert_never_touches_the_resume_reason_column"],
+    },
+    {
+        # 对照组：只在注释上动手，必须**不**被抓到 —— 用来证明上面几条的红
+        # 是变异打在了代码上，而不是「改了文件就红」。
+        "tag": "CONTROL-comment-only-risk-store",
+        "tests": TESTS_RISK_STORE,
+        "path": "quanauto/risk.py",
+        "old": "_CHECK_VIOLATION_SQLSTATE = \"23514\"\n",
+        "new": "_CHECK_VIOLATION_SQLSTATE = \"23514\"  # MUT: 只改注释\n",
+        "expect": CONTROL,
+    },
 ]
 
 FAILED_RE = re.compile(r"^(FAILED|ERROR) (\S+)::(\w+)")
@@ -493,10 +648,11 @@ def main() -> int:
         say("verdict: FAIL")
         return 2
 
-    # 基线四套件一起跑：基线只要有一处不是全绿，后面的「红」就什么都证明不了。
-    say("baseline: 先跑一次干净的全绿（%s + %s + %s + %s）"
-        % (TARGET, TESTS_STORE, TESTS_DB_FEED, TESTS_RISK_GATE))
-    code, names, counts, output = run_pytest([TARGET, TESTS_STORE, TESTS_DB_FEED, TESTS_RISK_GATE])
+    # 基线五套件一起跑：基线只要有一处不是全绿，后面的「红」就什么都证明不了。
+    say("baseline: 先跑一次干净的全绿（%s + %s + %s + %s + %s）"
+        % (TARGET, TESTS_STORE, TESTS_DB_FEED, TESTS_RISK_GATE, TESTS_RISK_STORE))
+    code, names, counts, output = run_pytest(
+        [TARGET, TESTS_STORE, TESTS_DB_FEED, TESTS_RISK_GATE, TESTS_RISK_STORE])
     if code != 0 or names:
         say("FINDING [BASELINE] 基线不是全绿（exit=%d, failed=%d）—— 后面的红说明不了任何事"
             % (code, len(names)))

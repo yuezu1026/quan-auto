@@ -39,7 +39,11 @@ SQL 写成模块级常量而不是内联在方法里，是为了让门禁**不�
 
 ## 约定 4：驱动是注入进来的，且只在用到时才 import
 
-`tools/` 与 CI 环境都没有 psycopg。驱动必须满足两条：**导入本模块不拉驱动**、
+**`tools/` 与 CI 环境都没有 psycopg**（本机 `.venv` 有 —— 手工装的 `psycopg` 3.3.6，
+`psycopg-binary` 同版本；它**不在** `pyproject.toml` 的任何声明里，所以这条「没有驱动」
+的话仍然成立，只是**换了个范围**：不是「哪里都没有」，而是「声明的依赖图里没有」。
+CI 上跑 `pytest` 时驱动相关用例会退回 `ENV-LIMIT`，见 `tools/pytest-mutation-check` 的出口分类）。
+驱动必须满足两条：**导入本模块不拉驱动**、
 **没装驱动时报的是我们的异常而不是 `ImportError`**。所以真实驱动包在
 `PsycopgConnection` 里惰性 import，异常映射成 `InvalidConfigError`（部署问题）
 或 `DataStoreError`（库操作失败），不裸逃。

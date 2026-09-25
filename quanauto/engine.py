@@ -233,6 +233,9 @@ class BacktestEngine:
         self._risk: Optional[RiskEngine] = None
         self._risk_stats: Dict[str, int] = {}
         self._risk_blocked: List[Dict[str, Any]] = []
+        # 拦截留痕的写入方（I3b 小步）。与 `_risk` 一样是**接线**不是运行态，所以
+        # `_reset_risk_run_state()` 不清它 —— 清掉会让第二轮静默停止留痕。
+        self._risk_intercept_log: Optional[Any] = None
         self._daily_orders: Dict[str, int] = {}
         self._amount_totals: Dict[str, Tuple[float, int]] = {}
         self._reset_risk_run_state()
@@ -295,6 +298,32 @@ class BacktestEngine:
             )
         self._risk = risk_engine
         self._reset_risk_run_state()
+
+    def attach_intercept_log(self, writer: Any) -> None:
+        """接上拦截留痕的写入方（I3b 小步，`risk_intercept_log` 的**调用方**）。
+
+        **为什么不是接在 `RiskEngine` 里**：契约 D1 明令 `check()` 内禁止任何 IO，
+        而留痕是 IO。所以写入方只能是「拿到 `RiskCheckResponse` 的调用方」，也就是这里。
+        契约 §3.6 的归属表把这张表记在「风控引擎（异步批量）」名下，与本条有张力 ——
+        处理方式（写入方、同步/异步、行粒度）登记在风控契约文末的 **§七（I3b 交付与裁决
+        记录）** 里，不从那条契约正文里找。该文件是**手写**契约（`docs/` 下没有同名
+        `.docx`，见 `CONTEXT.md` §3.B），所以「只追加不原地改」在那里是**审计约定**而不是重转换风险。
+
+        接线点也只有一个：`_record_risk_block()`。它只被 `_risk_gate()` 调用，
+        而 `_risk_gate()` 又紧贴在唯一的 `submit_order()` 上面 —— 也就是说**只有真被拦下的
+        订单**会留痕，放行的不会。`writer` 只需要有 `record(request, response, *, created_at)`
+        这个方法（`RiskInterceptLogWriter` 是它的实现，测试里可以塞一个记账的假对象）。
+
+        **写入失败会冒出来，不会被吞掉**：留痕是「这笔单为什么没成交」的唯一书证，
+        少一行就等于把一次拦截藏起来。宁可让这段回测当场失败，也不要一个「看着成功的
+        回测 + 缺了证据的回测库」。
+        """
+        if writer is not None and not hasattr(writer, "record"):
+            raise ConfigValidationError(
+                "writer 必须提供 record(request, response, *, created_at) 方法，收到 %r"
+                % (type(writer).__name__,)
+            )
+        self._risk_intercept_log = writer
 
     def risk_summary(self) -> Dict[str, Any]:
         """风控闸门的统计。没接风控时 `attached=False` —— 「接没接」必须一眼可见。
@@ -586,23 +615,24 @@ class BacktestEngine:
         if self._risk is None:
             return True
         account = self._broker.get_account()
-        response = self._risk.check(
-            RiskCheckRequest(
-                account_id=account.account_id,
-                strategy_id=order.strategy_id,
-                symbol=order.symbol,
-                side=order.direction,
-                is_open=self._is_open_order(order),
-                quantity=int(order.quantity),
-                price=float(bar.close),
-                snapshot=self._risk_snapshot(account, order.strategy_id, order.symbol, bar),
-            )
+        request = RiskCheckRequest(
+            account_id=account.account_id,
+            strategy_id=order.strategy_id,
+            symbol=order.symbol,
+            side=order.direction,
+            is_open=self._is_open_order(order),
+            quantity=int(order.quantity),
+            price=float(bar.close),
+            snapshot=self._risk_snapshot(account, order.strategy_id, order.symbol, bar),
         )
+        # `request` 留在变量里是为了交给 `_record_risk_block()`：留痕要写
+        # 「谁、哪个策略、哪只票、多少股」，这些字段只有请求里有。
+        response = self._risk.check(request)
         self._risk_stats["checked"] += 1
         if response.action is RiskActionEnum.REDUCE:
             allowed = int(response.adjusted_quantity)
             if allowed <= 0:
-                self._record_risk_block(order, bar, response)
+                self._record_risk_block(order, bar, request, response)
                 return False
             if allowed < order.quantity:
                 order.quantity = allowed
@@ -612,15 +642,21 @@ class BacktestEngine:
         if response.action is RiskActionEnum.PASS:
             self._risk_stats["passed"] += 1
             return True
-        self._record_risk_block(order, bar, response)
+        self._record_risk_block(order, bar, request, response)
         return False
 
-    def _record_risk_block(self, order: Order, bar: BarData, response: Any) -> None:
+    def _record_risk_block(self, order: Order, bar: BarData,
+                           request: RiskCheckRequest, response: Any) -> None:
         """被风控拦下的单走**和 broker 拒单完全相同**的那条路径。
 
         这样「订单去哪了」永远只有一个答案：`result.orders` 里 `status=REJECTED` 的那些，
         `error_message` 说明是谁拒的、依据哪条规则。另存一份结构化记录供 `risk_summary()`
         与测试使用（`rule_ids` 排序去重 —— 报告要能逐字节比）。
+
+        **留痕在这里落库**（接了 `attach_intercept_log()` 才落）。`created_at` 用
+        `bar.datetime` 而**不是**墙钟：同一条命令跑两次必须得到同样的留痕，否则回测库
+        里两轮的行对不上，「这轮为什么没成交」就查不出来了。四舍五入到毫秒是 DDL 的
+        `timestamptz(3)` 自己会做的事，这里原样传。
         """
         order.status = OrderStatus.REJECTED
         order.error_message = response.message
@@ -639,6 +675,8 @@ class BacktestEngine:
                 "message": response.message,
             }
         )
+        if self._risk_intercept_log is not None:
+            self._risk_intercept_log.record(request, response, created_at=bar.datetime)
 
     def _is_open_order(self, order: Order) -> bool:
         """这张单是开仓还是平仓（`RiskCheckRequest.is_open`）。

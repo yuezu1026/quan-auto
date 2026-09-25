@@ -46,7 +46,7 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 | `docs/开工前缺口清单.md` | ★ **当前状态与阻塞项的唯一权威来源**。想知道「现在卡在哪」就读它 |
 | `docs/开发工作流规范.md` | ★ **开工前的作业规程**：产物四件套 / TDD 红源 / 四类漂移 / 对称棘轮 / 触发测试硬要求 / 八类真实踩坑案例 / token 分层 / 红线清单 |
 | `docs/迭代计划.md` | ★ **交付节奏**：竖切 **I0~I4**（股票池那一轮已于 2026-09-23 裁决砍掉）、每个迭代的 DoD 四件套、B7 棘轮燃尽表、不采用的敏捷做法。原「待决」问题（迭代计划里那 5 条 + 更早的 Q1/Q7）已全部裁决并回填，**已无未决项** |
-| `docs/智能量化交易平台-风控层接口契约文档.md` | 风控层契约（补充主契约缺失的类型/异常） |
+| `docs/智能量化交易平台-风控层接口契约文档.md` | 风控层契约（补充主契约缺失的类型/异常），文末有 **§六**（I3 交付与裁决：交付边界 3 条 / 逐条裁决 15 条 / 咬出的真缺陷 / 已知限制 / 门禁对应）与 **§七**（I3b 小步：存储层真接线的交付边界、**留痕写入方与 §3.6 「异步批量」的偏离及理由**、实现侧新增的三个名字、真库探针抓到的 `pgstore` 包装层缺陷与修法、门禁/测试对应、两条新登记缺口）。两节都是**追加**记录，上文一个字没改。**手写契约，没有 `.docx`** ⇒ 可原地编辑；在那里「只追加不原地改」是审计约定，不进 C2 的 `ADDENDA` |
 | `docs/智能量化交易平台-数据中心接口契约文档.md` | 数据中心契约，含 D1~D10 设计决策 + **附录 A**（I2 S1 实现侧裁决与偏差登记：`DataFeedError` 继承、`SessionMode` 本地类型、越界两种语义、复权因子恒 1.0 这个已知缺口）+ **附录 B**（I2 S2 适配器裁决与偏差：`ValidationReport` 升格为 5 字段、pandas 是显式依赖、源 SDK 只能惰性导入、符号后缀与指数歧义、两处“安静的事故”（手/股、百分号）、`report_type` 必须适配器层映射完，另记两条已知缺口：停牌/涨跌停标记无处可落（契约内部不一致）、龙虎榜/资金流向无标准 schema）+ **附录 C**（I2 S3 落库侧裁决与偏差：`DataStoreError`(DATA_008) 属实现侧新增异常码、假连接与真库的效力边界、`PsycopgConnection` 的复用与事务语义）。**手写契约，没有 `.docx`** ⇒ 可原地编辑，不进 C2 的 `ADDENDA` |
 
 ### C. 工程骨架（2026-09-23 I0 交付；守门门禁 = `skeleton`）
@@ -55,7 +55,7 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 |---|---|
 | `pyproject.toml` | 包元数据 / pytest 配置。依赖**由真正用它的模块带进来**，禁预置「以后大概会用」的包：现在是 `pandas>=2.0`（使用者 `quanauto/datasources.py`），源 SDK 走 `[datasources]` extra（I0/I1 当时是空数组，因为那时的竖切只用标准库） |
 | `quanauto/__init__.py` | 包入口，只有 `__version__` 与 `__all__`（其它模块下的实现不在此 re-export：否则「实现在那里」与「一 import 就全拉起来」长得一样） |
-| `quanauto/*.py`（**14 个模块**：13 个实现 + 入口 `cli.py`；条目数现取 `quanauto/*.py`） | I1 的产物：`models` / `enums` / `errors` / `events` / `datafeed` / `strategies` / `broker` / `engine` / `performance` / `cli`；**I2 S1 追加 `datacenter.py`**（PIT / `as_of` 边界层）、**I2 S2 追加 `datasources.py`**（采集侧适配器：源列名/取值 → 标准 schema + `ValidationReport`）、**I2 S3 追加 `pgstore.py`**（落库侧：`PgBarStore` 读 / `PgBarIngestor` 幂等 upsert / `PsycopgConnection` 惰性驱动适配）、**I3 追加 `risk.py`**（风控引擎：四层作用域优先级 + `KillSwitch` 熔断 + 阈值收紧/放宽与 LKG 回退，由 `tests/test_risk_engine.py` 守）。守门门禁 = `contract-signature`（签名不许偏离契约）+ `data-center-pit` + `data-center-adapter` |
+| `quanauto/*.py`（**14 个模块**：13 个实现 + 入口 `cli.py`；条目数现取 `quanauto/*.py`） | I1 的产物：`models` / `enums` / `errors` / `events` / `datafeed` / `strategies` / `broker` / `engine` / `performance` / `cli`；**I2 S1 追加 `datacenter.py`**（PIT / `as_of` 边界层）、**I2 S2 追加 `datasources.py`**（采集侧适配器：源列名/取值 → 标准 schema + `ValidationReport`）、**I2 S3 追加 `pgstore.py`**（落库侧：`PgBarStore` 读 / `PgBarIngestor` 幂等 upsert / `PsycopgConnection` 惰性驱动适配）、**I3 追加 `risk.py`**（风控引擎：四层作用域优先级 + `KillSwitch` 熔断 + 阈值收紧/放宽与 LKG 回退，由 `tests/test_risk_engine.py` 守），**I3b 小步在 `risk.py` 里真接上存储层**（`DbRiskRuleStore` 三个读写方法 + 四个运行态方法 + `RiskInterceptLogWriter` 拦截留痕；写入方是**调用方** `BacktestEngine._record_risk_block()` 而不是 `RiskEngine`，偏离与理由见风控契约 §七）。守门门禁 = `contract-signature`（签名不许偏离契约）+ `data-center-pit` + `data-center-adapter` |
 | `tests/test_skeleton.py` | 骨架自检 3 条：版本与 `pyproject.toml` 一致 / import 不把重依赖拉进来 / 测试数不为 0 |
 | `tests/test_backtest_slice.py` | I1 的回归测试 22 条：竖切的不变量（同种子可复现、成交价取下一根 K 线开盘价、拒单不抛异常…）。它**没有**红→绿的 git 证据（实现先于测试），替代证据是 `tools/pytest_mutation_check.py` |
 | `tests/test_data_center_pit.py` | I2 S1 的 PIT 回归测试 18 条：预取未来数据必须抛 `FutureDataAccessError`、窗口越界必须抛而**不是**裁剪、回测会话下 `QFQ`/`BFILL` 必须被拒。含 I2 DoD 点名的那条**触发测试**（让 store 无视窗口，确认取数真的被拒）。另有一条**故意断言已知缺口**的用例，`S3` 落地后要**删掉它**而不是改期望值 |
@@ -113,7 +113,7 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 | `tools/verify_backtest_reproducibility.py` | 回测可复现性：同种子两次跑 `deterministic` 段逐字节一致、换种子必须真的改变、样本非空、段结构合规、入库证据不可是过期快照（R1~R5）；**默认只读**，重录证据要显式 `--record` |
 | `tools/verify_contract_signature.py` | 契约签名与实现**双向**一致（S1~S7）+ 未登记成员 / 未实现缺口清单；机器可读投影是 `tools/contract-signature-manifest.json` |
 | `tools/contract-signature-manifest.json` | 契约签名的机器可读投影（`classes` / `impl_only` / `non_normative_blocks` / `not_implemented` / `extras`）。`impl_only` 是**只有实现、契约没写**的类（如数据源适配器三角色），只能做反向漂移检查 |
-| `tools/pytest_mutation_check.py` | 把实现逐处改坏，验证基线四套件（`tests/test_backtest_slice.py` / `tests/test_data_center_store.py` / `tests/test_backtest_db_feed.py` / `tests/test_backtest_risk_gate.py`）真的会红（**不是门禁**：它验证的是测试，且慢。2026-09-25 实测 32 条样本：29 条变异全被抓、3 条 CONTROL、**0** 条 ENV-LIMIT —— 这一栏随环境变：`psycopg` 没写进 `pyproject.toml`，本机 `.venv` 是手工装的，CI 里 `S9` 会退回 ENV-LIMIT） |
+| `tools/pytest_mutation_check.py` | 把实现逐处改坏，验证基线**五套件**（`tests/test_backtest_slice.py` / `tests/test_data_center_store.py` / `tests/test_backtest_db_feed.py` / `tests/test_backtest_risk_gate.py` / `tests/test_risk_store.py`）真的会红（**不是门禁**：它验证的是测试，且慢。2026-09-25 I3b 后实测 **39 变异全被抓 + 4 条 CONTROL + 0 条 ENV-LIMIT**（基线五套件 `passed=145`）；更早一轮是 32 条样本 / 29 + 3 + 0。这一栏随环境变：`psycopg` 没写进 `pyproject.toml`、本机 `.venv` 是手工装的、CI 里驱动相关的变异会退回 `ENV-LIMIT` —— **`ENV-LIMIT` 逐条预写理由、不计入 CAUGHT 分母、绝不事后追认**） |
 | `tools/pytest-mutation-report.txt` | 上一条的逐变异证据 —— **快照**，改实现或改测试后作废 |
 | `.rounds/i1/` | I1 可复现性门禁的证据样本（同种子两份 + 换种子一份，共三份）—— 由 `--record` 显式重录，**跑门禁不会改它们** |
 | `tools/ci_dryrun.py` | 在本地把 CI 的两条命令真跑一遍 + 两次红→绿往返（含清 `__pycache__`），写 `tools/ci-dryrun-report.txt`。**不是门禁**（需 .venv） |
@@ -210,12 +210,12 @@ docker compose -f docker-compose.dev.yml down -v           # 删库重置
 提交粒度是**整轮提交**（没有细粒度还原点）：基线 `053f620` → 契约/门禁若干 → **I0 骨架 `fe9e060`**，
 其后仍是每个迭代一个提交；**当前提交数与 HEAD 一律现取 `git log --oneline`，不要在上面写死数字**
 （写死的数字每次提交都会过期，本项目已经在「过时计数」上踩过两次）。
-**I0 的「可回滚」与「可运行」两半都已交付，I1 又在其上打了第一条竖切，I2 S1 加厚了 PIT / `as_of` 边界层，I2 S2 把采集侧适配器接上、I2 S3 前半把落库侧读写接上、S3 后半让引擎改读 `as_of()` 产出的 feed，I3 让风控真正介入下单路径（默认关闭），I2 的收尾又拆成 I2a（失败可分类 + 东财传输层）与 I2b（真实取数联调：腾讯日线通道 / 东财财务表逐键核对 / 第一次真的入过库）**：
-`.venv` + pytest（数量**现取** `python -m pytest -q`；2026-09-25 实测 `273 passed` = 骨架 3 + 竖切 22 + PIT 18 + 适配器 104 + 落库侧 37 + 端到端接线 10 + 风控引擎 67 + 风控闸门 12。**2026-09-24 I3 那时的 `193 passed`（适配器 32 / 落库侧 29）是那一刻的实测**，两份都留 —— 别的文件要引用时按现值取，别抄旧的那份）、
+**I0 的「可回滚」与「可运行」两半都已交付，I1 又在其上打了第一条竖切，I2 S1 加厚了 PIT / `as_of` 边界层，I2 S2 把采集侧适配器接上、I2 S3 前半把落库侧读写接上、S3 后半让引擎改读 `as_of()` 产出的 feed，I3 让风控真正介入下单路径（默认关闭），**I3b 小步把风控的存储层与拦截留痕真接上**（留痕由**调用方**写、不是 `RiskEngine` 里写 —— 为了不和 D1「`check()` 内禁 IO」冲突，偏离记录在风控契约 §七），I2 的收尾又拆成 I2a（失败可分类 + 东财传输层）与 I2b（真实取数联调：腾讯日线通道 / 东财财务表逐键核对 / 第一次真的入过库）**：
+`.venv` + pytest（数量**现取** `python -m pytest -q`；2026-09-25 I3b 后实测 `337 passed` = 骨架 3 + 竖切 22 + PIT 18 + 适配器 104 + 落库侧 37 + 端到端接线 10 + 风控引擎 67 + 风控闸门 15 + 风控存储 61。**更早两份实测**（`273 passed` = 上一式 + 风控闸门 12；`193 passed` 是 2026-09-24 I3 那一刻，适配器 32 / 落库侧 29）都留着 —— 别的文件要引用时**按现值取**，别抄旧的那份）、
 `pyproject.toml`（`dependencies = ["pandas>=2.0"]` —— S2 起**不再是空数组**，理由见 §1；源 SDK 在 `[datasources]` extra 里；
 **`psycopg` 不在任何声明里**：`pgstore.py` 里**惰性导入**，本机 `.venv` 是**手工装**的 3.3.6、CI 不装 ⇒ 那条「驱动改成顶层导入」的变异在 CI 上是 `ENV-LIMIT`）、
 `quanauto/` 包（**14 个模块**：13 个实现 + 入口 `quanauto.cli`；条目数现取 `quanauto/*.py`）、
-`tests/`（骨架自检 3 条 + 竖切回归 22 条 + PIT 回归 18 条 + 适配器回归 **104** 条 + 落库侧回归 **37** 条 + 端到端接线回归 10 条 + 风控引擎回归 67 条 + 风控闸门回归 12 条）、`.github/workflows/ci.yml`。
+`tests/`（骨架自检 3 条 + 竖切回归 22 条 + PIT 回归 18 条 + 适配器回归 **104** 条 + 落库侧回归 **37** 条 + 端到端接线回归 10 条 + 风控引擎回归 67 条 + 风控闸门回归 **15** 条 + 风控存储回归 **61** 条）、`.github/workflows/ci.yml`。
 **I2 仍未收口**（2026-09-25 更新；上一版这里写「真实数据源**从未联网联调**」，那句话**已过期**）：S1 交付 PIT 边界层、S2 交付采集侧适配器、S3 前半交付落库侧读写、S3 后半让回测改读 `as_of()` 产出的 feed；
 此后 **I2a-2** 把东财端点用标准库 `urllib` 真接上（opener 可注入 ⇒ 离线可测）、**I2b-1** 落地腾讯日线通道并跑通一次真实取数冒烟、
 **I2b-2** 把财务表列名与日期过滤语法逐键对过真实返回、**I2b-3** 第一次**真的入过库**（真 PostgreSQL 读回逐字段对拍 —— 并当场咬出两个离线套件看不见的静默缺陷，DC 契约附录 **B20**）。
