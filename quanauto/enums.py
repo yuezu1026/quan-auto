@@ -1,8 +1,31 @@
 """枚举定义。
 
-契约里出现的每个枚举都在这里，一个不漏、一个不多 —— 编译器不会替我们记住「契约要求
-`OrderStatus` 有 7 个取值」，所以那一层由 `tools/verify_contract_signature.py` 逐个成员
-比对（契约块里定义的那些）或由 manifest 的 `local_types` 登记（契约只引用、没定义的那些）。
+契约里出现的枚举，落地处不止本文件（还有 `datacenter.py`、`risk.py`）。编译器不会替我们
+记住「契约要求 `OrderStatus` 有 7 个取值」，所以那一层要门禁来管 —— 而**门禁实际管到哪一层
+必须写清楚，否则这段注释自己就是假话**（2026-09-25 实测更正，分歧的完整登记见
+`docs/开工前缺口清单.md` B9）：
+
+* **成员级比对原先只覆盖主契约的附录 G 节**：`tools/verify_contract_appendix.py` 扫 G 节的每个
+  `class` 声明逐项比成员名与取值（`AX-IMPL-MISMATCH`）。2026-09-25 之前，G 节里没有声明的枚举
+  —— 契约正文的 `DirectionEnum` / `SignalTypeEnum` / `StrategyStatusEnum` / `EventType`，以及
+  数据中心契约 §3.1.3 的 `MarketStatus` —— **一个都没有**成员级判据（`MarketStatus` 当时确实与
+  契约不同，就是这条假绿的实证，见 B9.1）。现在三份契约**正文**里的枚举也逐成员对拍了：
+  `tools/verify_enum_members.py`（tier-A 门禁 `enum-members`，2026-09-25 起注册）。
+* `tools/verify_contract_signature.py` 的输入是 `tools/contract-signature-manifest.json` 的
+  `classes`（9 个契约类）与 `impl_only`（22 个实现侧登记），**两者都不含枚举**。
+* 本文件此前写「登记在 manifest 的 `local_types`」是错的：那份清单**从来没有**这个键
+  （顶层键只有 `schema` / `contract` / `classes` / `impl_only` / `non_normative_blocks` /
+  `note`）。精确判据：`git log -S local_types -- tools/contract-signature-manifest.json`
+  全历史 0 命中（该文件的 5 个历史版本逐个查过，都没有这个键）；**不加路径**的
+  `git log -S local_types` 会命中 2 个提交（`7c9f0a5` / `14dd83e`），但那两次改的是
+  `quanauto/*.py` 里**说**它登记在那儿的句子 —— 是描述这个键的文字，不是这个键。
+  实现侧本地类型的真实登记处是 `impl_only`（例：`SessionMode`）。
+* 实测分母（2026-09-25）：三份契约共声明 23 个枚举，实现侧 23 个（比对 21 个）；
+  `DataQualityFlag` / `ReportType` 只有契约没有实现（登记在 `PENDING`），
+  `SessionMode`（本仓 `datacenter.py`）与 `SeverityEnum`（`risk.py`）只有实现没有契约
+  （登记在 `IMPL_LOCAL`；`SeverityEnum` 的取值 `WARNING`/`ERROR`/`CRITICAL` 与
+  `db/data_center.sql` 的 `ck_dc_quality_severity`（`INFO` 而非 `ERROR`）不同域同形，
+  所以它**不能**被当成那份 DDL 约束的实现映射）。
 
 注意两件事：
 
@@ -10,10 +33,10 @@
    `TradingSignal`（策略侧），`Direction` 给 `Order` / `Trade`（撮合侧）。这不是笔误，
    是契约 §2.1.2 与 §2.4.2 各写各的。所以两个都得存在，别合并 —— 合并会让字段注解与
    契约文本不一致，签名门禁立刻红。
-2. 只有契约给出**规范块**的枚举（`DirectionEnum` / `SignalTypeEnum` / `StrategyStatusEnum`
-   / `EventType`）才有成员级校验；`OrderType` 那几个契约只在注释里列了取值
-   （`（LIMIT/MARKET/STOP/STOP_LIMIT）`），成员名照注释抄，登记在 manifest 的
-   `local_types` 里说明出处。
+2. `Direction` / `OrderType` / `OrderStatus` / `PositionDirection` / `BacktestStatus` 五个，
+   契约正文只在注释里列了取值（`（LIMIT/MARKET/STOP/STOP_LIMIT）` 这种），但 2026-09-25
+   起主契约**附录 G3** 已给出规范块，成员名以那份规范块为准、由附录门禁逐项比对。
+   （此前这里写「登记在 manifest 的 `local_types` 里说明出处」—— 那个键不存在，见上文。）
 """
 
 from __future__ import annotations
@@ -64,7 +87,7 @@ class EventType(Enum):
     SYSTEM_EVENT = "system"
 
 
-# ── 契约只引用、未定义的枚举（取值抄契约注释，登记在 manifest.local_types）──
+# ── 契约正文只给注释、由主契约附录 G3 补规范块的枚举（成员由附录门禁比对）──────
 class Direction(Enum):
     """撮合侧方向 —— `Order.direction` / `Trade.direction`（契约注：BUY/SELL）。"""
 
@@ -112,18 +135,28 @@ class BacktestStatus(Enum):
 class MarketStatus(Enum):
     """某时刻的市场状态 —— `DataFeed.get_market_status()` 的返回值。
 
-    **契约全文没有定义这个枚举**，但 §2.2.2 的 `CsvDataFeed.get_market_status`
-    直接返回 `MarketStatus.OPEN` / `MarketStatus.CLOSED`。所以「开市」的那个成员
-    必须叫 `OPEN`，不能叫 `TRADING` —— 名字对不上，签名门禁就会红，而且是真红
-    （照契约写出来的调用方 `MarketStatus.OPEN` 会在运行时 `AttributeError`）。
-    `SUSPENDED` / `HOLIDAY` 是契约**没有**用到、但语义上确实需要的成员，
-    登记在 manifest 的 `local_types` 里由本地定义管辖。
+    成员表**逐条对齐**数据中心契约 §3.1.3 的规范块（顺序也是契约顺序）：
+    `PRE_OPEN` / `OPEN` / `LUNCH_BREAK` / `CLOSED` / `HALTED`。
+
+    「开市」的那个成员必须叫 `OPEN`：主契约 §2.2.2 的 `CsvDataFeed.get_market_status`
+    直接返回 `MarketStatus.OPEN` / `MarketStatus.CLOSED`，实现侧的调用点
+    （`datafeed.py`、`datacenter.py`）与 `engine.py` 的 `is_trading_day` 都按这两个名字读。
+
+    2026-09-25 更正：此前这里是 `OPEN` / `CLOSED` / `SUSPENDED` / `HOLIDAY`，与契约
+    三个成员互缺 —— 当时的 13 个门禁对此**全绿**（往本文件插一个成员也全绿），因为
+    唯一比对成员名的 `verify_contract_appendix.py` 只覆盖附录 G，而
+    `contract-signature-manifest.json` 的 `classes` / `impl_only` 里一个枚举都没有。
+    现已补齐 `tools/verify_enum_members.py`（tier-A，逐成员比对契约与实现），
+    本类就是它的第一个 FINDING 对象，登记在 `docs/开工前缺口清单.md` B9 的 B9.1。
+    被删掉的 `SUSPENDED` / `HOLIDAY` 全仓零引用（`git grep` 实测），删它们不动任何调用点；
+    「停牌」「假日」这两层语义属于 `dc_quality_issue.flag` 与交易日历，不是市场状态。
     """
 
+    PRE_OPEN = "PRE_OPEN"
     OPEN = "OPEN"
+    LUNCH_BREAK = "LUNCH_BREAK"
     CLOSED = "CLOSED"
-    SUSPENDED = "SUSPENDED"
-    HOLIDAY = "HOLIDAY"
+    HALTED = "HALTED"
 
 
 class CapitalAllocation(Enum):

@@ -107,6 +107,7 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 | `tools/verify_contract_refs.py` | 契约引用的类型/异常是否有定义（B7 欠账所在；2026-09-25 还债后只剩 2 条 `T1`，见 §6） |
 | `tools/verify_contract_appendix.py` | ★ **新门禁**（`contract-appendix`）：核心契约**附录 G** 登记的类型/异常是否等于 `quanauto/` 的实现 —— 逐条比**基类 / 字段名与顺序 / 字段类型 / 字段默认值 / 枚举取值 / 异常 `code`**（不比方法、不比 docstring、不比注释）。另盯三件事：登记了却找不到实体（`AX-UNUSED-REGISTRY`）、契约先行的 5 个名字一旦有实现就必须回来改判据（`AX-PENDING-DRIFT`）、G5 那两份 T1 **可复制副本**不许被删（`AX-T1-COPY` —— 删了 T1 计数不会变，但「能不能照抄」会静默退回去）。**边界**：只证明「附录 G = 实现」，不证明实现对，也不为那 5 个推定名字的字段表背书 |
 | `tools/verify_appendix_refs.py` | ★ **新门禁**（`appendix-refs`）：**散文里的交叉引用**是否指向真实存在的附录条目。扫 `git ls-files` 的全部文本，把各契约/PRD 文档的附录字母与条目号建成索引，再核对每个「某契约 + 附录标签」的引用：字母不属于任何文档 ⇒ `APX-UNKNOWN-APPENDIX`、字母在但条目号不存在 ⇒ `APX-DANGLING-ITEM`、点名了文档而该文档没有这个附录 ⇒ `APX-WRONG-CONTRACT`（全字匹配；斜杠/波浪号连写与并列续写都展开）。**只读文本**：不执行被检代码、不联网；文件清单取自 `git ls-files`，拿不到就**拒判**而不是空转；另有一组空转守卫（引用为 0 / 索引为空 / 判据退化时一律拒判，而不是打印「0 问题」）。它的存在理由：附录被重编号或整段删掉后，文档里那句地址仍印着、其余门禁全绿，而**去取裁决的 agent 会落到空地址**。边界：只证明「这个标签存在」，**证明不了标签背后的裁决仍然成立** |
+| `tools/verify_enum_members.py` | ★ **新门禁**（`enum-members`，2026-09-25 注册）：三份契约文档的 python 代码块里的**枚举**与 `quanauto/*.py` 的枚举**逐成员**比 —— 成员名 / 取值 / **顺序**三样都比。两张必须显式登记的表：`PENDING`（契约有、实现无 ⇒ 实现一冒头即报 `EM-PENDING-DRIFT`，不许静默补上）、`IMPL_LOCAL`（实现侧本地枚举 ⇒ 消失报 `EM-LOCAL-STALE`、出现未登记的即报 `EM-UNREGISTERED-IMPL`）；两侧提取为空一律 FAIL（空转守卫）。**它补的是别的门禁都看不见的一层**：`contract-appendix` 只审核心契约附录 G，`contract-signature` 只看「登记过的成员还在不在」，manifest 里**一个枚举都没有** ⇒ 一个枚举可以在契约里写 5 个成员、实现里只写 4 个而全绿（2026-09-25 的 `MarketStatus` 就是这样，见 §6 与缺口清单 **B9**）。**边界**：只比成员表，不比枚举的 docstring、不比谁在用哪个成员 |
 | `tools/verify_data_center.py` | 数据中心契约 §3.6.1 与 DDL 约束清单双向一致（C1~C7）+ 对 `db/data_center.smoke.sql` 的触发测试覆盖核对（C7） |
 | `tools/verify_data_center_pit.py` | ★ **I2 S1 新门禁**：`DataFeed` 取数路径的 `as_of` **两层防线**（显式日期参数越界必须抛 / 经 guard 逐行登记）+ 回测会话下 `QFQ`/`BFILL` 必须被拒 + 只有 `DataCenter.as_of()` 能产出 `DataFeed`。「越界＝抛而非裁剪」这条语义的机器判据就在这里。**只解析 AST，从不执行被检代码、不跑 pytest** |
 | `tools/verify_data_center_adapter.py` | ★ **I2 S2 新门禁**（`data-center-adapter`）：采集侧适配器把源列名/取值翻成标准 schema（A1/A2/A4/A8）、采集层不含数据库驱动（A5）、源 SDK 只能惰性 import（A6）、行对象不暴露源字段名（A7）、新映射表/列名元组未登记即报错（A3/A9）、两个空转守卫（A0/A10）。**只解析源码文本**：不执行适配器、不联网、不 import pandas |
@@ -114,7 +115,7 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 | `tools/verify_skeleton.py` | I0 骨架是否还在（pyproject / 包 / 测试 / CI 的 `run:` 接线），**不跑 pytest**；另守 `CONTEXT.md` 三件事不许过期 —— 状态陈述（`IMPL-STATUS`）、写死的门禁计数（`GATE-COUNT`）、**地图里的路径必须真实存在**（`MAP-PATHS`）。⚠️ 它们只管结构，**看不见错字/乱码**：改完中文文案要回读核对 |
 | `tools/verify_backtest_reproducibility.py` | 回测可复现性：同种子两次跑 `deterministic` 段逐字节一致、换种子必须真的改变、样本非空、段结构合规、入库证据不可是过期快照（R1~R5）；**默认只读**，重录证据要显式 `--record` |
 | `tools/verify_contract_signature.py` | 契约签名与实现**双向**一致（S1~S7）+ 未登记成员 / 未实现缺口清单；机器可读投影是 `tools/contract-signature-manifest.json` |
-| `tools/contract-signature-manifest.json` | 契约签名的机器可读投影（`classes` / `impl_only` / `non_normative_blocks` / `not_implemented` / `extras`）。`impl_only` 是**只有实现、契约没写**的类（如数据源适配器三角色），只能做反向漂移检查 |
+| `tools/contract-signature-manifest.json` | 契约签名的机器可读投影。**顶层键只有** `schema` / `contract` / `classes` / `impl_only` / `non_normative_blocks` / `note`（2026-09-25 实测；**没有** `local_types` 这个键 —— 实现侧好几处 docstring 曾引它，见缺口清单 B9.3）；`classes` 里每个类条目下面另有 `not_implemented` / `not_implemented_why` / `extras` 等字段。`impl_only` 是**只有实现、契约没写**的类（如数据源适配器三角色），只能做反向漂移检查；**枚举不在这两张表里**（它们由 `enum-members` 单独比） |
 | `tools/verify_dashboard.py` | ★ **I4 新门禁**（`dashboard-consistency`）：C1~C10。C6 直接禁掉落进看板模块的统计函数与统计模块（`performance`/`statistics`/`numpy`/`pandas`/`scipy` 任一 import，或 16 个统计函数名之一 ⇒ FAIL）；C8 双向扫「改一个数，读数必须跟着动」；**C10 是这个门禁的参照物** —— 它用报告自带的 `trades`/`orders`/`account_history` **现场重跑真的 `PerformanceAnalyzer`**，与报告里存的 14 个指标逐字段比。没有 C10，整个门禁就是恒等式（C3 两端同源、手改报告会把两边一起改掉）。**边界**：C10 的参照物就是写出这些数的同一个分析器 ⇒ 「公式本身算错了」它看不见；它证明的是「报告新鲜、没被手改过」 |
 | `tools/dashboard_failure_demo.py` | I4 DoD「触发测试」的**可复查脚本**：手工把报告里的一个指标改掉，确认 C10 会红。跑一次落 `tools/dashboard-failure-report.txt`；**不是门禁**（改的是临时副本，不改仓库里的报告） |
 | `tools/dashboard-failure-report.txt` | 上一条的输出 —— **快照**：那一行 `ISSUE [C10] <字段>: the report stores … but re-running PerformanceAnalyzer … yields …` 就是 DoD 要的「一次真实的失败记录」 |
@@ -245,6 +246,15 @@ tier-A 全绿；`core-contract-refs` 是 tier-B 欠账，基线 **2**（`T1=2` /
 它们就在 .docx 派生的正文里，就地修会被下一次重新转换抹掉；附录 G5 给了两份**可复制副本**，
 副本被删会被 `contract-appendix` 判 FAIL ⇒ 这份基线往后只管那 2 条，它仍是个跳闸器
 （新出现的未定义类型/异常会把总数抬到 2 以上 ⇒ `DRIFT+`）。
+**2026-09-25 又补了一层判据：枚举的成员表**（新门禁 `enum-members`；批内门禁数由 13 增到 14，
+具体数一律 `--list` 现取）。起因是一条**真实分歧**：数据中心契约 §3.1.3 的 `MarketStatus` 写了 5 个成员，
+而实现侧是另外 4 个（`OPEN`/`CLOSED`/`SUSPENDED`/`HOLIDAY`），差异长期存在而**没有任何门禁会红**。
+证伪：往实现里插一个契约里没有的成员，注册**前**那 13 条全绿；注册**后**同一条变异
+`verdict: FAIL (13/14 gate(s) green)`，只有 `enum-members` 红，其余 13 条仍全 PASS。
+已按契约对齐（成员名 / 取值 / 顺序），并登记两张表：`PENDING = DataQualityFlag, ReportType`、
+`IMPL_LOCAL = SessionMode, SeverityEnum`。**仍未闭环的是「类」这一层**：实现侧 144 个类里有 29 个
+既不在契约正文声明、也不在任何登记表里（14 个「正文只提过名字」+ 15 个「三份契约里连名字都没有」），
+目前没有判据在盯它 —— 数字、名单与修法见缺口清单 **B9.2 / B10**。
 其他能力缺口（复权因子、未确认清单等）与编号一律以 `docs/开工前缺口清单.md` 为准，不要在本文件里复制它。
 **数据库侧已不再是「运行时未证实」**：两份触发测试 2026-09-23 先在容器 `postgres:17`（17.11）上
 各拿到 **23/0** 与 **42/0** PASS，2026-09-24 又在 `postgres:14`(14.24) / `15`(15.18) / `16`(16.15)

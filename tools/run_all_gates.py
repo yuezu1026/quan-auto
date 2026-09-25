@@ -269,12 +269,38 @@ GATES = [
         'selftest': ['tools/verify_contract_appendix.py', '--selftest'],
     },
     {
+        'name': 'enum-members',
+        'tier': 'A',
+        # 上面几个门禁都碰不到枚举的**成员表**：contract-appendix 只管附录 G 那批类，
+        # contract-signature 的 classes/impl_only 里一个枚举都没有（manifest 实测）。
+        # 于是出现过一个货真价实的假绿：往 `quanauto/enums.py` 的 MarketStatus 里插一个
+        # 成员，run_all_gates 仍 13/13 全绿，而它的成员表当时与数据中心契约 §3.1.3
+        # 三个成员互缺 —— 枚举是「范围」类型，成员多一个少一个都不会有任何运行时症状。
+        # 本门禁逐条对拍：契约三份文档的 ```python 块里的枚举 vs `quanauto/*.py`，
+        # 比成员名、成员取值、成员顺序，两侧都要求能被解析（块解析不了就拒判）。
+        # 免检登记只有两张表：PENDING（契约先行，还没实现的）与 IMPL_LOCAL（实现侧先行，
+        # 契约里没有的）。两张表**反向也要成立**：登记了但实际已经比过/已经消失 ⇒ FINDING，
+        # 否则它们会变成永久免检的洞。
+        # 边界：只比成员表，不比 docstring/行为；「HOLIDAY 该不该并进 CLOSED」这类裁决
+        # 不归它管 —— 它只保证「两侧说的不一样时一定有人知道」。
+        'what': '契约声明与实现侧枚举的成员名/取值/顺序逐条一致（PENDING/IMPL_LOCAL 反向也查）',
+        'runner': ['tools/verify_enum_members.py'],
+        'selftest': ['tools/verify_enum_members.py', '--selftest'],
+    },
+    {
         'name': 'core-contract-refs',
         'tier': 'B',
         # The two supplements contribute definitions only. DataFeed/MarketStatus/
         # DataFeedError/PITReport/LeakagePoint/ValidationReport live in the data-center
         # contract; omitting it reports them as holes in the core contract, which is a
         # false positive that inflates the baseline and hides real drift.
+        # NOTE: "has a definition" is all this gate can see -- it does not compare the
+        # definition against quanauto/. MarketStatus used to be the live example (this
+        # gate was green while the implementation's member list disagreed with the
+        # data-center contract). That member list is now reconciled and the case is
+        # guarded by the enum-members gate above, so what remains invisible here is any
+        # *future* member-level divergence -- not just in enums: this gate never reads
+        # a body, a default, or a member.
         'runner': ['tools/verify_contract_refs.py',
                    '--extra=' + DC_CONTRACT,
                    '--extra=' + RISK_CONTRACT],

@@ -81,7 +81,10 @@ class SessionMode(Enum):
     **没有** `SessionMode`；但 §3.3 的 `as_of(as_of_date, adjust_type, fill_policy, data_version)`
     签名里也没有"这是回测还是实盘"的参数，而 D6 又要求「回测会话里请求 `QFQ` 抛异常」。
     说明这个模式只能在 `DataCenter` **实例**上（也就是构造时）确定。所以它属于本模块：
-    它不是一条契约取值，是契约签名缺口的一处补丁，记在 manifest 的 `local_types` 里。
+    它不是一条契约取值，是契约签名缺口的一处补丁，登记在
+    `tools/contract-signature-manifest.json` 的 `impl_only` 里（这份清单没有 `local_types`
+    这个键 —— 2026-09-25 实测更正：`git log -S local_types -- tools/contract-signature-manifest.json`
+    全历史 0 命中；见 `docs/开工前缺口清单.md` B9 的 B9.3）。
     """
 
     BACKTEST = "BACKTEST"

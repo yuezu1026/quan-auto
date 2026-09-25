@@ -6,11 +6,24 @@
 * 字段**顺序**有意义（dataclass 的位置参数就是按顺序来的），别为了好看重排。
 * 注解**文本**有意义（门禁比的是 `ast.unparse` 出来的原文），别把 `List[Trade]` 改成
   `list[Trade]`，哪怕语义一样 —— 那会让门禁红，而你要改的是门禁还是契约得先想清楚。
-* 契约只引用、没定义的字段类型（`OrderType` / `EquityPoint` / `PerformanceMetrics` …
-  这批是 B7 的 T2 未定义类型）在这里补了最小定义，并登记在
-  `tools/contract-signature-manifest.json` 的 `local_types` 里说明理由。门禁会强制
-  「代码里每个类要么对得上契约块、要么在 local_types 里登记过」，所以这里不可能偷偷
-  多出一个没人管的类型。
+* 契约只引用、没定义的字段类型（`EquityPoint` / `PerformanceMetrics` …，即 B7 的 T2 未定义
+  类型）当时在这里补了最小定义。**登记处是 `tools/contract-signature-manifest.json` 的
+  `impl_only`** —— `classes` 是契约侧（9 个类），`impl_only` 是实现侧没有契约类块的（22 个）。
+  那份清单**从来没有** `local_types` 这个键（2026-09-25 实测更正：那把精确的 pickaxe 是
+  `git log -S local_types -- tools/contract-signature-manifest.json`，全历史 0 命中；
+  不加路径的 `git log -S local_types` 会命中 2 个提交，但改的是下面这几句**文字**本身）。
+  2026-09-25 起这批类型多已由主契约附录 G1/G3 给出规范块，成员/字段由
+  `tools/verify_contract_appendix.py` 逐项比对。
+* ⚠️ 此前这里还写「门禁会强制『代码里每个类要么对得上契约块、要么登记过』，所以这里不可能
+  偷偷多出一个没人管的类型」——**这句话是假的**（2026-09-25 实测）：实现侧 144 个类里
+  **29 个**既没有契约声明、也不在 `manifest.classes` / `impl_only` / `CONTRACT_FIRST` 里，
+  当时的 13 个门禁照样全绿（现在 14 个：新加的 `enum-members` 只管**枚举成员**，
+  管不到类清单）。本文件里的 `StrategyHandle`（契约 §2.1.1 只在散文里点名了两个字段）
+  就是其中一个。原因：`verify_contract_signature.py` 只查「登记过的成员还在不在」，
+  `verify_contract_appendix.py` 只审主契约**附录 G 节**。分母与完整清单见
+  `docs/开工前缺口清单.md` B9（B9.2）。计数更正：此处先前写「145 个类」——2026-09-25
+  用 `ast` 与 `grep` 两种法子重数，都是 **144**（144 个 class 语句 / 144 个不同类名），
+  「29 个未覆盖」这个分子不变。
 """
 
 from __future__ import annotations
