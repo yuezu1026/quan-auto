@@ -438,12 +438,44 @@ class PsycopgConnection:
             psycopg = _import_psycopg()
             # `row_factory=dict_row`：本模块按**列名**取字段（`row["close"]`）。
             # 用默认的元组行会让每个取值点依赖列序 —— 列序一改就静默错位。
-            self._conn = psycopg.connect(self.dsn, row_factory=psycopg.rows.dict_row)
+            #
+            # `autocommit=True`：这不是图省事，它是本类正确性的前提，理由已实测。
+            # psycopg 3.3.6 `_connection_base.py::_start_query`：
+            #
+            #     if self._autocommit: return
+            #     if self.pgconn.transaction_status != IDLE: return
+            #     yield from self._exec_command(self._get_tx_start_command())  # ⇒ b"BEGIN"
+            #
+            # 即默认的 `autocommit=False` 下，**任何一条裸 `execute()` 都会先显式发 `BEGIN`**
+            # 并把连接永久钉在 INTRANS；再叠加 `transaction.py::_push_savepoint` 的
+            #
+            #     self._outer_transaction = self.pgconn.transaction_status == IDLE
+            #
+            # ⇒ 之前只要裸读过一次，之后的 `transaction()` 就退化成
+            # `SAVEPOINT _pg3_1` / `RELEASE _pg3_1`，**永不 COMMIT**，`close()` 时整批被
+            # 服务器回滚。这就是 B20：「先看看库里有什么、再决定写什么」这种最常见的用法
+            # 会**静默丢数据**，而同一条连接上「写完读回对拍」恒真、全绿。
+            #
+            # `autocommit=True` 下 `Connection.transaction()` **仍然**是显式的 BEGIN…COMMIT
+            # （见 `transaction()` 的文档串），所以「整批一个事务」的语义不变；
+            # 变的只是「事务之外的一条语句立即生效」。
+            self._conn = psycopg.connect(
+                self.dsn, row_factory=psycopg.rows.dict_row, autocommit=True
+            )
         return self._conn
 
     def execute(self, sql: str, params: Sequence[Any] = ()) -> List[Mapping[str, Any]]:
         try:
             cursor = self._connect().execute(sql, params)
+            # 无结果集的语句（不带 `RETURNING` 的 INSERT/DELETE、任何 DDL）在这里
+            # `description` 是 `None`。实测 psycopg 3.3.6（`_cursor_base.py`）：
+            # `Cursor.description` 无结果集时**返回 `None`**（不抛），而 `fetchall()`
+            # 会**抛** `ProgrammingError: the last operation didn't produce records`
+            # ⇒ 无条件 `fetchall()` 会把这类语句全变成 `DATA_008`，看起来像「驱动坏了」。
+            # 判据取 `description`（DBAPI 标准，且实测语义就是「返回 None」），
+            # 不去猜 SQL 文本 —— 猜文本会把判据绑死在调用方的写法上。
+            if cursor.description is None:
+                return []
             return list(cursor.fetchall())
         except QuanAutoError:
             raise
@@ -473,6 +505,19 @@ class PsycopgConnection:
         抓到它的是容器通道那条探针（契约附录 B18）。教训与 B16.1/B17.1 同源：
         **对驱动行为的假设属于外部事实，只能测，不能想**；假连接必须照实测重写，
         否则它证明的只是「实现等于它自己」。
+
+        另有一条与 `autocommit=True` 配对、同样实测过的语义（psycopg 3.3.6
+        `transaction.py::_push_savepoint`）：
+
+            self._outer_transaction = self.pgconn.transaction_status == IDLE
+
+        而 `_get_commit_commands()` 只在 `_outer_transaction` 为真时才 `yield b"COMMIT"`。
+        也就是说「这个事务块会不会真提交」取决于**进入那一刻连接的 libpq 状态**，而不是
+        「我们调了 `transaction()`」。连接若已被前一条裸 `execute()` 钉在 INTRANS（默认
+        `autocommit=False` 下必然如此），这里就退化成 `SAVEPOINT _pg3_1` / `RELEASE _pg3_1`
+        —— **一条 COMMIT 都没有**，`close()` 时整段被回滚。这就是 B20：真库上「520 行入库、
+        同连接读回 520 行、幂等重跑 `skipped=520`」全绿，另起一个客户端（`psql`）查出 0 行。
+        `_connect()` 里的 `autocommit=True` 是它的修法，两处必须一起读。
         """
         conn = self._connect()
         with conn.transaction():

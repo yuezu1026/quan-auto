@@ -17,15 +17,20 @@
   * `MUTATION` 触发出来的失败必须是**断言/异常**，不能是 `ImportError`/语法错
     （收集阶段就炸掉，等于测试根本没跑）。
 
-**它不进 `run_all_gates.py` 的注册表**：每条样本要跑一次 pytest（2026-09-24 实测 30 条样本：
-26 条变异 + 3 条 CONTROL + 1 条 ENV-LIMIT），慢，且它验证的对象是测试而不是产物契约。
+**它不进 `run_all_gates.py` 的注册表**：每条样本要跑一次 pytest（2026-09-25 实测 32 条样本：
+29 条变异 + 3 条 CONTROL + 0 条 ENV-LIMIT），慢，且它验证的对象是测试而不是产物契约。
 手动跑，或改完测试后跑一次。
 
-**`env_limit`（一条变异的出口）**：有的缺陷在**本机环境里根本不可能被断言抓住**
-（例：变异把「驱动惰性导入」改成模块顶层拉驱动 —— 本机没装 psycopg，
+**`env_limit`（一条变异的出口）**：有的缺陷在**当前环境里根本不可能被断言抓住**
+（例：变异把「驱动惰性导入」改成模块顶层拉驱动 —— 若这个解释器里根本没装 psycopg，
 结果只能是收集期 ImportError，那条断言真正生效的环境是装了驱动的环境）。
 这类变异必须**逐条写明理由**并标为 `ENV-LIMIT`：它只证明「这里验不了」，
 **不等于 PASS**，也不允许把一条没被抓到的变异事后追认为 `env_limit`。
+
+⚠️ `env_limit` 的取值**随环境变**，不是常数：本仓库 `psycopg` **不发在 `pyproject.toml` 里**
+（`dependencies` 只有 pandas，`dev` 只有 pytest），所以 CI 里 `S9` 会退化成 `ENV-LIMIT`，
+而本机 `.venv` 手工装了 `psycopg` 之后它就是**真的 CAUGHT**（2026-09-25 实测 `env_limited=0`）。
+改环境后要重看这一栏，不要把上一轮的 `env_limited` 当现状引用。
 """
 
 from __future__ import annotations
@@ -215,17 +220,65 @@ MUTATIONS = [
         "new": "from .datacenter import BarStore, DailyBar\n\nimport psycopg  # MUT",
         "expect": ["test_import_pgstore_does_not_import_the_driver"],
         "env_limit": (
-            "本机 .venv 没装 psycopg ⇒ 顶层拉驱动只能是收集期 ImportError，"
-            "在断言之前就炸，本机无法自证；真正生效的是装了驱动的环境（pyproject 的 datasources/pg extra）"
+            "**只有在本机没装驱动时**才走这条退路：顶层拉驱动会是收集期 ImportError，"
+            "在断言之前就炸。2026-09-25 起仓库 `.venv` 已装了 psycopg（落库侧要用）"
+            "⇒ 正常情况下这条走不到这里，而是像别的变异一样真的变红；"
+            "留着它只是为了在没装驱动的环境里不被误当成 CAUGHT"
         ),
     },
     {
         "tag": "S10-driver-row-factory-dropped",
         "tests": TESTS_STORE,
         "path": "quanauto/pgstore.py",
-        "old": "            self._conn = psycopg.connect(self.dsn, row_factory=psycopg.rows.dict_row)",
-        "new": "            self._conn = psycopg.connect(self.dsn)",
+        "old": (
+            "            self._conn = psycopg.connect(\n"
+            "                self.dsn, row_factory=psycopg.rows.dict_row, autocommit=True\n"
+            "            )"
+        ),
+        "new": (
+            "            self._conn = psycopg.connect(\n"
+            "                self.dsn, autocommit=True\n"
+            "            )"
+        ),
         "expect": ["test_psycopg_connection_asks_the_driver_for_mapping_rows"],
+    },
+    {
+        # 2026-09-25 追补，样本来自**真跑出来的**缺陷（契约附录 B20）：
+        # 默认 `autocommit=False` 时，第一条裸 `execute()` 就显式发 `BEGIN` 并把连接钉在
+        # INTRANS（`_connection_base.py::_start_query`）；而事务块会不会提交取决于**进入
+        # 那一刻的 libpq 状态**（`transaction.py::_push_savepoint`）⇒ 之后 `transaction()`
+        # 退化成 `SAVEPOINT`/`RELEASE`，**永不 COMMIT**，关连接时整批被回滚。
+        # 「先读一次、再写一批」因此在真库上静默丢数据，而离线套件全绿（假驱动把
+        # 「我们调了 transaction()」记成了「提交了」）。这条变异把 `autocommit` 拿掉。
+        "tag": "S13a-autocommit-dropped",
+        "tests": TESTS_STORE,
+        "path": "quanauto/pgstore.py",
+        "old": (
+            "            self._conn = psycopg.connect(\n"
+            "                self.dsn, row_factory=psycopg.rows.dict_row, autocommit=True\n"
+            "            )"
+        ),
+        "new": (
+            "            self._conn = psycopg.connect(\n"
+            "                self.dsn, row_factory=psycopg.rows.dict_row\n"
+            "            )"
+        ),
+        "expect": ["test_a_bare_execute_does_not_swallow_the_next_transactions_commit"],
+    },
+    {
+        # 2026-09-25 追补，B20 的附带缺陷：无结果集的语句（不带 `RETURNING` 的
+        # INSERT/DELETE、任何 DDL）在 psycopg 里 `description` 是 `None`、而 `fetchall()`
+        # 会抛「didn't produce records」⇒ 无条件 `fetchall()` 把它们全变成 `DATA_008`。
+        "tag": "S13b-fetchall-unconditional",
+        "tests": TESTS_STORE,
+        "path": "quanauto/pgstore.py",
+        "old": (
+            "            if cursor.description is None:\n"
+            "                return []\n"
+            "            return list(cursor.fetchall())"
+        ),
+        "new": "            return list(cursor.fetchall())",
+        "expect": ["test_execute_tolerates_statements_without_a_result_set"],
     },
     {
         "tag": "CONTROL-comment-only-store",
