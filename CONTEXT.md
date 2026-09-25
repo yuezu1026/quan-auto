@@ -108,6 +108,7 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 | `tools/verify_contract_appendix.py` | ★ **新门禁**（`contract-appendix`）：核心契约**附录 G** 登记的类型/异常是否等于 `quanauto/` 的实现 —— 逐条比**基类 / 字段名与顺序 / 字段类型 / 字段默认值 / 枚举取值 / 异常 `code`**（不比方法、不比 docstring、不比注释）。另盯三件事：登记了却找不到实体（`AX-UNUSED-REGISTRY`）、契约先行的 5 个名字一旦有实现就必须回来改判据（`AX-PENDING-DRIFT`）、G5 那两份 T1 **可复制副本**不许被删（`AX-T1-COPY` —— 删了 T1 计数不会变，但「能不能照抄」会静默退回去）。**边界**：只证明「附录 G = 实现」，不证明实现对，也不为那 5 个推定名字的字段表背书 |
 | `tools/verify_appendix_refs.py` | ★ **新门禁**（`appendix-refs`）：**散文里的交叉引用**是否指向真实存在的附录条目。扫 `git ls-files` 的全部文本，把各契约/PRD 文档的附录字母与条目号建成索引，再核对每个「某契约 + 附录标签」的引用：字母不属于任何文档 ⇒ `APX-UNKNOWN-APPENDIX`、字母在但条目号不存在 ⇒ `APX-DANGLING-ITEM`、点名了文档而该文档没有这个附录 ⇒ `APX-WRONG-CONTRACT`（全字匹配；斜杠/波浪号连写与并列续写都展开）。**只读文本**：不执行被检代码、不联网；文件清单取自 `git ls-files`，拿不到就**拒判**而不是空转；另有一组空转守卫（引用为 0 / 索引为空 / 判据退化时一律拒判，而不是打印「0 问题」）。它的存在理由：附录被重编号或整段删掉后，文档里那句地址仍印着、其余门禁全绿，而**去取裁决的 agent 会落到空地址**。边界：只证明「这个标签存在」，**证明不了标签背后的裁决仍然成立** |
 | `tools/verify_enum_members.py` | ★ **新门禁**（`enum-members`，2026-09-25 注册）：三份契约文档的 python 代码块里的**枚举**与 `quanauto/*.py` 的枚举**逐成员**比 —— 成员名 / 取值 / **顺序**三样都比。两张必须显式登记的表：`PENDING`（契约有、实现无 ⇒ 实现一冒头即报 `EM-PENDING-DRIFT`，不许静默补上）、`IMPL_LOCAL`（实现侧本地枚举 ⇒ 消失报 `EM-LOCAL-STALE`、出现未登记的即报 `EM-UNREGISTERED-IMPL`）；两侧提取为空一律 FAIL（空转守卫）。**它补的是别的门禁都看不见的一层**：`contract-appendix` 只审核心契约附录 G，`contract-signature` 只看「登记过的成员还在不在」，manifest 里**一个枚举都没有** ⇒ 一个枚举可以在契约里写 5 个成员、实现里只写 4 个而全绿（2026-09-25 的 `MarketStatus` 就是这样，见 §6 与缺口清单 **B9**）。**边界**：只比成员表，不比枚举的 docstring、不比谁在用哪个成员 |
+| `tools/verify_class_coverage.py` | ★ **新门禁**（`class-coverage`，2026-09-25 注册）：`quanauto/*.py` 里**每一个类**都必须落在四个集合之一 —— ① 契约**声明**（三份契约的 ```` ```python ```` 块里由 `ast` 真解出 `class 同名`，**文本搜不算**）；② **登记表**（`manifest.classes` ∪ `impl_only` ∪ `CONTRACT_FIRST` ∪ `T1_REQUIRED`，**并集算出来**，实测 38）；③ `DEBT`（契约点了名却没类块 = 明账欠款，7 个）；④ `LOCAL`（契约不定义，22 个）。它补的正是最大的那块盲区：`contract-signature` 只查「登记过的成员还在不在」、`contract-appendix` 只审附录 G、`enum-members` 只管枚举成员 ⇒ 此前一个新写的类可以既不在契约、也不在任何清单里而全部门禁全绿（2026-09-25 实测 29 个）。**提及不算覆盖**：报告单印一行 `mention split`（待裁 29 个：散文提到过 13 / 连名字都没有 16），因为「把名字写进任何一句话」不该算合规。③④ 两张表**双向自查**（已能被声明/登记覆盖 ⇒ `CC-DEBT-DRIFT`/`CC-LOCAL-DRIFT`；类消失 ⇒ `*‑STALE`），`DAMAGED` 表给 `.docx` 压坏的两个块（`Account`/`ResultSerializer`）豁免但同样双向查。证伪两条通道：`--selftest` 29 个合成样本（逐条断言**预期检查码**），`--falsify` 在**真实产物的逐字节副本**上改坏（不写仓库）。**边界**：只证明「每个类都有人认领过」，**不证明实现对**，也不比成员/字段/方法 |
 | `tools/verify_data_center.py` | 数据中心契约 §3.6.1 与 DDL 约束清单双向一致（C1~C7）+ 对 `db/data_center.smoke.sql` 的触发测试覆盖核对（C7） |
 | `tools/verify_data_center_pit.py` | ★ **I2 S1 新门禁**：`DataFeed` 取数路径的 `as_of` **两层防线**（显式日期参数越界必须抛 / 经 guard 逐行登记）+ 回测会话下 `QFQ`/`BFILL` 必须被拒 + 只有 `DataCenter.as_of()` 能产出 `DataFeed`。「越界＝抛而非裁剪」这条语义的机器判据就在这里。**只解析 AST，从不执行被检代码、不跑 pytest** |
 | `tools/verify_data_center_adapter.py` | ★ **I2 S2 新门禁**（`data-center-adapter`）：采集侧适配器把源列名/取值翻成标准 schema（A1/A2/A4/A8）、采集层不含数据库驱动（A5）、源 SDK 只能惰性 import（A6）、行对象不暴露源字段名（A7）、新映射表/列名元组未登记即报错（A3/A9）、两个空转守卫（A0/A10）。**只解析源码文本**：不执行适配器、不联网、不 import pandas |
@@ -267,9 +268,14 @@ tier-A 全绿；`core-contract-refs` 是 tier-B 欠账，基线 **2**（`T1=2` /
 证伪：往实现里插一个契约里没有的成员，注册**前**那 13 条全绿；注册**后**同一条变异
 `verdict: FAIL (13/14 gate(s) green)`，只有 `enum-members` 红，其余 13 条仍全 PASS。
 已按契约对齐（成员名 / 取值 / 顺序），并登记两张表：`PENDING = DataQualityFlag, ReportType`、
-`IMPL_LOCAL = SessionMode, SeverityEnum`。**仍未闭环的是「类」这一层**：实现侧 144 个类里有 29 个
-既不在契约正文声明、也不在任何登记表里（14 个「正文只提过名字」+ 15 个「三份契约里连名字都没有」），
-目前没有判据在盯它 —— 数字、名单与修法见缺口清单 **B9.2 / B10**。
+`IMPL_LOCAL = SessionMode, SeverityEnum`。
+**同一批把「类」这一层也补上了**（新门禁 `class-coverage`，批内门禁数 14 → 15）：要求
+`quanauto/*.py` 的每个类都落进「契约声明 / 登记表 / `DEBT` 明账 / `LOCAL` 实现细节」之一 ——
+此前 144 个类里有 29 个谁也没管，而 14 条门禁全绿。现在那 29 个已逐个认领
+（**7 个 `DEBT`**〔契约点了名却没形状，是明账欠款〕+ **22 个 `LOCAL`**〔登记为实现侧细节〕），
+报告里 `uncovered=29` 是「不由声明/登记侧覆盖」的分母、**不是**基线上限；判据要求的是
+「`uncovered` 里没有被 ③④ 认领的」—— 漏登记一个就红。同一批还写死了**「提及不算覆盖」**
+（29 个里 13 个只在散文出现过、16 个连名字都没有）。数字、名单与修法见缺口清单 **B9.2 / B10**。
 其他能力缺口（复权因子、未确认清单等）与编号一律以 `docs/开工前缺口清单.md` 为准，不要在本文件里复制它。
 **数据库侧已不再是「运行时未证实」**：两份触发测试 2026-09-23 先在容器 `postgres:17`（17.11）上
 各拿到 **23/0** 与 **42/0** PASS，2026-09-24 又在 `postgres:14`(14.24) / `15`(15.18) / `16`(16.15)

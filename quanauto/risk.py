@@ -139,7 +139,12 @@ class SeverityEnum(Enum):
 
     契约 §3.2.6 只把 `severity` 写成 `str`（WARNING / ERROR / CRITICAL），没给枚举。
     这里补一个**实现层**枚举，因为「取最高严重度」需要一个可比较的序 —— 靠字符串
-    字典序去比大小，某天加一个词就会静默排错。登记在 manifest 的 `impl_only`。
+    字典序去比大小，某天加一个词就会静默排错。
+    **它不在 `manifest` 里**（那份清单是签名清单，`classes` / `impl_only` 两张表里
+    一个枚举都没有，2026-09-25 实测更正 —— 此前这里写「登记在 manifest 的 `impl_only`」
+    是错的，那里只有 `SessionMode` 这一个枚举）。真正盯着它的两张表是：
+    门禁 `enum-members` 的 `IMPL_LOCAL`（盯成员名/取值）与门禁 `class-coverage` 的
+    `LOCAL`（盯它为什么没有契约来源）。
     """
 
     WARNING = "WARNING"

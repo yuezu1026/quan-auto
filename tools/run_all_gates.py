@@ -288,6 +288,38 @@ GATES = [
         'selftest': ['tools/verify_enum_members.py', '--selftest'],
     },
     {
+        'name': 'class-coverage',
+        'tier': 'A',
+        # 上面两条都只盯着**已经被点名**的东西：contract-appendix 只管附录 G 那批，
+        # enum-members 只管枚举成员。而「`quanauto/` 里这个类到底归谁管」这件事，
+        # 全仓库原先**一条判据都没有** —— 存在一类安静的缺口：契约里没有它的类块、
+        # 登记表（manifest.classes / impl_only / CONTRACT_FIRST / T1_REQUIRED）里也
+        # 没有它，于是它既不欠账、也不存在，谁都不会知道。实测 2026-09-25：
+        # `quanauto/*.py` 共 144 个类，登记侧并集只有 38 个名字。
+        # 本门禁把「每个类都必须落进四集合之一」写成判据：① DECLARED（三份契约的
+        # ```python 块里 `class X` 真的解析出来了 —— 文本搜不算）；② REGISTERED
+        # （四张登记表并集）；③ DEBT（契约**散文里点了名**却没有类块 ⇒ 明账）；
+        # ④ LOCAL（契约根本不定义 ⇒ 实现细节）。两个豁免表都查反向：登记了但已经
+        # 被声明/已经消失 ⇒ FINDING，否则它们会变成永久免检的洞。
+        # ★ B10 的第二条要求就是这里的 `mention split` 一行：**提及不算覆盖**。
+        #   29 个待裁名字里 13 个在散文里出现过、16 个连名字都没有 —— 若把提及降级
+        #   成「已覆盖」，13 个会当场合规，而契约一个字都没改。计数一律**数出来**。
+        # ★ `DAMAGED` 表是给 .docx 损坏的块用的（三份契约里有两处，都在 core，
+        #   原文在 T1 表里有可复制副本）。它是**豁免**而不是免检：块解析不了时先看
+        #   它提到的类名有没有登记，没登记照样报 CC-UNPARSABLE-CLASS；登记过但块
+        #   现在能解析了、或那个类名已经不在了，报 CC-DAMAGED-STALE。
+        #   损坏块里的类名用**非锚定**匹配找：实测 core 的 Account 块被转成了
+        #   `@dataclass class Account: account_id: str # 账户ID …`（类名挤在行中），
+        #   锚定行首会静默漏掉它 —— 而「漏掉」正是本门禁要防的事。
+        # 边界：只证明「有没有人管」，不证明实现对；不比方法/docstring/字段；
+        # DEBT/LOCAL 两张表的裁决是**人写的**，本门禁只保证「表与代码同时漂了会红」。
+        # ⚠️ 29 这个数**不是基线**（B9.2 明说）：它是一次实测快照，门禁要求的是
+        #    uncovered 集合**为空**，而不是「不超过 29」。
+        'what': 'quanauto/ 每个类都落进「契约声明 / 登记表 / 明账 DEBT / 实现细节 LOCAL」之一（提及不算）',
+        'runner': ['tools/verify_class_coverage.py'],
+        'selftest': ['tools/verify_class_coverage.py', '--selftest'],
+    },
+    {
         'name': 'core-contract-refs',
         'tier': 'B',
         # The two supplements contribute definitions only. DataFeed/MarketStatus/

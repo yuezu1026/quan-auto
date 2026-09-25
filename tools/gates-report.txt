@@ -1,4 +1,4 @@
-SCOPE: FULL -- all 14 registered gate(s) ran.
+SCOPE: FULL -- all 15 registered gate(s) ran.
 
 ==============================================================================
 GATE md-fidelity (tier A) selftest=PASS verdict=PASS 0 finding(s)
@@ -15,7 +15,7 @@ GATE risk-config (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 风控契约 §3.6 与 db/risk_control.sql 与 smoke.sql 三方一致
 argv: tools/verify_risk_config.py
 ------------------------------------------------------------------------------
-CRLF-normalised: contract=70245 bytes, sql=15185 bytes, smoke=22801 bytes, specs=106706 bytes
+CRLF-normalised: contract=70245 bytes, sql=15185 bytes, smoke=22801 bytes, specs=107136 bytes
 extracted: seed_rows=6 ddl_tables=9 spec_rows=6 rule_specs=6 contract_table_refs=13 required_constraints=14 covered_by_smoke=14 verified_on=postgres:14 postgres:15 postgres:16 postgres:17 evidence_images=postgres:14 postgres:15 postgres:16 postgres:17
 smoke evidence files: D:\project-quan\quan-auto\tools\sql-smoke-report-pg14.txt D:\project-quan\quan-auto\tools\sql-smoke-report-pg15.txt D:\project-quan\quan-auto\tools\sql-smoke-report-pg16.txt D:\project-quan\quan-auto\tools\sql-smoke-report.txt
 verdict: PASS (0 issue(s))
@@ -156,10 +156,10 @@ GATE appendix-refs (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 契约文档里被引用的附录标签（含条目号、点名归属）都真实存在
 argv: tools/verify_appendix_refs.py
 ------------------------------------------------------------------------------
-scan scope: git ls-files=94 file(s), read as text=91, skipped=3
+scan scope: git ls-files=95 file(s), read as text=92, skipped=3
   skipped (binary/undecodable): docs/智能量化交易平台-数据中心数据源选型与接入规范.docx, docs/智能量化交易平台-核心模块接口契约文档.docx, docs/智能量化交易平台.docx
 appendix index: core=7L/23I dc=4L/66I prd=1L/0I risk=0L/0I
-citations: 200 total, 106 with an item label, 47 naming an owner, in 30 file(s)
+citations: 222 total, 112 with an item label, 57 naming an owner, in 32 file(s)
 verdict: PASS (0 issue(s))
 
 ==============================================================================
@@ -189,6 +189,27 @@ python blocks:   71 (unparsable=2, of which enum-like=0)
 contract enums:  23 (identical duplicates across docs=0)
 impl scan:       quanauto/*.py files=16 enums=23
 compared:        matched=21 pending=2 impl-local=2
+verdict: PASS (0 finding(s))
+
+==============================================================================
+GATE class-coverage (tier A) selftest=PASS verdict=PASS 0 finding(s)
+what: quanauto/ 每个类都落进「契约声明 / 登记表 / 明账 DEBT / 实现细节 LOCAL」之一（提及不算）
+argv: tools/verify_class_coverage.py
+------------------------------------------------------------------------------
+root:            D:\project-quan\quan-auto
+contract[core]   docs\智能量化交易平台-核心模块接口契约文档.md  classes=80 prose=20238 chars
+contract[dc  ]   docs\智能量化交易平台-数据中心接口契约文档.md  classes=29 prose=77111 chars
+contract[risk]   docs\智能量化交易平台-风控层接口契约文档.md  classes=24 prose=27609 chars
+python blocks:   71 (unparsable=2, of which class-like=2, NewType aliases=1)
+NOTE: 契约 core 文档 1167 行的块解析不了（第 1168 行语法错：invalid syntax）—— 类名提示=Account 首行=@dataclass class Account: account_id: str # 账户ID total_capital: float 
+NOTE: 契约 core 文档 1989 行的块解析不了（第 2005 行语法错：unterminated triple-quoted string literal (detected at line 23)）—— 类名提示=ResultSerializer 首行=class ResultSerializer: """ 回测结果序列化器。 """
+declared side:   classes=132（只认 ast 解出来的 ClassDef，文本搜不算）
+registry side:   manifest.classes=9 impl_only=22 CONTRACT_FIRST=6 T1_REQUIRED=2 -> union=38（声明∪登记=146）
+impl scan:       quanauto/*.py files=16 classes=144 (NewType aliases=1, 不计入)
+coverage:        covered=115 (by declaration=101, registration-only=14) uncovered=29
+triage:          debt(契约点过名、正文没有类块)=7 local(契约不定义)=22
+mention split:   登记表里 29 个名字：契约散文提到过 13 / 连名字都没有 16 （提及不算覆盖）
+  只靠散文提及 13 个：DataStoreError, IngestReport, OrderRejectedError, PgBarIngestor, PgBarStore, PsycopgConnection, RiskConfigInvalidError, RiskConfigLoadError, RiskConfigWriteError, RiskError, RiskInterceptError, RiskInterceptLogWriter, StrategyHandle
 verdict: PASS (0 finding(s))
 
 ==============================================================================
