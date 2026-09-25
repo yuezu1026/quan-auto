@@ -11,22 +11,23 @@
     "This file is edited by hand on purpose. There is no --write-baseline flag: an",
     "auto-update would let any regression be absorbed by re-running the harness once,",
     "which is precisely the fake gate this project keeps running into.",
-    "Values must come from a real run, never from an estimate."
+    "Values must come from a real run, never from an estimate.",
+    "A 'total: 0' entry is NOT usable: with no findings the parsed composition is {},",
+    "which can never equal the recorded detail ({T1: 0}), so it would report DRIFT~.",
+    "Record the real nonzero codes even when they are few."
   ],
   "core-contract-refs": {
-    "total": 39,
+    "total": 2,
     "detail": {
-      "T1": 2,
-      "T2": 19,
-      "T3": 18
+      "T1": 2
     },
-    "measured": "2026-09-23",
-    "measured_by": "python tools/run_all_gates.py (then counted the FINDING lines in tools/gates-report.txt)",
+    "measured": "2026-09-25",
+    "measured_by": "python tools/verify_contract_refs.py --extra=docs/智能量化交易平台-数据中心接口契约文档.md --extra=docs/智能量化交易平台-风控层接口契约文档.md -> verdict: DIRTY (2 finding(s)), both FINDING lines T1 (#23 and #40)",
     "measured_with": [
       "tools/verify_contract_refs.py",
       "--extra=docs/智能量化交易平台-数据中心接口契约文档.md",
       "--extra=docs/智能量化交易平台-风控层接口契约文档.md"
     ],
-    "note": "B7 欠账：主契约引用的类型/异常未定义 + 2 个不可解析代码块。T1=2 个不可解析的 python 块，T2=19 个只出现在签名里、文档内无定义的类型，T3=18 个被点名但无定义的异常。两个补充契约（数据中心/风控）贡献了 9 个已定义异常，所以 T3 低于主契约单独统计时的 19。这三类都必须补齐补充契约才能下降；下降后必须手工改小 total。"
+    "note": "B7 还债（2026-09-25，附录 G）：T2/T3 已归零 —— 附录 G2~G6 把 19 个类型与 18 个异常逐个定义出来（其中 5 个是「契约先行」：正文引用了、本迭代不实现，登记在 tools/verify_contract_appendix.py 的 CONTRACT_FIRST 里，实现一落地就报 AX-PENDING-DRIFT）。上一条基线是 total 39（2026-09-23 实测：T1=2 / T2=19 / T3=18），本次按实测手工改小，不是估算。剩下 T1=2 是**结构性**的：两个坏块在 .docx 派生的正文里，只许追加 ⇒ 不能就地修（重新转换会抹掉），附录 G5 给的是可复制副本，副本被删会被 contract-appendix 门禁判 FAIL。所以这份基线往后只管 T1；它仍是个跳闸器：任何新出现的未定义类型/异常会把 total 抬到 2 以上 ⇒ DRIFT+。另外，verify_contract_refs.py 本次补了一条 T2 规则：`X = NewType(\"X\", base)` 也算「有定义」（`OrderId` 就是这样定义的），但 T3 不收它（形状别名不是异常层次），两侧各有样本。"
   }
 }

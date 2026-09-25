@@ -15,7 +15,9 @@ Checks (each runs independently; no check returns early and shadows a later one)
       out of the document, and is usually a source-document formatting defect
       (decorator and class squashed onto one line, etc.).
   T2  every type referenced in a signature / argument annotation / base class is
-      either defined in the document, imported in some block, or a builtin.
+      either defined in the document, imported in some block, or a builtin. A shape
+      alias (`X = NewType("X", base)`) counts as a definition for T2 -- it is what an
+      alias is for -- but deliberately NOT for T3 (see defined_classes).
   T3  every *Error / *Exception name mentioned is actually defined. The contract
       promises an exception hierarchy but never enumerates it, so a "Raises:" line may
       name a class that exists nowhere.
@@ -68,9 +70,33 @@ def names_in(node):
     return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
 
 
+def is_newtype_alias(value):
+    """Is this the value half of `X = NewType("X", base)`?
+
+    A shape alias IS a definition a reader can lift: they get the alias name and its base,
+    which is all an alias can carry. Not recognising it made T2 report `OrderId` -- used in
+    the section 2.4.2 / 2.4.3 signatures and defined exactly that way in quanauto/models.py
+    -- as "defined nowhere in the document", a false positive that would have kept a debt
+    entry alive forever (B7, 2026-09-25 附录 G3 adds the line to the document).
+
+    Deliberately narrow: only a call literally named `NewType` (or `typing.NewType`) counts,
+    and its target only joins `defined`, never `defined_classes` -- so T3 still refuses to
+    accept `FooError = NewType(...)` as an exception hierarchy.
+    """
+    if not isinstance(value, ast.Call):
+        return False
+    func = value.func
+    name = func.attr if isinstance(func, ast.Attribute) else getattr(func, 'id', '')
+    return name == 'NewType'
+
+
 def collect(blocks):
     """Parse every python block and gather definitions, imports and referenced types."""
     defined, imported, referenced = set(), set(), set()
+    # ClassDef names only. T3 reads this one: a shape alias called `FooError` is not an
+    # exception definition, and accepting it would be exactly the kind of loosening that
+    # silently absorbs real debt.
+    defined_classes = set()
     parsed, unparsable = 0, []
     for idx, src in enumerate(blocks, 1):
         try:
@@ -82,6 +108,7 @@ def collect(blocks):
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef):
                 defined.add(node.name)
+                defined_classes.add(node.name)
                 for base in node.bases:
                     referenced |= names_in(base)
             elif isinstance(node, (ast.Import, ast.ImportFrom)):
@@ -96,7 +123,11 @@ def collect(blocks):
             elif isinstance(node, ast.AnnAssign):
                 if node.annotation is not None:
                     referenced |= names_in(node.annotation)
-    return defined, imported, referenced, parsed, unparsable
+            elif isinstance(node, ast.Assign) and is_newtype_alias(node.value):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        defined.add(target.id)
+    return defined, defined_classes, imported, referenced, parsed, unparsable
 
 
 def audit(text, extra=()):
@@ -112,15 +143,20 @@ def audit(text, extra=()):
 
     blocks = PY_BLOCK_RE.findall(text)
     fence_langs = sorted(set(FENCE_RE.findall(text)))
-    defined, imported, referenced, parsed, unparsable = collect(blocks)
+    defined, defined_classes, imported, referenced, parsed, unparsable = collect(blocks)
     for other in extra:
-        o_def, o_imp, _, _, _ = collect(PY_BLOCK_RE.findall(other))
+        o_def, o_classes, o_imp, _, _, _ = collect(PY_BLOCK_RE.findall(other))
         defined |= o_def
+        # classes only: an extra document that defines a real exception class must keep
+        # silencing T3 for the main document (that is what --extra is for), but its shape
+        # aliases must not.
+        defined_classes |= o_classes
         imported |= o_imp
 
     stats['py_blocks'] = len(blocks)
     stats['parsed'] = parsed
-    stats['classes'] = len(defined)
+    stats['classes'] = len(defined_classes)
+    stats['aliases'] = len(defined) - len(defined_classes)
     stats['referenced'] = len(referenced)
     stats['fence_langs'] = fence_langs
 
@@ -149,9 +185,10 @@ def audit(text, extra=()):
                                "the document -- the implementer has to invent it" % name))
 
     # --- T3: *Error / *Exception named but not defined --------------------------
-    defined_errors = {n for n in defined if ERROR_NAME_RE.fullmatch(n)}
+    # Subtract `defined_classes`, NOT `defined`: see the T3-newtype-is-not-a-class sample.
+    defined_errors = {n for n in defined_classes if ERROR_NAME_RE.fullmatch(n)}
     mentioned_errors = set(ERROR_NAME_RE.findall(text))
-    for name in sorted(mentioned_errors - defined - imported - ALLOWED):
+    for name in sorted(mentioned_errors - defined_classes - imported - ALLOWED):
         findings.append(('T3', "exception '%s' is named but never defined -- the caller "
                                "cannot import it and the hierarchy stays implicit"
                                % name))
@@ -172,8 +209,9 @@ def report(path, findings, stats):
     print('contract: %s' % path)
     if stats['extra_docs']:
         print('extra definition sources: %d document(s)' % stats['extra_docs'])
-    print('blocks: python=%d parsed=%d classes=%d referenced-types=%d'
-          % (stats['py_blocks'], stats['parsed'], stats['classes'], stats['referenced']))
+    print('blocks: python=%d parsed=%d classes=%d aliases=%d referenced-types=%d'
+          % (stats['py_blocks'], stats['parsed'], stats['classes'], stats['aliases'],
+             stats['referenced']))
     print('fences present: %s' % stats['fence_langs'])
     print('error names: mentioned=%d defined=%d'
           % (stats['error_names_mentioned'], stats['error_names_defined']))
@@ -233,6 +271,38 @@ def selftest():
            '    def bar(self) -> PositionTarget:\n'
            '        pass\n'
            '```\n', None, want_clean=True)
+
+    # T2 + NewType (2026-09-25 附录 G3): a shape alias is a definition. The pair below is
+    # the trigger test for that branch -- same document, one line added/removed, detector
+    # must flip. Without the `removed` half the branch could be dead and still look wired.
+    expect('T2-newtype-defined',
+           '```python\n'
+           'class Foo:\n'
+           '    def bar(self) -> OrderId:\n'
+           '        pass\n'
+           'OrderId = NewType("OrderId", str)\n'
+           '```\n', None, want_clean=True)
+    expect('T2-newtype-removed',
+           '```python\n'
+           'class Foo:\n'
+           '    def bar(self) -> OrderId:\n'
+           '        pass\n'
+           '```\n', 'T2')
+
+    # T3 control against over-broadening: `FooError` defined as a *shape alias* must still
+    # be reported. If this ever goes clean, the NewType branch above has been allowed to
+    # weaken T3 and the exception hierarchy check is decorative.
+    expect('T3-newtype-is-not-a-class',
+           '```python\n'
+           'class Foo:\n'
+           '    def bar(self) -> None:\n'
+           '        """\n'
+           '        Raises:\n'
+           '            FooError: when it fails.\n'
+           '        """\n'
+           '        pass\n'
+           'FooError = NewType("FooError", str)\n'
+           '```\n', 'T3')
 
     # T3: an exception named but never defined.
     expect('T3-undefined-error',

@@ -19,16 +19,25 @@ Two tiers
 Tier A -- artifacts under our control, must be GREEN. Any non-zero exit fails the run.
 Tier B -- known, recorded debt that cannot be fixed today (B7: the core contract names
           types and exceptions it never defines, and 2 of its python blocks do not
-          parse). Measured 2026-09-23 against the real artifacts: total 39
-          (T1=2 unparsable blocks, T2=19 undefined types, T3=18 undefined exceptions)
-          once both supplementary contracts are supplied via --extra=. A tier-B gate
-          does NOT need a clean exit; its finding count must EQUAL the baseline in
-          tools/gates-baseline.json. The ratchet is deliberately symmetric:
+          parse). Measured 2026-09-25 against the real artifacts: total 2, both of them
+          T1 (the two unparsable blocks). T2/T3 went 19 + 18 -> 0 on 2026-09-25 when
+          附录 G supplied the missing definitions, and the baseline was lowered by hand
+          in the same batch. The two T1 findings are STRUCTURAL and will stay:
+          docs/智能量化交易平台-核心模块接口契约文档.md is .docx-derived and therefore
+          append-only, so the two malformed blocks cannot be repaired in place (a
+          re-conversion would wipe the repair). 附录 G5 carries liftable copies of both
+          and the `contract-appendix` gate fails if those copies disappear. So this
+          baseline tracks T1 only -- which still makes it a tripwire: any newly undefined
+          type/exception pushes total above 2 and shows up as DRIFT+.
+          A tier-B gate does NOT need a clean exit; its finding count must EQUAL the
+          baseline in tools/gates-baseline.json. The ratchet is deliberately symmetric:
             actual == baseline  -> PASS   (debt unchanged)
             actual >  baseline  -> FAIL   (drift: new debt appeared)
             actual <  baseline  -> FAIL   (debt shrank: the baseline must be lowered by
                                           hand, otherwise the improvement is silently
                                           absorbed and the number stops meaning anything)
+          The baseline detail is matched exactly, so a 0/0/0 entry is NOT usable: with
+          no findings the parsed composition is {}, which can never equal {T1: 0, ...}.
 
 Every gate is run twice: --selftest first (proves the detectors can still fire on a
 deliberately bad input), then for real. A gate whose selftest fails is reported as FAIL
@@ -240,6 +249,24 @@ GATES = [
         'what': '契约文档里被引用的附录标签（含条目号、点名归属）都真实存在',
         'runner': ['tools/verify_appendix_refs.py'],
         'selftest': ['tools/verify_appendix_refs.py', '--selftest'],
+    },
+    {
+        'name': 'contract-appendix',
+        'tier': 'A',
+        # B7 的还债方式决定了必须有这个门禁：主契约由 .docx 派生 ⇒ 只许追加，所以「补上
+        # 未定义的类型/异常」只能写成新的附录 G，而不能改原文。附录 G 一旦是**抄件**，
+        # 它就会和 quanauto/ 各自漂移：抄错一个默认值（`count: int = 0` 抄成 `= 1`）、
+        # 或实现改了字段而附录没跟着改，两种都不报错，而读者会当真。这里逐条对拍的是
+        # 基类 / 字段名与顺序 / 字段类型 / 字段默认值 / 枚举取值 / 异常的 code 四类形状，
+        # 并额外盯住三件事：登记了却找不到实体（AX-UNUSED-REGISTRY）、契约先行的名字
+        # （本迭代不实现的 5 个）一旦有实现就必须回来改判据（AX-PENDING-DRIFT）、以及
+        # G5 留下来的两个 T1 可复制副本不许被删掉（AX-T1-COPY —— 删了 T1 计数不会变，
+        # 但「能不能照抄」这件事会静默地退回去）。
+        # 边界：只证明「本节 = 实现」，不证明实现对；不比方法、不比 docstring、不比注释，
+        # 也不对契约先行那 5 个名字的字段表（推定）做任何背书。
+        'what': '附录 G 登记的类型/异常与 quanauto/ 的基类/字段/默认值/枚举取值/错误码逐条一致',
+        'runner': ['tools/verify_contract_appendix.py'],
+        'selftest': ['tools/verify_contract_appendix.py', '--selftest'],
     },
     {
         'name': 'core-contract-refs',
