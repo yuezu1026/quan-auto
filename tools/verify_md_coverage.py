@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Verify that every text-bearing paragraph/cell of a .docx survives in the .md."""
-import sys, os, re, glob, zipfile, html
+import sys, os, re, glob, shutil, tempfile, zipfile, html
 
 T_RE = re.compile(r'<w:t(?:\s[^>]*)?>(.*?)</w:t>', re.S)
 TOKEN_RE = re.compile(r'<w:t(?:\s[^>]*)?>(.*?)</w:t>|<w:br(?:\s[^>]*)?/>|<w:cr/>', re.S)
@@ -233,11 +233,20 @@ def struct_check(md, label):
 
 
 if sys.argv[1] == '--selftest':
+    # Every sample below goes into a PER-PROCESS directory. The old code used fixed
+    # names under %TEMP% (broken-selftest.md / superseded-selftest.md / md-addenda-ctrl),
+    # which means two concurrent runs of this file would overwrite each other's samples
+    # -- and a negative control that is testing the other process's bytes reports OK
+    # while proving nothing about this one. The harness runs this gate's selftest and
+    # its real pass back to back in one worker, so today that needs a second harness
+    # process to happen; it is fixed anyway because "the control can be clobbered" is
+    # not a property anyone can see in the output.
+    ctrl_root = tempfile.mkdtemp(prefix='md-coverage-selftest-')
     # negative control: a deliberately gutted md must be reported as FAIL
     d = sys.argv[2]
     docx = sorted(glob.glob(os.path.join(d, '*.docx')))[0]
     md = os.path.splitext(docx)[0] + '.md'
-    broken = os.path.join(os.environ.get('TEMP', '.'), 'broken-selftest.md')
+    broken = os.path.join(ctrl_root, 'broken-selftest.md')
     txt = open(md, encoding='utf-8').read()
     with open(broken, 'w', encoding='utf-8', newline='\n') as f:
         f.write(txt[:len(txt) // 2])       # keep only half the document
@@ -260,7 +269,7 @@ if sys.argv[1] == '--selftest':
         t = t.replace(new, '')
     gate(t != before, 'no declared replacement text found in the md -> the SUPERSEDED '
                       'table has drifted away from the file it claims to describe')
-    lost = os.path.join(os.environ.get('TEMP', '.'), 'superseded-selftest.md')
+    lost = os.path.join(ctrl_root, 'superseded-selftest.md')
     with open(lost, 'w', encoding='utf-8', newline='\n') as f:
         f.write(t)
     n3 = verify(prd_docx, lost, 'SUPERSEDED-CONTROL')
@@ -275,8 +284,9 @@ if sys.argv[1] == '--selftest':
     # that file is deleted at once: a sample that leaves one anchor behind says nothing
     # about the guard on that one (2026-09-25: I4 added the F anchors -- one PRD sample
     # must not be asked to stand in for them).
-    # The samples must keep the basename (ADDENDA is keyed by file name).
-    ctrl_dir = os.path.join(os.environ.get('TEMP', '.'), 'md-addenda-ctrl')
+    # The samples must keep the basename (ADDENDA is keyed by file name) -- so the
+    # per-process directory holds them, rather than the names being made unique.
+    ctrl_dir = os.path.join(ctrl_root, 'addenda')
     os.makedirs(ctrl_dir, exist_ok=True)
     n4 = {}
     n5 = {}
@@ -336,6 +346,7 @@ if sys.argv[1] == '--selftest':
           % (n, n3, len(n4),
              ', '.join('%s=%d/%d' % (k, n4[k], len(ADDENDA[k])) for k in sorted(n4)),
              ', '.join('%s=%d' % (k, n5[k]) for k in sorted(n5)), len(got)))
+    shutil.rmtree(ctrl_root, ignore_errors=True)
     sys.exit(0)
 
 d = sys.argv[1]
