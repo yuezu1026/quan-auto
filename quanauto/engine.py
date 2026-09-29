@@ -236,6 +236,10 @@ class BacktestEngine:
         # 拦截留痕的写入方（I3b 小步）。与 `_risk` 一样是**接线**不是运行态，所以
         # `_reset_risk_run_state()` 不清它 —— 清掉会让第二轮静默停止留痕。
         self._risk_intercept_log: Optional[Any] = None
+        # 决策日志的写入方（I3c 小步，`risk_decision_log`）。同样是**接线**不是运行态。
+        # 与留痕分开两个字段是刻意的：两张表的**收取范围不一样**（留痕只收被拦下的，
+        # 决策日志收全部四种裁决），合成一个开关就会在某一张上写错范围。
+        self._risk_decision_log: Optional[Any] = None
         self._daily_orders: Dict[str, int] = {}
         self._amount_totals: Dict[str, Tuple[float, int]] = {}
         self._reset_risk_run_state()
@@ -324,6 +328,33 @@ class BacktestEngine:
                 % (type(writer).__name__,)
             )
         self._risk_intercept_log = writer
+
+    def attach_decision_log(self, writer: Any) -> None:
+        """接上决策日志的写入方（I3c 小步，`risk_decision_log` 的**调用方**）。
+
+        与 `attach_intercept_log()` 是**同一条裁决、两个落点**（写入方只能是拿到
+        `RiskCheckResponse` 的调用方，理由见那个方法的 docstring：契约 D1 禁止
+        `check()` 内 IO）。与留痕表**唯一的规则差异**是收取范围：
+
+        * `attach_intercept_log` ⇒ 只写**真的被拦下**的（`_record_risk_block()` 里）；
+        * `attach_decision_log` ⇒ 写**每一次裁决**（`_note_decision()` 里，**含 PASS**）。
+
+        所以两者的接线点在代码里必须分开：本方法的调用点在 `_risk_gate()` 的
+        `check()` 之后、分支之前 —— 那里是全文**唯一**「一次裁决刚刚产生」的位置。
+
+        §3.6.1 / §3.6.2 的偏离（写入方 = 调用方、同步而非异步、一行一语句）与
+        I3b 逐项相同，写在 `RiskDecisionLogWriter` 的 docstring 与风控契约 **§八**里。
+
+        `writer` 只需要有 `record(request, response, *, created_at)` 这个方法
+        （`RiskDecisionLogWriter` 是它的实现，测试里可以塞一个记账的假对象）。
+        **写入失败会冒出来，不会被吞掉**：决策日志是「这一单为什么被放行」的唯一书证。
+        """
+        if writer is not None and not hasattr(writer, "record"):
+            raise ConfigValidationError(
+                "writer 必须提供 record(request, response, *, created_at) 方法，收到 %r"
+                % (type(writer).__name__,)
+            )
+        self._risk_decision_log = writer
 
     def risk_summary(self) -> Dict[str, Any]:
         """风控闸门的统计。没接风控时 `attached=False` —— 「接没接」必须一眼可见。
@@ -629,6 +660,9 @@ class BacktestEngine:
         # 「谁、哪个策略、哪只票、多少股」，这些字段只有请求里有。
         response = self._risk.check(request)
         self._risk_stats["checked"] += 1
+        # 决策日志在这里落，**先于**下面三条分支：PASS 也是决策，而下面两条分支
+        # 里各有一半会 `return` 掉 —— 写进分支里就必然漏掉一种裁决。
+        self._note_decision(bar, request, response)
         if response.action is RiskActionEnum.REDUCE:
             allowed = int(response.adjusted_quantity)
             if allowed <= 0:
@@ -677,6 +711,26 @@ class BacktestEngine:
         )
         if self._risk_intercept_log is not None:
             self._risk_intercept_log.record(request, response, created_at=bar.datetime)
+
+    def _note_decision(self, bar: BarData, request: RiskCheckRequest, response: Any) -> None:
+        """每一次裁决落一行决策日志（接了 `attach_decision_log()` 才落，**含 PASS**）。
+
+        与 `_record_risk_block()` 的分工：那个只处理「被拦下的」，这个是**全部四种裁决**
+        （PASS / REDUCE / REJECT / HALT 各一行）。所以它在 `_risk_gate()` 里紧跟在
+        `check()` 之后、分支**之前** —— 写进任何一条分支里都会漏掉另外几条。
+
+        `created_at` 用 `bar.datetime` 而**不是**墙钟，与留痕同一条理由（同一条命令跑两次
+        要得到同样的时间戳）。注意 `decision_id` 这一列**仍然是随机的**（`check()` 不设它，
+        取 dataclass 默认的 `uuid4()`）⇒ 两轮的行不能按主键对上，只能按业务键人工比对。
+        这是登记在案的边界，不是缺陷 —— 别拿它去核 `R5`（`R5` 比的是报告 `deterministic` 段，
+        本表与 `risk_summary()` 都不在其中）。
+
+        **不接就一行都不写**：`_risk_decision_log is None` 时直接返回，本步之前的行为
+        逐一不变（与 `attach_risk_engine()` / `attach_intercept_log()` 同一条口径）。
+        """
+        if self._risk_decision_log is None:
+            return
+        self._risk_decision_log.record(request, response, created_at=bar.datetime)
 
     def _is_open_order(self, order: Order) -> bool:
         """这张单是开仓还是平仓（`RiskCheckRequest.is_open`）。

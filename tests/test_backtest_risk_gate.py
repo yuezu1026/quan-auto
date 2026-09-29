@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+from collections import Counter
 from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal
@@ -54,6 +55,7 @@ from quanauto.errors import ConfigValidationError, RiskConfigInvalidError
 from quanauto.risk import (
     KillSwitch,
     MemoryRiskRuleStore,
+    RiskDecisionLogWriter,
     RiskEngine,
     RiskEngineConfig,
     RiskInterceptLogWriter,
@@ -118,14 +120,17 @@ def widened_rules(**overrides) -> list:
 
 
 def build(*, attach: bool = False, load: bool = True, rules=None, store=None,
-          kill_switch=None, strategy_factory=None, writer=None):
+          kill_switch=None, strategy_factory=None, writer=None, decision_writer=None):
     """照 `cli.run_backtest` 的顺序组装引擎（用的是契约里的公开方法）。
 
     `strategy_factory(symbol, capital, args)` 只为「需要自定义策略」的用例而留；
     默认就是 I1 的双均线。
 
-    `writer` 是拦截留痕的写入方（I3b），只在 `attach=True` 时接 —— 它挂在**调用方**
-    （引擎）而不是 `RiskEngine` 里（D1 禁 `check()` 内 IO），所以接线点有两个。
+    `writer` 是拦截留痕的写入方（I3b），`decision_writer` 是决策日志的写入方（I3c）——
+    两者都只在 `attach=True` 时接。它们挂在**调用方**（引擎）而不是 `RiskEngine` 里
+    （D1 禁 `check()` 内 IO），所以接线点各有自己的入口；**分开两个参数**是刻意的：
+    两张表的收取范围不一样（留痕只收被拦下的，决策日志收全部四种），共用一个参数
+    很容易让人以为它们是同一个开关。
     """
     args = cli_args()
     feed = CsvDataFeed(args.strategy_csv)
@@ -169,6 +174,8 @@ def build(*, attach: bool = False, load: bool = True, rules=None, store=None,
         engine.attach_risk_engine(risk)
         if writer is not None:
             engine.attach_intercept_log(writer)
+        if decision_writer is not None:
+            engine.attach_decision_log(decision_writer)
     return SimpleNamespace(
         engine=engine, broker=broker, feed=feed, symbol=symbol, config=config,
         strategy=strategy, risk=risk,
@@ -716,3 +723,138 @@ def test_rerun_keeps_logging_the_second_round() -> None:
         "`_reset_risk_run_state()` 把写入方也清掉了，或第二轮的拦截没落库"
         % (after_second - after_first, second)
     )
+
+
+# ── 6. 决策日志（I3c：闸门 → 调用方 → `risk_decision_log`）────────────────
+class _DecisionRecorder:
+    """记账用的假写入方：签名与 `RiskDecisionLogWriter.record()` **同形**。
+
+    故意不用真写入方 + 假连接：决策日志这条缝要看的是**收取范围**（哪些裁决被送进来），
+    而那是调用方的行为 —— 用假写入方能把「引擎把哪几次裁决送进了 `record()`」直接数出来。
+    SQL 那一半由 `tests/test_risk_store.py` 与 §5 的假连接各自盯着。
+    """
+
+    def __init__(self) -> None:
+        self.calls: list = []
+
+    def record(self, request, response, *, created_at=None):
+        self.calls.append(
+            SimpleNamespace(request=request, response=response, created_at=created_at)
+        )
+        return 1
+
+    def actions(self) -> Counter:
+        return Counter(call.response.action.value for call in self.calls)
+
+
+def test_every_check_writes_exactly_one_decision_row() -> None:
+    """**端到端控制组**：`check()` 跑了 N 次 ⇒ `record()` 被调 N 次，逐次裁决与统计对得上。
+
+    这条钉的是「一次裁决一行」这个形状本身。写成「`record()` 至少被调过」是**空转**的：
+    只覆盖一半裁决也满足它。这里用**两条等式**把它夹住（放行侧 + 拦截侧各自守恒），
+    再加上 `len(calls) == checked` —— 三条里任意一条漏掉一种裁决都会红。
+
+    本场景（默认阈值，给 I1 的 90% 建仓单）的真实分布是 `REDUCE 2 + PASS 1`，**一单都没拦**：
+    这正好把「只有被拦下的才写」那种实现逼出来 —— 那样写的话 `calls` 会是 0，
+    而 `checked` 是 3。
+    """
+    rec = _DecisionRecorder()
+    ctx = build(attach=True, rules=default_global_rules(), decision_writer=rec)
+    ctx.engine.run()
+    summary = ctx.engine.risk_summary()
+
+    # 空转守卫：三个计数器都不为 0 才有可比性；`passed > 0` 尤其重要（本场景全靠它）。
+    assert summary["checked"] == 3 and summary["passed"] == 3, (
+        "对照组前提不成立：本轮应当 3 次裁决全部放行，实得 checked=%d passed=%d"
+        % (summary["checked"], summary["passed"])
+    )
+    assert summary["blocked"] == 0 and summary["reduced"] == 2
+
+    actions = rec.actions()
+    assert len(rec.calls) == summary["checked"], (
+        "决策日志条数（%d）与裁决次数（%d）不等：有一次裁决没落，或有裁决落了两次"
+        % (len(rec.calls), summary["checked"])
+    )
+    assert actions["PASS"] + actions["REDUCE"] == summary["passed"], (
+        "放行侧的守恒被破坏：PASS(%d) + REDUCE(%d) != passed(%d) —— "
+        "最常见的成因是把 `record()` 写进了 `_record_risk_block()` 里，"
+        "于是只有被拦下的裁决才落库"
+        % (actions["PASS"], actions["REDUCE"], summary["passed"])
+    )
+    assert actions["REJECT"] + actions["HALT"] == summary["blocked"]
+    assert actions == Counter({"REDUCE": 2, "PASS": 1}), (
+        "本场景的裁决分布变了（实得 %s）—— 不是断言写错了，是注册表/缩量口径改了，"
+        "值得看一眼再改这里" % dict(actions)
+    )
+
+
+def test_the_decision_log_and_the_intercept_log_have_opposite_scopes() -> None:
+    """同一条裁决、两个落点：**留痕 0 行、决策日志 3 行** —— 这是两张表规则相反的地面证据。
+
+    用同一个场景（默认阈值，一单都没拦）同时接两个写入方：留痕那边必须**一条语句都没有**
+    （PASS/REDUCE 行会被 `ck_risk_intercept_action` 拒掉），决策日志那边必须**恰好 3 行**
+    （含 PASS）。把两张表的规则「顺手统一」成一样时，本条的某一个断言必然红 ——
+    只断言单边的话，统一到哪一边都能漏过去。
+    """
+    conn, rec = _LogConn(), _DecisionRecorder()
+    ctx = build(
+        attach=True,
+        rules=default_global_rules(),
+        writer=RiskInterceptLogWriter(lambda: conn),
+        decision_writer=rec,
+    )
+    ctx.engine.run()
+    summary = ctx.engine.risk_summary()
+
+    assert summary["checked"] == 3 and summary["blocked"] == 0, "对照组前提不成立"
+    assert conn.calls == [], "被放行的裁决被写进了留痕表（PASS 行会被表的 CHECK 拒掉）"
+    assert len(rec.calls) == 3 == summary["checked"], (
+        "决策日志漏了放行的裁决 —— 它必须收全部四种（表名是 decision_log，不是 block_log）"
+    )
+
+
+def test_decision_log_timestamps_are_the_signal_bar_and_survive_the_second_run() -> None:
+    """`created_at` = 信号那根 K 线的时间；且第二轮照写（`_reset_risk_run_state()` 不清写入方）。
+
+    判据是「与 `submit_time` 对得上」，**不是**「两轮时间戳集合相同」：策略对象带着滚动窗口
+    状态跨 run，第二轮的信号本来落在别的 K 线上（同 §5 的那条注释），所以两轮的集合
+    **应当**不同 —— 拿它当判据会得到一条永远红的假红（本测试的第一版就是这么写的）。
+    真正的判据是逐轮与**同轮**的订单时点对齐：用墙钟的话两边都对不上，第二次跑的值还会变。
+
+    两条断言各自都能红：① 换墙钟 ⇒ 与 `submit_time` 对不上；② 写入方被当成运行态清掉 ⇒
+    第二轮 `calls` 一条不增。
+    """
+    rec = _DecisionRecorder()
+    ctx = build(attach=True, rules=default_global_rules(), decision_writer=rec)
+    first = ctx.engine.run()
+    first_calls = list(rec.calls)
+    second = ctx.engine.run()
+
+    assert first_calls, "第一轮一条都没落 ⇒ 下面的断言全在空转"
+    assert {call.created_at for call in first_calls} == {o.submit_time for o in first.orders}, (
+        "决策日志的 created_at 与订单提交时点不是同一批 K 线时间 —— 用了墙钟"
+    )
+    assert all(call.created_at is not None for call in first_calls)
+
+    second_calls = rec.calls[len(first_calls):]
+    assert second_calls, (
+        "第二轮一条决策都没落：`_reset_risk_run_state()` 把写入方也清掉了 "
+        "（它只该清运行态：计数、熔断、峰值）"
+    )
+    assert {call.created_at for call in second_calls} == {o.submit_time for o in second.orders}, (
+        "第二轮的 created_at 与第二轮的订单时点对不上"
+    )
+
+
+def test_decision_log_attachment_validates_the_writer_shape() -> None:
+    """接一个没有 `record()` 的对象要当场炸，而不是等到第一笔裁决时才炸。
+
+    「等到跑起来再报」的代价是：报错发生在**某一笔订单**上，看起来像订单的问题；
+    而真正的错误是接线写错了（对象类型不对）。
+    """
+    engine = build().engine
+    with pytest.raises(ConfigValidationError):
+        engine.attach_decision_log(object())
+    # `None` 是合法的（= 不接），不许把它也当成形状错误。
+    engine.attach_decision_log(None)
+

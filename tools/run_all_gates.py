@@ -344,6 +344,31 @@ GATES = [
         'selftest': ['tools/verify_error_codes.py', '--selftest'],
     },
     {
+        'name': 'risk-table-wiring',
+        'tier': 'A',
+        # 上面那些门禁守的都是「已经有人在写的东西」：DDL 的约束、取数路径、契约
+        # 的签名、错误码表。而没有写入方的表是一个**观测空白** —— 它在别的任何判据
+        # 里都不报错：DDL/契约一致性门禁照样绿（表和约束都在）、SQL 冒烟照样绿
+        # （约束确实会拒绝）、测试照样绿（没有测试碰它），于是关于这张表的每一份
+        # 报告都是**空集上通过**。实测 2026-09-25：`risk_decision_log` 就是这样，
+        # 它随 DDL 交付、被约束门禁覆盖，而 `quanauto/*.py` 里**零写入者**。
+        # 本门禁守四件事：① 契约 §3.6.1 列出的每张表都有产品写入方（除非在契约里
+        # 登记了 `WIRING-EXEMPT:` 豁免，且代码侧真的没有 —— 双向查，免得豁免长成
+        # 永久免检的挡箭牌）；② 「被提及」不算写入方（用 `ast` 解析并**丢弃
+        # docstring**，所以注释/docstring 里的表名永远不能满足它 —— `quanauto/risk.py`
+        # 的 `risk_switch_state` 正好是一句 docstring）；③ 写入方归属契约点名的组件；
+        # ④ 那条让这一行值得写的**能力**还在（`risk_config_version` 必须递增、
+        # `risk_equity_peak` 必须 `GREATEST` —— 两处都是一 token 的改动，其余判据全绿）。
+        # 另有一条 D1 结构检查：`RiskEngine.check()` 里不许出现 SQL 字面量 / IO 调用 /
+        # 写入方引用（本仓库的接法是「谁拿到 response 谁写」，很容易被"顺手"写回原地）。
+        # 边界：**它不跑任何 SQL** ——「语句存在」不等于「行落库」（那是 `run_sql_smoke.py`
+        # 与 store 测试的活）；也不判断写入方**对不对**，只判断存在、归属、关键能力还在。
+        'what': '风控契约 §3.6.1 每张表都有产品写入方（或按 §八 登记豁免）、写入方归属契约点名'
+                '的组件、关键能力未被改掉，且 D1 的 check() 内零 IO 仍成立',
+        'runner': ['tools/verify_risk_table_wiring.py'],
+        'selftest': ['tools/verify_risk_table_wiring.py', '--selftest'],
+    },
+    {
         'name': 'core-contract-refs',
         'tier': 'B',
         # The two supplements contribute definitions only. DataFeed/MarketStatus/

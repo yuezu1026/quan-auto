@@ -54,6 +54,7 @@ from quanauto.risk import (
     RiskActionEnum,
     RiskCheckRequest,
     RiskCheckResponse,
+    RiskDecisionLogWriter,
     RiskInterceptLogWriter,
     RiskRuleStore,
     RiskRunStateEnum,
@@ -267,6 +268,22 @@ def _table_columns(name: str) -> list:
         body,
         re.M,
     )
+
+
+def _ddl_check_values(name: str) -> set:
+    """从 DDL 里取一条**命名** CHECK 的允许取值集合（如 `ck_risk_decision_action`）。
+
+    提不到就把 `match` 断言掉：这条提取器一旦失配，`== allowed` 两边会变成
+    「枚举 vs 空集」—— 那还是红的，但会报成一条看起来像「枚举多了一个成员」的假好消息，
+    看不到真正的原因是**提取器坏了**。空集也单独再挡一次（同一条理由）。
+    """
+    match = re.search(
+        r"CONSTRAINT\s+%s\s+CHECK\s*\(\s*\w+\s+IN\s*\(([^)]*)\)" % re.escape(name), DDL
+    )
+    assert match is not None, "db/risk_control.sql 里找不到约束 %s —— 改名了或提取器坏了" % name
+    values = set(re.findall(r"'([^']*)'", match.group(1)))
+    assert values, "约束 %s 提取到空取值集 —— 后续判据全部在空转" % name
+    return values
 
 
 def _writes(conn) -> list:
@@ -901,6 +918,186 @@ def test_writer_wraps_a_driver_error_and_passes_our_errors_through() -> None:
     assert info.value is own
 
 
+# ── 决策日志写入方：展开（I3c 小步，`risk_decision_log`）──────────────────
+DECISION_EVERY_ACTION = sorted(action.value for action in RiskActionEnum)
+
+
+def test_decision_writer_is_one_statement_one_row_and_takes_no_row_count() -> None:
+    """一次裁决 = **一行** = 一条语句，且 `insert_sql()` **不接受行数**。
+
+    留痕那边一次拦截 N 行（一条 violation 一行）所以需要 `row_count`；这张表的主键就是
+    `decision_id`，一次裁决一行。**不给这个参数是刻意的**：多行只可能来自「先攒起来再写」
+    = 后台队列，而本步没做队列 —— 让这件事在签名上就成立，而不是靠 docstring 里的一句承诺。
+    """
+    sql = RiskDecisionLogWriter.insert_sql()
+    assert sql.count("%s") == len(RiskDecisionLogWriter.ROW_COLUMNS)
+    assert sql.upper().count("INSERT INTO RISK_DECISION_LOG") == 1
+    with pytest.raises(TypeError):
+        RiskDecisionLogWriter.insert_sql(1)
+
+
+@pytest.mark.parametrize("action", DECISION_EVERY_ACTION)
+def test_decision_writer_writes_exactly_one_row_for_every_action(action) -> None:
+    """四种裁决**各写一行**，PASS 也写 —— 这是它与留痕表最要紧的差异。
+
+    留痕表的 `ck_risk_intercept_action` 里没有 PASS（`rows_for()` 见到 PASS 就抛），
+    决策表的 `ck_risk_decision_action` 里有。**两张表的规则相反是刻意的**：
+    「这一单为什么放行了」与「为什么被拦了」同样是事后审计要回答的问题；只记后者等于把
+    「放行」变成无法回溯的状态（表名叫 `decision_log`，不是 `block_log`）。
+    最可能被「顺手统一」的一次改动就是把本条与留痕对齐 ⇒ 变异器里有一条专盯它。
+    """
+    writer = RiskDecisionLogWriter(FakeConn)
+    rows = writer.rows_for(_request(), _response(action=RiskActionEnum(action)))
+    assert len(rows) == 1, "一次裁决必须恰好一行（%s 得到 %d 行）" % (action, len(rows))
+    assert len(rows[0]) == len(RiskDecisionLogWriter.ROW_COLUMNS)
+    assert dict(zip(RiskDecisionLogWriter.ROW_COLUMNS, rows[0]))["action"] == action
+
+
+def test_decision_writer_expansion_never_touches_the_connection() -> None:
+    """展开是**纯函数**：要能不连库地被检查。判据是「工厂一被调用就炸」。
+
+    展开对不对是这一层最容易错的地方（漏字段、值取错、把枚举对象当值绑进去），
+    能被离线检查才有意义。这条同时钉住了「`rows_for` 不许偷偷自己开连接」。
+    """
+
+    def boom():
+        raise AssertionError("rows_for() 不该连库")
+
+    writer = RiskDecisionLogWriter(boom)
+    assert len(writer.rows_for(_request(), _response())) == 1
+
+
+def test_decision_writer_binds_the_identity_and_the_quantity_columns() -> None:
+    request = _request(
+        account_id="acc-1", strategy_id="ma-cross", symbol="600000.SH",
+        side=Direction.BUY, is_open=True, quantity=9000,
+    )
+    row = RiskDecisionLogWriter(FakeConn).rows_for(
+        request, _response(adjusted_quantity=3000, rule_version=RULE_VERSION)
+    )[0]
+    by_name = dict(zip(RiskDecisionLogWriter.ROW_COLUMNS, row))
+    assert by_name["decision_id"] == "dec-20260105-1"
+    # `request_id` 取的是**这次请求**的（`_request()` 每次调用会生成新的 uuid，
+    # 所以不能拿第二次 `_request()` 去比 —— 那会得到一条永远红的假红）。
+    assert by_name["request_id"] == request.request_id and by_name["request_id"]
+    assert (by_name["account_id"], by_name["strategy_id"], by_name["symbol"]) == (
+        "acc-1", "ma-cross", "600000.SH"
+    )
+    assert by_name["side"] == "BUY" and by_name["is_open"] is True
+    assert by_name["quantity"] == 9000 and by_name["adjusted_quantity"] == 3000
+    assert by_name["rule_version"] == RULE_VERSION
+
+
+def test_decision_writer_copies_the_adjusted_quantity_verbatim_even_on_a_reject() -> None:
+    """`adjusted_quantity` 照抄响应，**不在被拒时改写成 0** —— 这是契约 §3.2.5 的口径。
+
+    §3.2.5 原文：「`action == REDUCE` 时风控允许的最大数量；**其余情况等于请求数量**」。
+    ⇒ 被拒的单在这一列上是**全量**，它表示「允许成交的上限」，不是「放行了多少股」；
+    读的人必须结合 `action` 看。本条钉的是「写入方不发明语义」：有人会觉得 REJECT 行写 9000
+    看着像「放行了」，顺手改成 0 —— 那正是把这一列变成两种含义。
+    （契约 §6.2 的括注「PASS 分支不回填请求数量」与 §3.2.5 相反，实现跟的是 §3.2.5；
+    分歧登记在风控契约 **§八**，不在本文件里就地改。）
+    """
+    row = RiskDecisionLogWriter(FakeConn).rows_for(
+        _request(quantity=9000),
+        _response(action=RiskActionEnum.REJECT, adjusted_quantity=9000),
+    )[0]
+    by_name = dict(zip(RiskDecisionLogWriter.ROW_COLUMNS, row))
+    assert (by_name["quantity"], by_name["adjusted_quantity"]) == (9000, 9000)
+
+
+def test_decision_writer_rejects_an_action_the_table_cannot_hold() -> None:
+    """表里装不下的取值必须在**写入前**炸，而不是等库以 CHECK 拒掉。
+
+    `db/risk_control.smoke.sql` 的 B13 用的就是 `action='SKIP'` 触发
+    `ck_risk_decision_action` —— 那说明它是一个**真实存在**的越界形态，不是假想。
+    等库拒的后果：整笔写入失败，而报错是 `RISK_004`（「配置非法，旧值继续生效」）——
+    措辞与「决策日志写不进去」毫无关系，查的人会被带偏。
+    """
+    with pytest.raises(ValueError):
+        RiskDecisionLogWriter(FakeConn).rows_for(_request(), _response(action="SKIP"))
+
+
+def test_decision_writer_rejects_a_run_state_the_table_cannot_hold() -> None:
+    """`run_state` 同理（smoke 的 B14 用 `'HALF_OPEN'` 触发 `ck_risk_decision_run_state`）。
+
+    `HALF_OPEN` 是 `BreakerStateEnum` 的成员，不是 `RiskRunStateEnum` 的 —— 这两个
+    枚举就在同一个模块里，「拿错一个」是很自然的笔误，所以两边都要有一条。
+    """
+    with pytest.raises(ValueError):
+        RiskDecisionLogWriter(FakeConn).rows_for(_request(), _response(run_state="HALF_OPEN"))
+
+
+def test_decision_writer_binds_ints_and_bools_not_floats() -> None:
+    """`quantity` / `adjusted_quantity` / `rule_version` 是 `bigint`，不许绑 float。
+
+    与留痕那边绑 `Decimal`（`numeric(18,8)`）是同一类要求：这一层要把「落到列上的类型」
+    定死，否则驱动会自己猜一个类型，而两种猜法在真库上的行为不一样。
+    `bool` 单独挡一下：`isinstance(True, int)` 为真，少了这一句 `is_open` 就没人验。
+    """
+    row = RiskDecisionLogWriter(FakeConn).rows_for(
+        _request(quantity=9000, is_open=False),
+        _response(adjusted_quantity=0, rule_version=7),
+    )[0]
+    by_name = dict(zip(RiskDecisionLogWriter.ROW_COLUMNS, row))
+    for name in ("quantity", "adjusted_quantity", "rule_version"):
+        assert isinstance(by_name[name], int) and not isinstance(by_name[name], bool), name
+    assert by_name["is_open"] is False and isinstance(by_name["is_open"], bool)
+    assert by_name["side"] == "BUY", "`side` 要落成字符串（枚举的 .value），不是枚举对象本身"
+
+
+def test_decision_writer_uses_the_caller_timestamp_not_the_wall_clock() -> None:
+    """`created_at` 必须是调用方给的那根 K 线时间。
+
+    用墙钟的后果：同一条命令跑两次得到两份不同的决策行，回测库里两轮对不上，
+    「这轮为什么没成交」就查不出来了 —— 那正是 `R5` 逐字节可复现要防的事。
+    （注意 `decision_id` **本身**仍是随机的，这一列不在本条的范围内。）
+    """
+    conn = FakeConn()
+    writer = RiskDecisionLogWriter(lambda: conn)
+    stamp = datetime(2026, 1, 5, 9, 30)
+    assert writer.record(_request(), _response(), created_at=stamp) == 1
+
+    sql, params = conn.calls[0]
+    assert sql == RiskDecisionLogWriter.insert_sql()
+    assert len(params) == len(RiskDecisionLogWriter.ROW_COLUMNS)
+    assert params[12] == stamp
+
+
+def test_decision_writer_wraps_a_driver_error_and_passes_our_errors_through() -> None:
+    with pytest.raises(RiskConfigWriteError):
+        RiskDecisionLogWriter(lambda: FakeConn(error=_IO_FAILURE)).record(
+            _request(), _response()
+        )
+
+    own = RiskConfigInvalidError("[RISK_004] 自家人抛的")
+    with pytest.raises(RiskConfigInvalidError) as info:
+        RiskDecisionLogWriter(lambda: FakeConn(error=own)).record(_request(), _response())
+    assert info.value is own
+
+
+def test_the_two_log_tables_disagree_about_pass_on_purpose() -> None:
+    """两张表对 PASS 的规则**相反**：留痕拒收，决策日志照收。
+
+    这是本步最容易被「顺手统一」的一处：两个写入方长得几乎一样、docstring 也互相引用，
+    下一个人很自然会想「既然都有写入方了，何不合成一个」。合成会同时弄坏两个半边 ——
+    合并到留痕那一侧 ⇒ 被拒的裁决记不下来；合并到决策那一侧 ⇒ 真库以
+    `ck_risk_intercept_action` 拒掉整笔留痕，而报错发生在**下一笔**真拦截上（时间上错位）。
+    所以这里对**两侧同时**下断言，而不是只断言单边行为。
+    """
+    assert "PASS" in _ddl_check_values("ck_risk_decision_action")
+    assert "PASS" not in _ddl_check_values("ck_risk_intercept_action")
+
+    with pytest.raises(RiskInterceptError):
+        RiskInterceptLogWriter(FakeConn).rows_for(
+            _request(), _response(action=RiskActionEnum.PASS)
+        )
+    passed_rows = RiskDecisionLogWriter(FakeConn).rows_for(
+        _request(), _response(action=RiskActionEnum.PASS)
+    )
+    assert len(passed_rows) == 1
+
+
 # ── 与 DDL 对表（列清单、列宽）───────────────────────────────────────────
 def test_writer_column_list_matches_the_ddl_table_body() -> None:
     """写入方的列清单必须**等于** DDL 的列（除了 IDENTITY 主键）。
@@ -929,3 +1126,43 @@ def test_store_rule_columns_match_the_ddl_table_body() -> None:
     missing = {name for name in selected if name not in columns}
     assert missing == set(), "SELECT 里出现了 DDL 没有的列：%s" % sorted(missing)
     assert {"rule_id", "threshold", "unit", "enabled"} <= selected
+
+
+# ── 与 DDL 对表：决策日志（I3c）─────────────────────────────────────────
+def test_decision_writer_column_list_matches_the_ddl_table_body() -> None:
+    """列清单必须**等于** DDL 的列。
+
+    与留痕那张表的关键差异：那边的 `intercept_id` 是库生成的（判据只能写成「只许差它一个」），
+    这张表的主键 `decision_id` 是**业务给的**（契约 §3.2.5 要求它与 `request_id` 一一对应），
+    所以判据是**严格相等** —— 两边都不许有差。
+    """
+    columns = set(_table_columns("risk_decision_log"))
+    assert columns, "从 DDL 里一个列名都没提取到 —— 提取器坏了，这条判据就在空转"
+    declared = set(RiskDecisionLogWriter.ROW_COLUMNS)
+    assert columns - declared == set(), "DDL 有写入方不写的列：%s" % sorted(columns - declared)
+    assert declared - columns == set(), "写入方绑了 DDL 里没有的列：%s" % sorted(declared - columns)
+
+
+def test_decision_writer_action_enum_matches_the_ddl_decision_check() -> None:
+    """枚举的取值域必须**等于** DDL 的 CHECK 取值域（跨层判据，不是「名字出现过」）。
+
+    两边各自漂移都能过单元测试：枚举多一个成员 ⇒ 库拒掉整笔；DDL 多一个取值 ⇒ 写入方
+    永远产不出它（那一行永远为空）。只有把两个**集合**对起来才看得见。
+    """
+    allowed = _ddl_check_values("ck_risk_decision_action")
+    assert {action.value for action in RiskActionEnum} == allowed
+
+
+def test_decision_writer_run_state_enum_matches_the_ddl_decision_check() -> None:
+    allowed = _ddl_check_values("ck_risk_decision_run_state")
+    assert {state.value for state in RiskRunStateEnum} == allowed
+
+
+def test_decision_writer_did_not_copy_the_intercept_only_attributes() -> None:
+    """`MESSAGE_MAX` 是留痕表的列宽（`message varchar(512)`），决策表**没有**那一列。
+
+    拷类的时候最容易连属性一起拷过来 —— 一个永远不会被读的常量留在那里，
+    下一个人会以为这张表也有 `message` 列，于是去 `rows_for()` 里找它为什么没填。
+    """
+    assert not hasattr(RiskDecisionLogWriter, "MESSAGE_MAX")
+    assert "message" not in _table_columns("risk_decision_log")

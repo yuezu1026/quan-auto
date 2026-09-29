@@ -1190,6 +1190,123 @@ class RiskInterceptLogWriter:
         return len(rows)
 
 
+class RiskDecisionLogWriter:
+    """把**每一次裁决**写成 `risk_decision_log` 的一行（只追加，**含 PASS**）。
+
+    **与 `RiskInterceptLogWriter` 的规则正好相反，这是本类最要紧的一处差异**：
+    留痕表只收「真的被拦下」的（`check()` 的 PASS 拒收，且 DDL 的
+    `ck_risk_intercept_action` 取值域里根本没有 PASS），而决策日志表收**全部四种**裁决。
+    「这一单为什么放行了」与「为什么被拦了」同样是事后审计要回答的问题 ——
+    只记后者，等于把「放行」这个结论变成无法回溯的状态（表名叫 decision_log，
+    不是 block_log）。
+
+    写入方为什么是它、不是 `RiskEngine`：见 `RiskInterceptLogWriter` 的 docstring
+    （契约 **D1** 明令 `check()` 内禁止 IO），两者是同一条裁决的两个落点。
+
+    **与契约 §3.6.2 的偏离，逐项与 §七 同形**（那里写的是留痕表，这里写决策表）：
+      * §3.6.1 把本表记在「风控引擎（异步批量）」名下 ⇒ 本实现的**写入方是调用方**
+        （`BacktestEngine._note_decision()`，接线入口 `attach_decision_log()`），
+        理由与留痕表完全相同：写入点必须唯一、且必然落在 `check()` 返回之后；
+      * §3.6.2 要求「异步批量」⇒ 本实现是**同步**的（一次裁决 = 一行 = 一条语句）。
+        「异步」的目的是不阻塞 `check()`，这里已达成；而队列会在「进程崩了但缓冲区里
+        还有行」时丢证据 —— 正是决策日志最该起作用的时候。⇒ 与 §七 一致：保不丢，
+        不保异步。若将来实盘线要求把 IO 彻底移出订单路径，应改为**先落本地 WAL 再异步
+        搬库**，而不是直接上内存队列。
+      * **一条语句一行**（`insert_sql()` **没有** `row_count` 参数）：表的主键就是
+        `decision_id`，一次裁决一行，多行只可能来自「先攒起来再写」= 后台队列。
+        不给这个参数，是为了让「本步没做队列」在类型签名上就成立。
+
+    ⚠️ **`decision_id` 是随机的**：`RiskCheckResponse` 的默认值 = `uuid4()`，而
+    `RiskEngine.check()` 不设它（契约只要它「与 `request_id` 一一对应」，没要求可复现）。
+    ⇒ 同一条命令跑两轮，`decision_id` 不同 ⇒ **两轮的决策行不能按主键对上**，
+    只能按业务键（`created_at` + `symbol` + `action`）人工比对。这是回测线刻意的边界：
+    回测里「每一次 check 都是一次决策」，不追求跨轮幂等。**别拿它去核 R5**
+    （`R5` 比的是报告的 `deterministic` 段，其中没有本表、也没有 `risk_summary()`）。
+
+    ⚠️ **`adjusted_quantity` 照抄 `response.adjusted_quantity`，而它在 REJECT / HALT 行里
+    等于请求数量**：契约 §3.2.5 原文是「`action == REDUCE` 时风控允许的最大数量；
+    **其余情况等于请求数量**」。⇒ 这一列**不是「放行量」**，读的人必须结合 `action` 看；
+    被拒的单在这一列上是全量。契约 §6.2.2 的括注（「PASS 分支不回填请求数量」）与
+    §3.2.5 相反 —— 实现跟的是 §3.2.5（见 `RiskEngine.check()` 的
+    `adjusted = request.quantity`）。本步不就地改 §六，分歧登记在本文档 **§八**。
+    """
+
+    TABLE = "risk_decision_log"
+
+    ROW_COLUMNS: Tuple[str, ...] = (
+        "decision_id", "request_id", "account_id", "strategy_id", "symbol", "side",
+        "is_open", "quantity", "adjusted_quantity", "action", "run_state",
+        "rule_version", "created_at",
+    )
+
+    def __init__(self, connection_factory: Callable[[], Any]) -> None:
+        self._connect = connection_factory
+
+    @classmethod
+    def insert_sql(cls) -> str:
+        """一条语句写一行。**故意没有 `row_count`**，理由见类 docstring 的第三条。"""
+        return "INSERT INTO %s (%s) VALUES (%s)" % (
+            cls.TABLE,
+            ", ".join(cls.ROW_COLUMNS),
+            ", ".join(["%s"] * len(cls.ROW_COLUMNS)),
+        )
+
+    def rows_for(self, request: RiskCheckRequest, response: RiskCheckResponse,
+                 *, created_at: Optional[datetime] = None) -> List[Tuple[Any, ...]]:
+        """把一次裁决展开成待写入的行 —— **纯函数**，不碰数据库，**恒为 1 行**。
+
+        展开对不对是这一层最容易错的地方（漏字段、值取错、把枚举对象当值绑进去），
+        所以它必须能**不连库**地被检查：`record()` 只是「展开 + 一条语句」。
+
+        `action` / `run_state` 走枚举构造器而不是直接绑：`RiskActionEnum(response.action)`
+        同时起**归一化**与**校验**两个作用（收到一个表里根本没登记的取值会当场炸，
+        而不是等库以 CHECK 拒绝后由一个措辞不贴切的 RISK_004 报出来）。
+        枚举的成员值与 DDL 的 CHECK 取值域是否一致，由
+        `tests/test_risk_store.py` 的跨层用例对表 —— 那条判据才是真闸门。
+        """
+        action = RiskActionEnum(response.action)
+        run_state = RiskRunStateEnum(response.run_state)
+        stamp = created_at if created_at is not None else _now()
+        return [(
+            str(response.decision_id),
+            str(request.request_id),
+            str(request.account_id),
+            str(request.strategy_id),
+            str(request.symbol),
+            str(getattr(request.side, "value", request.side)),
+            bool(request.is_open),
+            int(request.quantity),
+            int(response.adjusted_quantity),
+            action.value,
+            run_state.value,
+            int(response.rule_version),
+            stamp,
+        )]
+
+    def record(self, request: RiskCheckRequest, response: RiskCheckResponse,
+               *, created_at: Optional[datetime] = None) -> int:
+        """写入一次裁决，返回写入行数（恒为 1）。
+
+        `created_at` **必须由调用方给信号那根 K 线的时间**（回测里就是 `bar.datetime`）：
+        用 `_now()` 墙钟会让同一条命令跑两次得到不同的行，而 `decision_id` 本来就已经
+        是随机的 —— 两个来源一起漂移，「这一轮到底判了什么」就彻底查不出来了。
+
+        **写入失败会冒出来，不会被吞掉**（与留痕写入方同一条）：决策日志是
+        「这一单为什么被放行」的唯一书证，少一行就等于把一次裁决藏起来。错误族沿用
+        `RiskConfigWriteError`（RISK_005「写不进去」）—— 与 `RiskInterceptLogWriter`
+        一致；「23514 一律翻成 RISK_004」这条不贴切的措辞是本模块已登记的缺口
+        （见 `_wrapped_sql_error()` 的 docstring），本步不新开一处。
+        """
+        rows = self.rows_for(request, response, created_at=created_at)
+        conn = _open_connection(self._connect, RiskConfigWriteError, "风控决策日志写入")
+        params: List[Any] = []
+        for row in rows:
+            params.extend(row)
+        _run_sql(conn, self.insert_sql(), tuple(params),
+                 "写入 risk_decision_log", RiskConfigWriteError)
+        return len(rows)
+
+
 # ── 风控引擎（契约 §3.2.1）────────────────────────────────────────────────
 class RiskEngine:
     """风控引擎。
@@ -2281,6 +2398,7 @@ __all__ = [
     "RiskChangeResult",
     "RiskCheckRequest",
     "RiskCheckResponse",
+    "RiskDecisionLogWriter",
     "RiskEngine",
     "RiskEngineConfig",
     "RiskEngineHealth",
