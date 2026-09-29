@@ -44,8 +44,9 @@ bug），没有越界时返回**最后一次访问**的报告；全部越界点�
 
 * **复权因子恒为 1.0**：本切片没有接 `dc_adjust_factor`，`get_adjustment_factor` 返回 1.0，
   即**等价于不复权**。所以 `as_of(..., adjust_type=AdjustType.HFQ)` 与 `NONE` 结果相同 ——
-  D6 要求的"读取时按 `as_of_date` 现算后复权"还没实现。
-* `live()` / `trading_calendar()` 未实现（`NotImplementedError`）。
+  D6 要求的"读取时按 `as_of_date` 现算后复权"还没实现。  **订正（2026-09-29）**：I2c 已给复权因子接上**采集路径**（`TushareAdapter.fetch_adjust_factor`，
+  DC 契约附录 B21），但那是 `quanauto/datasources.py` 里的东西，与本文件无关 ——
+  **写入侧（`dc_adjust_factor`）与读侧（这个方法）都还没接**，所以这里的 `1.0` 一天没变，缺口也一天没关。* `live()` / `trading_calendar()` 未实现（`NotImplementedError`）。
 * 财务 / 指数成分股 / 数据质量 / 采集幂等不在本切片。
 """
 
@@ -404,7 +405,11 @@ class DbDataFeed(DataFeed):
         return bar is not None and bar.volume > 0
 
     def get_adjustment_factor(self, symbol: str, datetime: datetime) -> float:
-        """已知缺口：本切片没有复权数据，恒返回 1.0（= 不复权）。见模块 docstring。
+        """已知缺口：本实例没有复权数据，恒返回 1.0（= 不复权）。见模块 docstring。
+
+        订正（2026-09-29）：I2c 已给复权因子接上**采集路径**（`TushareAdapter.fetch_adjust_factor`，
+        DC 契约附录 B21），但**读侧（本方法）与写入侧都没接** ⇒ 这里仍是 1.0。
+        别把这个常量读成「还没人做这件事」：采集侧已做，缺的是从 `dc_adjust_factor` 读回来。
 
         仍然要过 `_require_visible`：即使返回值是个常数，**问**"1 月 6 日的复权因子是多少"
         这件事本身就是一次对未来数据的访问 —— 今天返回 1.0，明天实现之后返回真因子，

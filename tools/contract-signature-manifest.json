@@ -667,13 +667,14 @@
       "extras": [],
       "impl_fields": null,
       "impl_params": {
+        "fetch_adjust_factor": ["self", "symbols", "start", "end"],
         "fetch_daily_bar": ["self", "symbols", "start", "end"],
         "fetch_financial": ["self", "symbols", "period_end"],
         "fetch_index_members": ["self", "index_code", "as_of_date"],
         "source_name": ["self"],
         "validate": ["self", "frame"]
       },
-      "reason": "契约里没有这一层的类块（契约把「取数」写成 DataCenter 的语义，不写源适配器接口），所以按实现侧登记。它比三个子类更该被登记：这 5 个抽象方法是「新增一种数据源必须实现什么」的全部答案，改一个名字（例如 fetch_financial → fetch_fundamental）会让下游按旧名调用时才炸，而不是在门禁里被提前看见。本类的静态形状由 verify_data_center_adapter.py 的 A0~A10 守着 —— 那个门禁不执行适配器，所以它证明不了「映射出来的数据是对的」，只证明「形状与列名集合对得上」。",
+      "reason": "契约里没有这一层的类块（契约把「取数」写成 DataCenter 的语义，不写源适配器接口），所以按实现侧登记。它比那几张具体适配器条目更该被登记：这 6 个抽象方法是「新增一种数据源必须实现什么」的全部答案，改一个名字（例如 fetch_financial → fetch_fundamental）会让下游按旧名调用时才炸，而不是在门禁里被提前看见。`fetch_adjust_factor` 是 2026-09-29 随契约 §3.2 第 6 个抽象方法一起进来的（附录 B21，复权因子通道）—— 注意它是**手写**登记：verify_contract_signature.py 的清单只查「记了的是否还在」，**不会**因为代码里多了一个抽象方法就报缺，所以漏登会彻底隐身。本类的静态形状由 verify_data_center_adapter.py 的 A0~A11 守着 —— 那个门禁不执行适配器，所以它证明不了「映射出来的数据是对的」，只证明「形状与列名集合对得上」。",
       "source": "quanauto/datasources.py"
     },
     "TencentAdapter": {
@@ -687,6 +688,19 @@
       },
       "reason": "同前面几个源适配器，但它有一条单独的登记理由：**它不在契约 §3.2 那张表里**（表上写的是三个子类），是 2026-09-24 按实测补的日线通道（附录 B16：东财 kline 端点在本机两个 opener 下都拒连，而新浪日线没有成交额列，`dc_daily_bar.amount` 又是 NOT NULL）。登记它就是为了让「表外多出来的这个源」在清单里看得见：它的 fetch_daily_bar 形状与前三个一致，所以「换源/加源不该改下游签名」这条约束对它同样成立（形状一致才使得它是个可替换的 FALLBACK）；而它的取数与分页语义与前三个都不同（源忽略区间左边界，只能从 end 用 count 往回翻页再本地裁剪），签名一变必须有人重看，所以不能并进别人的条目。",
       "source": "quanauto/datasources.py"
+    },
+    "TushareAdapter": {
+      "extras": [],
+      "impl_fields": null,
+      "impl_params": {
+        "_default_fetch": ["**kwargs"],
+        "fetch_adjust_factor": ["self", "symbols", "start", "end"],
+        "fetch_daily_bar": ["self", "symbols", "start", "end"],
+        "fetch_financial": ["self", "symbols", "period_end"],
+        "fetch_index_members": ["self", "index_code", "as_of_date"]
+      },
+      "source": "quanauto/datasources.py",
+      "reason": "本仓库**第一个要凭证的源**，也是第二个不在契约 §3.2 那张表上的源（表上是三个子类），2026-09-29 按契约附录 B21 补的复权因子通道。它登记的成员有五个：`_default_fetch(**kwargs)` —— 与其它源同为**静态**取数入口，是注入假取数函数的唯一接口，把 `**kwargs` 改成位置参数就静默打断注入；`fetch_adjust_factor(symbols, start, end)` —— 形状必须与抽象基类逐字一致，否则「换个源不掉链」这条就不成立；以及 `fetch_daily_bar` / `fetch_financial` / `fetch_index_members` —— 这三条由**本类自己**写（各三行，显式 raise `SourceAdapterError(kind='UNSUPPORTED')`，不是返回空帧），形状（`symbols` 复数、`period_end` / `as_of_date` 命名）与 `TencentAdapter` 的对应三条逐字一致。**订正（2026-09-29 实测）**：本条原先写的是「刻意**不**登记这三条：它没有覆盖它们，沿用 `_AdapterBase` 那套显式抛 UNSUPPORTED 的默认实现」—— 这句话**是错的**，而它错得刚好让人不去看代码：`_AdapterBase` **故意**只给了 `fetch_adjust_factor` 一个具体默认，另外三个留在 `SourceAdapter` 里当抽象方法，所以一个只覆盖单个数据面的源**必须自己把这三条写出来**，不写就实例化不了。实测 `TushareAdapter()` 当场 `TypeError: Can't instantiate abstract class TushareAdapter without an implementation for abstract methods 'fetch_daily_bar', 'fetch_financial', 'fetch_index_members'`；而本类此前从未被导入、从未被实例化（只被 `ast` 解析过），于是**门禁全绿、用例全绿**，而「采集通道已接」在运行时并不成立。它们没进清单本身也暴露了更大的洞：`verify_contract_signature.py` 只查**单向**（记了的是否还在），**漏登会彻底隐身**。所以此处按实测把三条一起登记。守这件事的用例是 `tests/test_data_center_adapter.py::test_every_concrete_adapter_can_be_constructed`：它先断言五个具体适配器的 `__abstractmethods__ == frozenset()`，再断言 `SourceAdapter.__abstractmethods__` 正好是契约 §3.2 那 6 个名字 —— 两者一起才既看得见「少写一条」，也看得见「基类偷偷多加/改名一条」。"
     },
     "Strategy": {
       "extras": [],
@@ -715,10 +729,11 @@
         "__init__": ["self", "fetch"],
         "_call": ["self", "**kwargs"],
         "_default_fetch": ["self", "**kwargs"],
+        "fetch_adjust_factor": ["self", "symbols", "start", "end"],
         "source_name": ["self"],
         "validate": ["self", "frame"]
       },
-      "reason": "私有类（名字以下划线开头），它的成员会被 is_public() 过滤掉、不参与公开成员的比对 —— 登记它不是为了公开接口，而是为了它承载的两件事：_call 把源侧的任何异常统一翻译成 SourceAdapterError（漏掉一处，那一处就开始向上抛 ModuleNotFoundError/KeyError/ValueError，而那些类型在上层读起来像「调用方写错了」），以及 validate 的委托（各子类共用同一套判据）。这类共享骨架改名/删除会让多个子类同时静默失效，所以要单独看着。基类里的 _default_fetch 是抛错占位，真正的实现由子类覆盖。",
+      "reason": "私有类（名字以下划线开头），它的成员会被 is_public() 过滤掉、不参与公开成员的比对 —— 登记它不是为了公开接口，而是为了它承载的两件事：_call 把源侧的任何异常统一翻译成 SourceAdapterError（漏掉一处，那一处就开始向上抛 ModuleNotFoundError/KeyError/ValueError，而那些类型在上层读起来像「调用方写错了」），以及 validate 的委托（各子类共用同一套判据）。这类共享骨架改名/删除会让多个子类同时静默失效，所以要单独看着。基类里的 _default_fetch 是抛错占位，真正的实现由子类覆盖；_AdapterBase.fetch_adjust_factor 相反：它是**具体**默认实现（不是抽象），而且是**显式 raise SourceAdapterError(kind='UNSUPPORTED')** 而不是返回空帧 —— 「不支持」与「这段区间没有因子」在报告里长得一样，而后者会被下游读成「不复权」。所以它的签名（尤其 `symbols` 这个复数与 start/end 的顺序）必须一并钉住。",
       "source": "quanauto/datasources.py"
     }
   },

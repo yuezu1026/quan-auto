@@ -38,6 +38,8 @@
     python tools/dev.py gate NAME [NAME…]  # 单跑若干门禁（走 --gate=NAME）
     python tools/dev.py test [pytest …]    # 只跑 pytest，参数透传
     python tools/dev.py status             # 只读：git 状态 + 棘轮基线 + 上次报告首行
+    python tools/dev.py outline FILE       # 只读：文件的标题目录 + 每节行范围与 ≈token
+    python tools/dev.py find REGEX         # 只读：只回命中行，不回整份文件
     python tools/dev.py --selftest         # 证明本 runner 真的能报 FAIL
 
 必须用 `.venv\\Scripts\\python.exe` 运行（裸 `python` 是 anaconda base，没装 pytest）。
@@ -46,11 +48,13 @@
 2 = 本脚本自身用法/自测错。
 """
 
+import fnmatch
 import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REPORT_PATH = os.path.join(ROOT, 'tools', 'gates-report.txt')
@@ -266,6 +270,292 @@ def cmd_status():
 
 
 # ---------------------------------------------------------------------------------
+# outline / find —— 把「按需读一个 L1 产物」从「整份读进来」改成「先看目录再取一节」
+#
+# 为什么这两个命令属于这里：本仓库最大的**按需**成本是三份契约文档（合计约 6.9k 行；
+# 单读数据中心契约一份 ≈49k token），而 90% 的提问只需要其中一节。整份读进来等于把
+# 48k token 花在 1k 的问题上，而且那个成本**每个回合都要重发** —— 回合才是真正的成本，
+# 机器侧那十几秒根本不吃紧（本文件顶部那段实测已经记过同一件事）。
+#
+# 与文件顶部那条「只打 ASCII」的关系：目录/命中的**载荷本身就是中文**，转 ASCII 等于
+# 把载荷丢掉。所以这里改成**逐行降级**：能打印就原样打印，遇到当前控制台编码不了的
+# 行才退成 backslashreplace 并打一行 NOTE —— 「乱码」永远不会静默发生。
+#
+# 边界：它们**不是**门禁（不判对错），也**不是** grep 的替代品 —— 返回的是
+# 「去哪一行看」，不是结论。结论读 `tools/gates-report.txt`。
+# ---------------------------------------------------------------------------------
+HEADING_RE = re.compile(r'^(#{1,6})[ \t]+(\S.*?)[ \t]*$')
+FENCE_RE = re.compile(r'^[ \t]{0,3}(`{3,}|~{3,})')
+FIND_GLOBS = ('*.md', '*.py', '*.sql', '*.json', '*.yml')
+FIND_MAX_DEFAULT = 40
+FIND_LINE_MAX = 180
+
+
+def est_tokens(text):
+    """粗估 token：CJK 一字 ≈1，其余 ≈4 字符 1。只用来**比大小**，不是真值。
+
+    故意不接真 tokenizer：C4 规定 tools/ 只用标准库，而这里要回答的问题只是
+    「这份文件的哪一节值得读」——量级对就够用。
+    """
+    cjk = 0
+    for ch in text:
+        o = ord(ch)
+        if 0x4E00 <= o <= 0x9FFF or 0x3000 <= o <= 0x303F or 0xFF01 <= o <= 0xFF5E:
+            cjk += 1
+    return int(cjk + (len(text) - cjk) / 4.0)
+
+
+def read_lines(path):
+    """读成行列表；**读不到返回 None，不是空列表**。
+
+    两处都是踩过的坑：
+      * 先按字节读、`utf-8-sig` 解码并**规范化 CRLF**：裸 `\n` 的匹配在 CRLF 文件上
+        静默失配 —— 本项目实测过一次（`CRLF count=1373 / LF-only=0` ⇒ 提取到 0 字符
+        而报告全绿，看起来比成功还干净）。
+      * 「读不到」与「文件是空的」必须分得开：前者是失败，后者是合法的空输入。
+        None vs [] 就是这条区分（空转守卫的思想，用在这里是防「静默跳过」）。
+    """
+    try:
+        with open(path, 'rb') as handle:
+            raw = handle.read()
+    except OSError:
+        return None
+    text = raw.decode('utf-8-sig', 'replace').replace('\r\n', '\n')
+    lines = text.split('\n')
+    if lines and lines[-1] == '':
+        lines.pop()  # 行尾那个空串是终止符，不是一行
+    return lines
+
+
+def headings(lines):
+    """返回 [(行号(1 基), 级别, 标题)]。
+
+    🔴 **必须跳过围栏代码块**（``` / ~~~）。第一版没跳，实测当场抓到：数据中心契约
+    （2514 行）L72-73 是代码块里的 Python 注释（`# feed 是一个…` / `# 它的 9 个方法
+    签名…`），被当成两条**一级标题** ⇒ 目录里凭空多出一个「占据 L73-2514、47772 tok」
+    的假节，把真正的「附录 B」吞掉。报告看起来完全合理 —— 这正是本仓库那句
+    「变异没打到分支与探测器不存在长得一样」的邻座：**提取器错了，却报出一份像样的表**。
+    样本 `CLEAN-fenced-code-not-headings` 守着这条。
+    """
+    found = []
+    fence = None  # (marker_char, length)；None = 不在代码块里
+    for i, line in enumerate(lines, 1):
+        fence_hit = FENCE_RE.match(line)
+        if fence_hit:
+            marker = fence_hit.group(1)[0]
+            length = len(fence_hit.group(1))
+            if fence is None:
+                fence = (marker, length)
+            elif marker == fence[0] and length >= fence[1]:
+                fence = None  # 闭合围栏：同字符且不短于开启的那条
+            continue
+        if fence is not None:
+            continue
+        m = HEADING_RE.match(line)
+        if m:
+            found.append((i, len(m.group(1)), m.group(2)))
+    return found
+
+
+def heading_sections(lines, depth):
+    """返回 [(行号, 级别, 标题, 节起, 节止, ≈token)]，只留 level <= depth 的。
+
+    节范围 = 到**下一个级别不高于自己**的标题为止 ⇒ `##` 的范围包含它的 `###` 子节，
+    与「这一节一共多少 token」的直觉一致（把子节排除在外的目录会低报这一节的成本，
+    而那正是读者要看的数）。
+    """
+    marks = headings(lines)
+    out = []
+    for idx, (lineno, level, title) in enumerate(marks):
+        if level > depth:
+            continue
+        end = len(lines)
+        for later, later_level, _ in marks[idx + 1:]:
+            if later_level <= level:
+                end = later - 1
+                break
+        out.append((lineno, level, title, lineno, end,
+                    est_tokens('\n'.join(lines[lineno - 1:end]))))
+    return out
+
+
+def owner_of(marks, lineno):
+    """某个行号落在哪个标题下（find 的上下文）。"""
+    title = '(no heading)'
+    for i, level, text in marks:
+        if i > lineno:
+            break
+        title = '%s %s' % ('#' * level, text)
+    return title
+
+
+def say(line):
+    """打印一行；当前控制台编码不了就**显式转义并吼一声**，不静默产生乱码。"""
+    try:
+        print(line)
+    except UnicodeEncodeError:
+        print(line.encode('ascii', 'backslashreplace').decode('ascii'))
+        print('NOTE: 上面那行按当前控制台编码打不出来，已转义显示；'
+              '要原串请加 --out=FILE（UTF-8 落盘）')
+
+
+def write_out(path, text):
+    """UTF-8 落盘。PS 5.1 的 `>` 写的是 UTF-16LE，所以想转存一律走这里。"""
+    with open(path, 'w', encoding='utf-8', newline='\n') as handle:
+        handle.write(text)
+
+
+def tracked_files(globs):
+    """`git ls-files` 的清单，按 fnmatch 过滤；取不到返回 None（不猜、不空转）。
+
+    `-c core.quotePath=false` 是必须的：git 默认把非 ASCII 路径写成八进制转义，
+    于是 `docs/智能量化…md:12:` 会变成一串 `\\346\\231\\272…`，看起来像文件名叫错了
+    （本项目「读报告要用 UTF-8」那类坑的同族 —— 又是读法被当成产物坏了）。
+    """
+    rc, out = run_raw(['git', '-c', 'core.quotePath=false', 'ls-files'])
+    if rc != 0:
+        return None
+    names = [line for line in out.split('\n') if line.strip()]
+    if not globs:
+        return names
+    return [n for n in names if any(fnmatch.fnmatch(n, g) for g in globs)]
+
+
+def cmd_outline(argv):
+    path, depth, limit, out_path = None, 2, 200, None
+    for arg in argv:
+        if arg.startswith('--depth='):
+            if not arg[8:].isdigit():
+                print('bad --depth: %s' % arg)
+                return 2
+            depth = int(arg[8:])
+        elif arg.startswith('--max='):
+            if not arg[6:].isdigit():
+                print('bad --max: %s' % arg)
+                return 2
+            limit = int(arg[6:])
+        elif arg.startswith('--out='):
+            out_path = arg[6:]
+        elif arg.startswith('-'):
+            print('unknown option: %s' % arg)
+            return 2
+        elif path is None:
+            path = arg
+        else:
+            print('outline takes exactly one file (got %s)' % ' '.join(argv))
+            return 2
+    if path is None or depth < 1:
+        print('usage: python tools/dev.py outline FILE [--depth=N] [--max=N] [--out=FILE]')
+        return 2
+    abs_path = path if os.path.isabs(path) else os.path.join(ROOT, path)
+    lines = read_lines(abs_path)
+    if lines is None:
+        print('cannot read: %s' % path)
+        return 2
+    rows = heading_sections(lines, depth)
+    total = est_tokens('\n'.join(lines))
+    body = ['outline %s  lines=%d  ~tokens=%d  depth=%d'
+            % (path, len(lines), total, depth)]
+    if not rows:
+        body.append('NOTE: depth<=%d 里一个标题都没有 —— 别把这行读成「文件是空的」；'
+                    '无标题的文件（CSV 之类）本来就没有目录' % depth)
+    for _lineno, level, title, start, end, tokens in rows[:limit]:
+        body.append('%5d-%-5d %7d tok  %s%s'
+                    % (start, end, tokens, '  ' * (level - 1),
+                       '#' * level + ' ' + title))
+    if len(rows) > limit:
+        body.append('NOTE: 只打了前 %d 个标题（共 %d 个），要全用 --max= 放宽'
+                    % (limit, len(rows)))
+    if rows:
+        body.append('TOTAL   %d tok（=整份读进来要付的成本）；'
+                    '取某一节的内容用 `dev.py find`，或按上面的行范围读' % total)
+    if out_path:
+        write_out(out_path, '\n'.join(body) + '\n')
+        print('outline written: %s (%d lines)' % (out_path, len(body)))
+        return 0
+    for line in body:
+        say(line)
+    return 0
+
+
+def cmd_find(argv):
+    pattern, globs, limit, out_path = None, [], FIND_MAX_DEFAULT, None
+    for arg in argv:
+        if arg.startswith('--in='):
+            globs.append(arg[5:])
+        elif arg.startswith('--max='):
+            if not arg[6:].isdigit():
+                print('bad --max: %s' % arg)
+                return 2
+            limit = int(arg[6:])
+        elif arg.startswith('--out='):
+            out_path = arg[6:]
+        elif arg.startswith('-'):
+            print('unknown option: %s' % arg)
+            return 2
+        elif pattern is None:
+            pattern = arg
+        else:
+            print('find takes exactly one pattern (got %s)' % ' '.join(argv))
+            return 2
+    if pattern is None:
+        print('usage: python tools/dev.py find REGEX [--in=GLOB ...] [--max=N] [--out=FILE]')
+        return 2
+    try:
+        rx = re.compile(pattern)
+    except re.error as exc:
+        print('bad regex: %s' % exc)
+        return 2
+    files = tracked_files(globs or FIND_GLOBS)
+    if files is None:
+        # 拿不到清单就**拒判**：一个「扫了 0 个文件、0 命中」的报告比错的报告更危险。
+        print('git ls-files failed -- find 需要 git 工作树，拿不到就不猜')
+        return 2
+    if not files:
+        print('no tracked file matches %s' % (globs or list(FIND_GLOBS)))
+        return 2
+    total_hits, shown, body = 0, 0, []
+    current_file = None
+    for rel in files:
+        lines = read_lines(os.path.join(ROOT, *rel.split('/')))
+        if lines is None:
+            continue
+        marks = headings(lines)
+        current_owner = None
+        for i, line in enumerate(lines, 1):
+            if not rx.search(line):
+                continue
+            total_hits += 1
+            if shown >= limit:
+                continue
+            if rel != current_file:
+                current_file = rel
+                body.append(rel)
+                current_owner = None
+            owner = owner_of(marks, i)
+            if owner != current_owner:
+                current_owner = owner
+                body.append('       %s' % owner)
+            body.append('  %-5d %s' % (i, line.strip()[:FIND_LINE_MAX]))
+            shown += 1
+    head = ('find %r  files=%d  hits=%d  shown=%d  globs=%s'
+            % (pattern, len(files), total_hits, shown, ','.join(globs or FIND_GLOBS)))
+    if total_hits > shown:
+        # 截断必须看得见：静默截断会让「还有更多」看起来像「就这些」。
+        body.append('NOTE: 命中 %d 条，只打了前 %d 条 —— 收紧 pattern 或 --in='
+                    % (total_hits, shown))
+    if out_path:
+        write_out(out_path, '\n'.join([head] + body) + '\n')
+        print('find written: %s (%d hits -> %d lines)'
+              % (out_path, total_hits, len(body)))
+        return 0
+    say(head)
+    for line in body:
+        say(line)
+    return 0
+
+
+# ---------------------------------------------------------------------------------
 # selftest —— 三类样本：命中第 1 项的、命中第 2..N 项的、期望 0 报错的
 # ---------------------------------------------------------------------------------
 CLEAN_HARNESS_OUT = """\
@@ -340,6 +630,70 @@ def selftest():
     rc, out = run_raw(['git', 'rev-parse', '--is-inside-work-tree'])
     check('REAL-git-rc', rc == 0 and out.strip() == 'true', out.strip())
 
+    # ---- outline / find 的纯函数：干净样本 + 负样本 + 空转样本 + 控制组 ----
+    doc = '# T\n\nintro\n\n## A\n\nalpha\n\n### A1\n\nsub\n\n## B\n\nbeta\n'
+    doc_lines = doc.split('\n')
+    if doc_lines and doc_lines[-1] == '':
+        doc_lines.pop()
+    secs = heading_sections(doc_lines, 2)
+    # 干净样本：depth=2 只出 #/##，`### A1` 不单独成行
+    check('CLEAN-outline-titles', [s[2] for s in secs] == ['T', 'A', 'B'],
+          'titles=%s' % [s[2] for s in secs])
+    check('CLEAN-outline-starts', [s[0] for s in secs] == [1, 5, 13],
+          'starts=%s' % [s[0] for s in secs])
+    # 「## A」的节止必须跨过它的 ### A1 —— 否则「这一节多少 token」会低报
+    check('CLEAN-outline-parent-covers-child', secs[1][4] == 12,
+          'A ends at %d (want 12)' % secs[1][4])
+    # 负样本：一个标题都没有的文件 ⇒ 目录为空（既不是异常，也不是静默的成功）
+    check('NEG-no-headings', heading_sections(['plain', 'text'], 2) == [],
+          'rows=%d' % len(heading_sections(['plain', 'text'], 2)))
+    # 🔴 围栏代码块里的 `# 注释` 不是标题。这条样本是**在真产物上先踩到**才补的：
+    # 第一版提取器把数据中心契约 L72-73 的 Python 注释当成一级标题，目录里凭空多出一个
+    # 47772 tok 的假节并吞掉了真正的附录 B —— 报告看着完全合理。
+    fenced = ['# T', '', '```python', '# not a heading', 'x = 1', '```', '', '## A', '']
+    check('CLEAN-fenced-code-not-headings',
+          [s[2] for s in heading_sections(fenced, 2)] == ['T', 'A'],
+          'titles=%s' % [s[2] for s in heading_sections(fenced, 2)])
+    # 同一块用 ~ 围栏、且内部再写一行 ``` 时，`~` 块不算闭合 ⇒ 里面的 ``` 仍是内容
+    tilde = ['# T', '~~~', '# still code', '```', '# also code', '~~~', '', '## A', '']
+    check('CLEAN-tilde-fence-not-headings',
+          [s[2] for s in heading_sections(tilde, 2)] == ['T', 'A'],
+          'titles=%s' % [s[2] for s in heading_sections(tilde, 2)])
+    # 空转样本：「读不到」必须是 None，与「空文件」（[]）分得开
+    check('EMPTY-missing-file-is-None',
+          read_lines(os.path.join(tempfile.gettempdir(), 'no-such-dev-file.md')) is None)
+    empty_path = os.path.join(tempfile.gettempdir(), 'dev-selftest-empty.md')
+    with open(empty_path, 'wb') as handle:
+        handle.write(b'')
+    try:
+        check('EMPTY-empty-file-is-list', read_lines(empty_path) == [],
+              'got=%r' % (read_lines(empty_path),))
+    finally:
+        os.remove(empty_path)
+    # CRLF 规范化：本项目实测过的那个坑（裸 \n 匹配在 CRLF 文件上静默失配）
+    crlf_path = os.path.join(tempfile.gettempdir(), 'dev-selftest-crlf.md')
+    with open(crlf_path, 'wb') as handle:
+        handle.write('# T\r\n\r\n## A\r\n\r\nalpha\r\n'.encode('utf-8'))
+    try:
+        crlf = read_lines(crlf_path)
+        check('CLEAN-crlf-normalised',
+              crlf is not None and not any('\r' in item for item in crlf)
+              and [s[2] for s in heading_sections(crlf, 2)] == ['T', 'A'],
+              'titles=%s' % (crlf and [s[2] for s in heading_sections(crlf, 2)]))
+    finally:
+        os.remove(crlf_path)
+    # 控制组：token 估计只要在「中文 vs ASCII」上量级对即可（它本来就不是真值）
+    check('CONTROL-est-tokens-order',
+          est_tokens('中文中文') == 4 and est_tokens('abcdefgh') == 2,
+          'cjk=%d ascii=%d' % (est_tokens('中文中文'), est_tokens('abcdefgh')))
+    # 真实仓库那一次：本文件自己的目录要能打出来，且 find 只回命中行
+    rc, out = run(['tools/dev.py', 'outline', 'tools/dev.py'])
+    check('REAL-outline-own-source', rc == 0 and 'TOTAL' in out,
+          'rc=%d bytes=%d' % (rc, len(out)))
+    rc, out = run(['tools/dev.py', 'find', 'def cmd_find', '--in=tools/dev.py'])
+    check('REAL-find-own-source', rc == 0 and 'tools/dev.py' in out,
+          'rc=%d bytes=%d' % (rc, len(out)))
+
     print('-' * 68)
     if failures:
         print('SELFTEST FAIL: %d/%d checks failed: %s'
@@ -359,10 +713,14 @@ dev -- local dev loop, one command (stdlib only).
   python tools/dev.py gate NAME [NAME]   run one or more gates
   python tools/dev.py test [pytest ...]  pytest only (args passed through)
   python tools/dev.py status             read-only: git + ratchet baseline + report head
+  python tools/dev.py outline FILE       read-only: heading map + per-section ~tokens
+  python tools/dev.py find REGEX         read-only: matching lines only, not whole files
   python tools/dev.py --selftest         prove this runner can report FAIL
 
-Use .venv\\Scripts\\python.exe. This script prints ASCII on purpose; the Chinese
-detail lives in tools/gates-report.txt (UTF-8) -- read it, do not re-run to look.
+Use .venv\\Scripts\\python.exe. The verdict/status output is ASCII on purpose; the
+Chinese detail lives in tools/gates-report.txt (UTF-8) -- read it, do not re-run.
+outline/find print the matched text verbatim (ASCII-ising it would drop the payload)
+and fall back to backslash escapes with a NOTE only when the console cannot encode.
 """
 
 
@@ -389,6 +747,10 @@ def main(argv):
         return cmd_test(rest)
     if head == 'status':
         return cmd_status()
+    if head == 'outline':
+        return cmd_outline(rest)
+    if head == 'find':
+        return cmd_find(rest)
     print('unknown command: %s' % head)
     print(USAGE)
     return 2

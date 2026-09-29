@@ -25,6 +25,7 @@ import pytest
 
 from quanauto import datasources as ds
 from quanauto.datasources import (
+    ADJUST_FACTOR_COLUMNS,
     AKSHARE_DAILY_BAR,
     DAILY_BAR_COLUMNS,
     EASTMONEY_BALANCE_FINANCIAL,
@@ -35,12 +36,17 @@ from quanauto.datasources import (
     FINANCIAL_REQUIRED_COLUMNS,
     INDEX_MEMBER_COLUMNS,
     REPORT_TYPES,
+    TUSHARE_ADJ_FACTOR,
+    TUSHARE_ADJ_FACTOR_API,
+    TUSHARE_AUTH_CODE,
     AKShareAdapter,
     BaostockAdapter,
     EastMoneyAdapter,
     SourceAdapter,
     TencentAdapter,
+    TushareAdapter,
     classify_source_failure,
+    normalize_adjust_factor,
     normalize_daily_bar,
     normalize_financial,
     normalize_index_members,
@@ -513,6 +519,19 @@ _UNSUPPORTED_CALLS = (
      EastMoneyAdapter(fetch=lambda **kwargs: pd.DataFrame()),
      lambda adapter: adapter.fetch_daily_bar(
          ['600000.SH'], date(2026, 9, 1), date(2026, 9, 30))),
+    # tushare 只有复权因子这一条通道（附录 B21），另外三个面是**本类自己写出来的**
+    # raise（不是继承来的）—— 2026-09-29 实测：不写这三条，`TushareAdapter()` 会
+    # 当场 `TypeError: Can't instantiate abstract class`。
+    ('tushare-daily-bar',
+     TushareAdapter(),
+     lambda adapter: adapter.fetch_daily_bar(
+         ['600000.SH'], date(2026, 9, 1), date(2026, 9, 30))),
+    ('tushare-financial',
+     TushareAdapter(),
+     lambda adapter: adapter.fetch_financial(['600000.SH'], date(2026, 9, 30))),
+    ('tushare-index-members',
+     TushareAdapter(),
+     lambda adapter: adapter.fetch_index_members('000300.SH', date(2026, 9, 30))),
 )
 
 
@@ -644,22 +663,34 @@ def test_every_declared_category_has_a_producer() -> None:
 
 
 class _LocalHTTP:
-    """最小本机 HTTP 服务：每个请求都喂同一份预设响应，并记下收到的路径与请求头。"""
+    """最小本机 HTTP 服务：每个请求都喂同一份预设响应，并记下请求方法、路径、请求头与请求体。
+
+    GET 与 POST 走**同一段**处理：两条通道的差别只在请求体，而请求体被记在 `bodies`
+    里（GET 没有体 ⇒ `b''`）。这样 tushare 那条 POST 通道能验的与东财 GET 一样多。
+    """
 
     def __init__(self, status: int = 200, body: str = '{}',
                  content_type: str = 'application/json') -> None:
         self.requests = []
+        self.methods = []
+        self.bodies = []
         owner = self
 
         class _Handler(http.server.BaseHTTPRequestHandler):
-            def do_GET(self):  # noqa: N802 —— 方法名由 BaseHTTPRequestHandler 约定
+            def _respond(self) -> None:
+                length = int(self.headers.get('Content-Length') or 0)
                 owner.requests.append((self.path, dict(self.headers)))
+                owner.methods.append(self.command)
+                owner.bodies.append(self.rfile.read(length) if length else b'')
                 payload = body.encode('utf-8')
                 self.send_response(status)
                 self.send_header('Content-Type', content_type)
                 self.send_header('Content-Length', str(len(payload)))
                 self.end_headers()
                 self.wfile.write(payload)
+
+            do_GET = _respond  # noqa: N815 —— 方法名由 BaseHTTPRequestHandler 约定
+            do_POST = _respond
 
             def log_message(self, *args):  # 别把每个请求都打进测试输出
                 pass
@@ -1055,12 +1086,17 @@ class _ScriptedHTTP:
 
     def __init__(self, bodies, status: int = 200) -> None:
         self.requests = []
+        self.methods = []
+        self.bodies = []
         self._bodies = list(bodies)
         owner = self
 
         class _Handler(http.server.BaseHTTPRequestHandler):
-            def do_GET(self):  # noqa: N802 —— 方法名由 BaseHTTPRequestHandler 约定
+            def _respond(self) -> None:
+                length = int(self.headers.get('Content-Length') or 0)
                 owner.requests.append((self.path, dict(self.headers)))
+                owner.methods.append(self.command)
+                owner.bodies.append(self.rfile.read(length) if length else b'')
                 body = owner._bodies.pop(0) if len(owner._bodies) > 1 else owner._bodies[0]
                 payload = body.encode('utf-8')
                 self.send_response(status)
@@ -1068,6 +1104,9 @@ class _ScriptedHTTP:
                 self.send_header('Content-Length', str(len(payload)))
                 self.end_headers()
                 self.wfile.write(payload)
+
+            do_GET = _respond  # noqa: N815 —— 方法名由 BaseHTTPRequestHandler 约定
+            do_POST = _respond  # tushare 那条通道，同样的按序换体
 
             def log_message(self, *args):  # 别把每个请求都打进测试输出
                 pass
@@ -1444,3 +1483,447 @@ def test_tencent_capabilities_outside_daily_bar_are_unsupported() -> None:
     assert financial.value.retryable is False
     assert members.value.kind == 'UNSUPPORTED'
     assert members.value.retryable is False
+
+
+# ── I2c：tushare 复权因子通道（2026-09-29 接；离线整条验，不装 SDK）──────────
+# 本机**刻意不装** `tushare`：这条通道走 stdlib 的 POST，所以能像东财/腾讯一样起一个
+# 本机 HTTP 服务，把「JSON 体 → Content-Type → 解帧 → 分类 → 归一化」整条验完。
+# 装 SDK 反而会多出一种「本机没装 ⇒ SOURCE_SDK_MISSING」的失败。
+#
+# 它与另外四个源有一处**本质不同**：成功与失败**都是 HTTP 200**，错误码在 body 里。
+# 于是 `classify_source_failure`（它读 `HTTPError.code`）在这里永远看不到鉴权失败 ——
+# 判据只能写在解帧之后，这也是它没有复用东财那条 GET 出口的原因。
+#
+# 凭证纪律：下面这个令牌是**合成的**，断言只检查「它有没有进请求体的 `token` 键」，
+# **不打印令牌值**；真令牌只存在于环境变量 / `.env`（本文件不读它，也不该读它）。
+
+#: 合成令牌 —— 长得不像任何真令牌，且只在本文件里出现。
+_SYNTHETIC_TOKEN = 'SYNTHETIC-NOT-A-REAL-TOKEN'
+
+#: tushare `adj_factor` 的响应列（实测）。顺序由源决定，实现按名字映射。
+#: 与 `TUSHARE_ADJ_FACTOR` 的**键序**必须一致 —— 用例拼行时按它写，
+#: 所以有一处断言把两者钉在一起（否则「帧的列名」与「映射表」会各说各话）。
+_TUSHARE_FIELDS = ['ts_code', 'trade_date', 'adj_factor']
+
+#: 契约 §3.2 的 6 个抽象方法（2026-09-29 实测 `SourceAdapter.__abstractmethods__`）。
+_ABSTRACT_METHODS = ('fetch_adjust_factor', 'fetch_daily_bar', 'fetch_financial',
+                     'fetch_index_members', 'source_name', 'validate')
+
+
+@pytest.fixture
+def tushare_token_env(monkeypatch) -> str:
+    """每个 tushare 用例都先塞一个**合成**令牌。
+
+    不加这个，`tushare_token()` 会去读**项目根**的 `.env` —— 于是「这台机器上有没有
+    真凭证」会决定用例走哪条分支：没配凭证的机器上，所有 tushare 用例都会在第一行
+    就抛 `SOURCE_AUTH`，而它们看起来仍然像「验过了」。
+    """
+    monkeypatch.setenv(ds.TUSHARE_TOKEN_ENV, _SYNTHETIC_TOKEN)
+    return _SYNTHETIC_TOKEN
+
+
+def _tushare_envelope(items, *, fields=None, code=0, msg='ok', has_more=False) -> str:
+    """tushare 信封。**成功与失败都是 HTTP 200**，所以 `code` 由这里给。"""
+    return json.dumps({'code': code, 'msg': msg, 'request_id': 'req-1', 'detail': '',
+                       'data': {'count': len(items),
+                                'fields': list(_TUSHARE_FIELDS if fields is None else fields),
+                                'items': list(items), 'has_more': has_more}})
+
+
+def _tushare_rows(*factors, ts_code: str = '600000.SH') -> list:
+    """按 `_TUSHARE_FIELDS` 顺序的整行：`[ts_code, trade_date, adj_factor]`。
+
+    参数名刻意叫 `ts_code` 而不是 `code`：`_tushare_envelope(code=...)` 那个 `code`
+    是**tushare 的状态码**，同名会让「造一只股票的行」静默变成「造一个字符串状态码」
+    （实测踩过一次：信封的 code 变成 `'600000.SH'` ⇒ 解帧报 UNKNOWN）。
+    """
+    return [[ts_code, '202401%02d' % (2 + index), factor]
+            for index, factor in enumerate(factors)]
+
+
+def _open_tushare_against(monkeypatch, server) -> str:
+    """把模块级端点指到本机服务上 —— 生产 URL 只在一处，替换也只做一处。"""
+    monkeypatch.setattr(ds, 'TUSHARE_API', server.url)
+    return server.url
+
+
+def _tushare_body(server, index: int = 0) -> dict:
+    """第 `index` 个请求的 JSON 体。**只看键与形状，不打印令牌值。**"""
+    return json.loads(server.bodies[index].decode('utf-8'))
+
+
+def test_tushare_posts_the_documented_body_and_takes_the_token_from_the_environment(
+        monkeypatch, tushare_token_env) -> None:
+    """请求形状：**POST** 一份 JSON，四个键 `api_name` / `token` / `params` / `fields`。
+
+    这里钉住的每一条，发错了都是**静默**的：用 GET 会得到 405 或一个空信封；把参数
+    塞进 query string 会得到「参数不全」；`start_date` 写成 `2024-01-02` 会得到一个
+    **HTTP 200 的失败响应**（code 非 0，msg 说日期格式错）。所以形状只能逐条对实测。
+
+    端点本身也是一条实测事实：它不是配置项，也不是从文档抄的（下面那条断言在
+    替换之前读它）。
+    """
+    assert ds.TUSHARE_API == 'https://api.tushare.pro', '端点不是实测值就该有人重测'
+    with _LocalHTTP(body=_tushare_envelope(_tushare_rows(1.0, 1.1))) as server:
+        _open_tushare_against(monkeypatch, server)
+        frame = TushareAdapter().fetch_adjust_factor(['600000.SH'], date(2024, 1, 2),
+                                                     date(2024, 1, 10))
+
+    assert server.methods == ['POST'], 'tushare 不认 GET'
+    _, headers = server.requests[0]
+    assert headers.get('Content-Type') == 'application/json', (
+        '不带 Content-Type 的 POST 会被源当成表单；错误信息离真因很远')
+    assert headers.get('User-Agent') == ds.HTTP_USER_AGENT
+
+    body = _tushare_body(server)
+    assert body['api_name'] == TUSHARE_ADJ_FACTOR_API
+    assert body['params'] == {'ts_code': '600000.SH', 'start_date': '20240102',
+                              'end_date': '20240110'}, (
+        'tushare 要 `YYYYMMDD` 的无分隔日期；写成 ISO 会得到一个 code 非 0 的"成功响应"')
+    assert body['fields'] == ''
+    assert body['token'] == _SYNTHETIC_TOKEN, 'tushare 没有 Authorization 头，令牌只在请求体里'
+
+    assert list(frame.columns) == list(ADJUST_FACTOR_COLUMNS), '列的集合与顺序都是契约的'
+    assert frame['adjust_factor'].tolist() == [1.0, 1.1]
+    assert frame['trade_date'].tolist() == [date(2024, 1, 2), date(2024, 1, 3)]
+    assert frame['symbol'].tolist() == ['600000.SH', '600000.SH']
+
+
+def test_tushare_rejected_credentials_are_auth_failures_and_never_echo_the_token(
+        monkeypatch, tushare_token_env) -> None:
+    """`code=40101`（实测的空/错令牌）⇒ `SOURCE_AUTH`，且报错里**只有变量名**。
+
+    这一条正是「不能套 `classify_source_failure`」的落地：鉴权失败是 HTTP 200，
+    分类器那条路看不到它，所以判据写在解帧之后。报错文本会被贴进日志 / issue，
+    因此它**不能**带令牌值 —— 而「不带」这件事只能靠一条断言守着。
+    """
+    with _LocalHTTP(body=_tushare_envelope([], code=int(TUSHARE_AUTH_CODE),
+                                           msg='抱歉，您没有访问该接口的权限')) as server:
+        _open_tushare_against(monkeypatch, server)
+        with pytest.raises(SourceAdapterError) as caught:
+            TushareAdapter().fetch_adjust_factor(['600000.SH'], date(2024, 1, 2),
+                                                 date(2024, 1, 10))
+
+    assert caught.value.kind == 'SOURCE_AUTH'
+    assert caught.value.retryable is False, '换凭证不是重试能解决的事'
+    assert ds.TUSHARE_TOKEN_ENV in str(caught.value), '报错要说清该配哪个变量'
+    assert _SYNTHETIC_TOKEN not in str(caught.value), '令牌值不许出现在报错里'
+
+
+def test_tushare_an_unmapped_code_is_unknown_rather_than_guessed(
+        monkeypatch, tushare_token_env) -> None:
+    """其余非 0 码 ⇒ `UNKNOWN`，并把 `msg` 带出来，**不猜**一个映射。
+
+    「积分不足 / 无权限 / 接口下线」这些码本机都没观察到 —— 编一个映射比报 UNKNOWN
+    更坏：一个猜出来的类别会让人按错误的动作去修（去重试，或者去换凭证）。
+    """
+    with _LocalHTTP(body=_tushare_envelope([], code=2002, msg='积分不足')) as server:
+        _open_tushare_against(monkeypatch, server)
+        with pytest.raises(SourceAdapterError) as caught:
+            TushareAdapter().fetch_adjust_factor(['600000.SH'], date(2024, 1, 2),
+                                                 date(2024, 1, 10))
+
+    assert caught.value.kind == 'UNKNOWN'
+    assert '积分不足' in str(caught.value), '码不认识时 msg 是唯一的线索，必须带出来'
+
+
+def test_tushare_has_more_is_refused_instead_of_truncated(
+        monkeypatch, tushare_token_env) -> None:
+    """`has_more=true` ⇒ 抛。**宁可报错也不能只留第一页。**
+
+    静默截断会让「这段区间的因子少了一截」在库里长得像「这段时间就是没数据」 ——
+    前者的后果是用错的复权价算收益，后者只是不复权。本迭代不实现翻页（tushare 的
+    翻页口径与腾讯的倒序翻页不同，没实测过就不写），所以这是一个响亮的未收口项。
+    """
+    with _LocalHTTP(body=_tushare_envelope(_tushare_rows(1.0), has_more=True)) as server:
+        _open_tushare_against(monkeypatch, server)
+        with pytest.raises(SourceAdapterError) as caught:
+            TushareAdapter().fetch_adjust_factor(['600000.SH'], date(2024, 1, 2),
+                                                 date(2024, 1, 10))
+
+    assert caught.value.kind == 'UNKNOWN'
+    assert 'has_more' in str(caught.value)
+    assert len(server.requests) == 1, '报了 has_more 就该当场停，不是再试一次'
+
+
+def test_tushare_empty_items_keeps_the_source_column_names(
+        monkeypatch, tushare_token_env) -> None:
+    """空区间 ⇒ 空帧**且列名完整**，**不抛**（与东财/腾讯同一口径：空结果不是失败）。
+
+    列名不能省：`normalize_adjust_factor` 先按源列名选列，一个连列名都没有的空帧会撞
+    「缺必需源列」那条分支，报出一句与「这段区间没有因子」毫不相干的话。
+    """
+    with _LocalHTTP(body=_tushare_envelope([])) as server:
+        _open_tushare_against(monkeypatch, server)
+        frame = TushareAdapter().fetch_adjust_factor(['600000.SH'], date(2024, 1, 2),
+                                                     date(2024, 1, 10))
+
+    assert frame.shape[0] == 0
+    assert list(frame.columns) == list(ADJUST_FACTOR_COLUMNS)
+
+
+@pytest.mark.parametrize("label,body,needle", [
+    ('not-an-object', '[1, 2, 3]', 'list'),
+    ('data-not-an-object', json.dumps({'code': 0, 'data': []}), 'list'),
+    ('fields-not-a-list', json.dumps({'code': 0, 'data': {'fields': {}, 'items': []}}),
+     'fields'),
+    ('items-not-a-list', json.dumps({'code': 0, 'data': {'fields': [], 'items': {}}}),
+     'items'),
+])
+def test_tushare_envelope_shape_mismatches_are_not_retryable(
+        label, body, needle, monkeypatch, tushare_token_env) -> None:
+    """四类信封变形**一项一个样本**。
+
+    合在一个样本里不行：第一项 `raise` 之后后面的分支根本没跑，于是「四类都拦住了」
+    这个结论只对第一类成立。四类都落在「调用方该改解析/改请求」那一侧 ——
+    重试只会把同一个错误再问一遍，而在重试策略里它会被当成网络抖动。
+    """
+    with _LocalHTTP(body=body) as server:
+        _open_tushare_against(monkeypatch, server)
+        with pytest.raises(SourceAdapterError) as caught:
+            TushareAdapter().fetch_adjust_factor(['600000.SH'], date(2024, 1, 2),
+                                                 date(2024, 1, 10))
+
+    assert caught.value.kind == 'SOURCE_SCHEMA_MISMATCH', label
+    assert caught.value.retryable is False, label
+    assert needle in str(caught.value), label
+    assert len(server.requests) == 1, '带内拒绝要当场停'
+
+
+def test_tushare_rejects_a_reversed_window_before_any_request() -> None:
+    """区间反了 ⇒ 抛，且**一个请求都不发**（没有本机服务就是断言本身）。
+
+    不是「多此一举的入参校验」：反区间发出去会得到一个 `code=0`、`items=[]` 的
+    正常响应，然后被当成「这段区间没有因子」写进库里。
+    """
+    with pytest.raises(SourceAdapterError) as caught:
+        TushareAdapter()._default_fetch(symbol='600000.SH', start=date(2024, 1, 10),
+                                        end=date(2024, 1, 2))
+
+    assert caught.value.kind == 'UNSUPPORTED'
+    assert caught.value.retryable is False
+
+
+def test_tushare_fetch_adjust_factor_posts_once_per_symbol_and_concatenates(
+        monkeypatch, tushare_token_env) -> None:
+    """多标的：**每个标的一次 POST**，拼成一帧，且每次的参数带自己的代码。
+
+    `params.ts_code` 写错（比如把后缀丢掉）不会报错 —— 源回一个 `code=0` 的空信封，
+    于是那只股票的因子安静地缺失。所以两只股票的 `ts_code` 都要断出来。
+    """
+    bodies = [_tushare_envelope(_tushare_rows(1.0, ts_code='600000.SH')),
+              _tushare_envelope(_tushare_rows(2.0, ts_code='000001.SZ'))]
+    with _ScriptedHTTP(bodies) as server:
+        _open_tushare_against(monkeypatch, server)
+        frame = TushareAdapter().fetch_adjust_factor(['600000.SH', '000001.SZ'],
+                                                     date(2024, 1, 2), date(2024, 1, 10))
+
+    assert server.methods == ['POST', 'POST'], '一个标的一次请求'
+    assert [_tushare_body(server, index)['params']['ts_code'] for index in (0, 1)] \
+        == ['600000.SH', '000001.SZ']
+    assert list(frame.columns) == list(ADJUST_FACTOR_COLUMNS)
+    assert frame['symbol'].tolist() == ['600000.SH', '000001.SZ']
+    assert frame['adjust_factor'].tolist() == [1.0, 2.0]
+
+
+def test_tushare_fetch_adjust_factor_without_symbols_returns_the_standard_columns() -> None:
+    """空标的清单 ⇒ 空帧 + 标准列，**一个请求都不发**（没有本机服务就是断言本身）。"""
+    frame = TushareAdapter().fetch_adjust_factor([], date(2024, 1, 2), date(2024, 1, 10))
+
+    assert frame.shape[0] == 0
+    assert list(frame.columns) == list(ADJUST_FACTOR_COLUMNS)
+
+
+@pytest.mark.parametrize("adapter", [AKShareAdapter, BaostockAdapter, EastMoneyAdapter,
+                                     TencentAdapter, TushareAdapter])
+def test_every_concrete_adapter_can_be_constructed(adapter) -> None:
+    """**每一个**具体适配器都必须能被构造出来 —— 抽象方法一个都不许漏。
+
+    `_AdapterBase` 只给了 `fetch_adjust_factor` 一个默认实现，另外三个留在抽象层
+    （那是「一个源适配器至少要能做的是什么」这条纪律）。于是**只覆盖单个数据面的源
+    必须自己把三条写出来** —— 不写，这个类就实例化不了，而不是「运行时抛 UNSUPPORTED」。
+
+    这条用例是 2026-09-29 **实测补的**：`TushareAdapter` 第一版只写了 `_default_fetch`
+    与 `fetch_adjust_factor`，而它此前从未被导入、从未被实例化（门禁只 `ast` 解析源码，
+    没有任何用例 import 它）⇒ 门禁全绿、用例全绿，直到手工 `TushareAdapter()` 当场
+    `TypeError: Can't instantiate abstract class`。「复权因子采集通道已接」当时在**运行时
+    是不成立的**，而报告里看不出来。
+
+    静态门禁看不到这件事：`tools/verify_data_center_adapter.py` 的 A0~A11 读的是
+    **源码形状**，「这个类能不能被构造」是运行时的属性。所以这条用例留在这里。
+    """
+    instance = adapter()
+    assert instance.__class__.__abstractmethods__ == frozenset(), (
+        '这些抽象方法没有实现（类实例化不了，不是"运行时会抛异常"）：%r'
+        % sorted(instance.__class__.__abstractmethods__))
+    assert instance.source_name(), 'source_name() 返回空串会让报告里分不清是哪个源'
+    for name in _ABSTRACT_METHODS:
+        assert callable(getattr(instance, name)), '%s 不可调用' % name
+    assert tuple(sorted(SourceAdapter.__abstractmethods__)) == _ABSTRACT_METHODS, (
+        '契约 §3.2 的抽象方法清单变了（实测 %r）—— 这条用例要跟着重读契约，'
+        '并确认每个具体适配器都实现了新方法' % tuple(sorted(SourceAdapter.__abstractmethods__)))
+
+
+# ── `normalize_adjust_factor`：源帧 → 标准帧（列对、类型对）────────────────────
+# 这一层只保证「列对、类型对」。**值域（因子必须 > 0）不在这里** —— 那是
+# `dc_adjust_factor` 的 `ck_dc_factor_positive`（附录 B21.5），而 `validate_frame`
+# 目前对复权因子**还没有判据**（附录 B21.6）。三句话是三件事，别混着说。
+
+
+def _adj_factor_frame(*factors, ts_code: str = '600000.SH') -> pd.DataFrame:
+    """造一个「像 tushare 那样」的源帧：`data.fields` 当列名，`data.items` 当行。"""
+    assert tuple(TUSHARE_ADJ_FACTOR) == tuple(_TUSHARE_FIELDS), (
+        '源字段名清单与映射表的键序对不上了：%r vs %r'
+        % (tuple(_TUSHARE_FIELDS), tuple(TUSHARE_ADJ_FACTOR)))
+    return pd.DataFrame(_tushare_rows(*factors, ts_code=ts_code),
+                        columns=list(_TUSHARE_FIELDS))
+
+
+def test_normalize_adjust_factor_maps_the_source_columns_and_types() -> None:
+    """`ts_code/trade_date/adj_factor` → `symbol/trade_date/adjust_factor`，列序是契约的。
+
+    列序也要断：`ADJUST_FACTOR_COLUMNS` 同时是 `dc_adjust_factor` 的插入列序，
+    下游按位置对齐（`pgstore` 的 INSERT 与 smoke 的断言）。
+    """
+    frame = normalize_adjust_factor(_adj_factor_frame(1.0, 1.2), TUSHARE_ADJ_FACTOR)
+
+    assert list(frame.columns) == list(ADJUST_FACTOR_COLUMNS)
+    assert frame['symbol'].tolist() == ['600000.SH', '600000.SH']
+    assert frame['trade_date'].tolist() == [date(2024, 1, 2), date(2024, 1, 3)]
+    assert all(type(day) is date for day in frame['trade_date'].tolist()), (
+        '契约要 `date`，不是 `Timestamp`（后者带时刻，落库会被当成本地时间）')
+    assert frame['adjust_factor'].tolist() == [1.0, 1.2]
+
+
+def test_normalize_adjust_factor_names_both_the_source_and_standard_column() -> None:
+    """少一列 ⇒ 报错里**同时**有源列名与标准列名。
+
+    只给源列名，读的人不知道它对应契约里的哪一列；只给标准列名，读的人不知道要去
+    源接口的哪个字段里找。源接口改名与「这段区间没数据」必须能分辨。
+    """
+    with pytest.raises(SourceAdapterError) as caught:
+        normalize_adjust_factor(_adj_factor_frame(1.0).drop(columns=['adj_factor']),
+                                TUSHARE_ADJ_FACTOR)
+
+    message = str(caught.value)
+    assert 'adj_factor' in message and 'adjust_factor' in message, message
+
+
+def test_normalize_adjust_factor_backfills_symbol_only_when_the_frame_has_none() -> None:
+    """源帧没有 symbol 列时用请求参数回填；**没传就报错**，不静默留空。"""
+    without_symbol = {'trade_date': 'trade_date', 'adj_factor': 'adjust_factor'}
+    frame = _adj_factor_frame(1.0).drop(columns=['ts_code'])
+
+    assert normalize_adjust_factor(frame, without_symbol,
+                                  symbol='600000.SH')['symbol'].tolist() == ['600000.SH']
+    with pytest.raises(SourceAdapterError) as caught:
+        normalize_adjust_factor(frame, without_symbol)
+    assert 'symbol' in str(caught.value)
+
+
+def test_normalize_adjust_factor_rejects_a_non_numeric_factor() -> None:
+    """因子不是数值 ⇒ 抛。
+
+    这里拒绝的是「类型不对」，不是「值不对」—— `errors='coerce'` 那种写法会把脏值
+    变成 NaN，NaN 落库变 NULL，NULL 又被下游读成「这一格没有数据」：一次格式错误
+    就变成数据空洞，报告里什么都看不出来。
+    """
+    frame = _adj_factor_frame(1.0)
+    frame.loc[0, 'adjust_factor'] = '不是数'
+
+    with pytest.raises(SourceAdapterError) as caught:
+        normalize_adjust_factor(frame, TUSHARE_ADJ_FACTOR)
+    assert 'adjust_factor' in str(caught.value)
+
+
+def test_normalize_adjust_factor_rejects_an_unparsable_or_missing_trade_date() -> None:
+    """`trade_date` 解析不了、或解析成空 ⇒ 两个**分开**的样本（不许只测一个）。
+
+    两个探针是分开写的：解析失败走 `_to_dates`，解析成空走 `_require_present`
+    （对应 DDL 的 NOT NULL）。只测前者的话，后者一次都没跑过。
+    """
+    unparsable = _adj_factor_frame(1.0)
+    unparsable.loc[0, 'trade_date'] = '不是日期'
+    with pytest.raises(SourceAdapterError) as caught:
+        normalize_adjust_factor(unparsable, TUSHARE_ADJ_FACTOR)
+    assert 'trade_date' in str(caught.value)
+
+    blank = _adj_factor_frame(1.0)
+    blank.loc[0, 'trade_date'] = ''
+    with pytest.raises(SourceAdapterError) as caught_blank:
+        normalize_adjust_factor(blank, TUSHARE_ADJ_FACTOR)
+    assert 'trade_date' in str(caught_blank.value)
+
+
+def test_normalize_adjust_factor_passes_positivity_through_to_the_next_layer() -> None:
+    """0 / 负值在这里**能过** —— 值域不是这一层的事。
+
+    这条钉住的是**分工**，不是「随便测一下」：如果归一化也顺手拒了 `<= 0`，
+    那么「库以 `ck_dc_factor_positive` 拒绝」（I3b 那条 `__cause__` 追链的用武之地）
+    就永远走不到，取而代之的是一个更早、语义不同的错误码 —— 两条链会变成一条半。
+    真正的判据在 `validate_frame` / DDL，写在这里就是第二个口径。
+    """
+    frame = normalize_adjust_factor(_adj_factor_frame(0.0, -1.0), TUSHARE_ADJ_FACTOR)
+
+    assert frame['adjust_factor'].tolist() == [0.0, -1.0]
+
+
+def test_validate_frame_refuses_the_adjust_factor_schema_loudly() -> None:
+    """`validate_frame` 对复权因子帧**必须拒**、而且要说**真原因**。
+
+    2026-09-29 实测（接 tushare 通道时发现）：这一帧原先掉进通用分支，报出来的是
+    「非标准列 `adjust_factor`：源字段名不得泄漏到输出列」+「列集合不匹配任何标准
+    schema」——**两句都是误诊**。`adjust_factor` 是契约 §3.2 里写明的标准列，而
+    「不匹配任何 schema」的原因是**第四张 schema 的判据还没写**。误诊会让人去查源
+    接口，而不是来看这张未收口清单。
+
+    这一条同时钉住两个方向：① 别悄悄变成 `is_valid=True`（那才是真的假绿）；
+    ② 也别再退回那两句误诊。
+    """
+    report = validate_frame(normalize_adjust_factor(_adj_factor_frame(1.0),
+                                                    TUSHARE_ADJ_FACTOR))
+
+    assert report.is_valid is False, '判据没接上就不构成通过'
+    joined = ' '.join(report.errors)
+    assert 'B21.6' in joined, '要指到那张未收口清单，读者才知道下一步是什么'
+    assert '尚未实现' in joined
+    assert '泄漏' not in joined, '这是误诊：`adjust_factor` 是契约标准列'
+
+
+def test_validate_frame_still_reports_a_stray_column_on_an_adjust_factor_frame() -> None:
+    """复权因子帧上多一列 ⇒ 仍然报出来（专支不是「一律只报未实现」的挡箭牌）。"""
+    frame = normalize_adjust_factor(_adj_factor_frame(1.0), TUSHARE_ADJ_FACTOR)
+    frame['adj_factor'] = 1.0  # 源字段名，模拟一次泄漏
+
+    report = validate_frame(frame)
+
+    assert report.is_valid is False
+    assert any('非标准列 adj_factor' in error for error in report.errors), report.errors
+
+
+def test_the_adapter_validate_delegates_to_validate_frame_for_this_schema() -> None:
+    """类上的 `validate()` 真的走到那一支（不只是「函数对了」）。
+
+    契约 §3.2 的 `validate` 是适配器的**能力**之一：`DataCenter` 按它的结论决定写不写。
+    只测裸函数、不测类，就可能出现「函数修好了、类还走老路」。
+    """
+    frame = normalize_adjust_factor(_adj_factor_frame(1.0), TUSHARE_ADJ_FACTOR)
+
+    report = TushareAdapter().validate(frame)
+
+    assert report.is_valid is False
+    assert any('B21.6' in error for error in report.errors), report.errors
+
+
+def test_validate_frame_still_wins_the_empty_check_over_the_adjust_factor_branch() -> None:
+    """空帧仍然走「帧为空」那条（更具体），不被复权因子专支盖住。
+
+    顺序是有意的：空帧的判据对**所有** schema 都成立，而「判据未实现」只对复权因子
+    成立；先报后者会让人以为「有数据就能过」。
+    """
+    empty = TushareAdapter().fetch_adjust_factor([], date(2024, 1, 2), date(2024, 1, 10))
+
+    report = validate_frame(empty)
+
+    assert report.is_valid is False
+    assert any('帧为空' in error for error in report.errors), report.errors

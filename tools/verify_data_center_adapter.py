@@ -107,16 +107,25 @@ SOURCE_RELS = (ADAPTER_REL, ROWCLASS_REL, ERRORS_REL, CONTRACT_REL)
 # 它们到底分别是哪张报表，写在 `datasources.py` 的 `_FINANCIAL_REPORTS` 里。
 # 腾讯那张的键是**下标字符串**：那个源回的是没有列名的位置数组（附录 B16），
 # 所以它比别的表更怕源换布局 —— 「位置 8 还在不在」只能靠适配器里的宽度守卫。
+# tushare 那张（2026-09-29，契约附录 B21）是第一条**要凭证**的通道，键是 `adj_factor`
+# 报文里的列名。它与上面五张的区别在**值域**：它的三个标准列名来自
+# `ADJUST_FACTOR_COLUMNS`（另一张表的 schema），不是日线行的列 —— 所以下面
+# `SCHEMA_TUPLES` 必须一起登记，否则 A1 会把 `adjust_factor` 判成「不在标准 schema 里」。
 COLUMN_MAPS = ('AKSHARE_DAILY_BAR', 'BAOSTOCK_DAILY_BAR', 'TENCENT_DAILY_BAR',
                'EASTMONEY_INCOME_FINANCIAL',
-               'EASTMONEY_BALANCE_FINANCIAL', 'EASTMONEY_INDEX_MEMBER')
+               'EASTMONEY_BALANCE_FINANCIAL', 'EASTMONEY_INDEX_MEMBER',
+               'TUSHARE_ADJ_FACTOR')
 # 取值域映射表：{源取值: 标准取值}。键不是列名，所以不参与 A1/A2 的列名判定。
 VALUE_MAPS = ('EASTMONEY_REPORT_TYPE',)
-# 定义标准 schema 的四个元组。A1 的「标准列名集合」由它们拼出来（不读
+# 定义标准 schema 的五个元组。A1 的「标准列名集合」由它们拼出来（不读
 # `STANDARD_COLUMNS` —— 那是个 BinOp，`ast.literal_eval` 拿不到，而且拼法本身就是
 # `STANDARD_COLUMNS` 的定义）。
+# `ADJUST_FACTOR_COLUMNS` 是 2026-09-29 加的第 5 个（契约附录 B21）：复权因子
+# **故意不出现在** `STANDARD_COLUMNS` 里 —— 它不是日线行的列，而是另一张表的 schema。
+# 两张清单分开登记，正是为了让 A8 能用两段契约锚分别核对。
 SCHEMA_TUPLES = ('DAILY_BAR_COLUMNS', 'FINANCIAL_REQUIRED_COLUMNS',
-                 'FINANCIAL_SUBJECT_COLUMNS', 'INDEX_MEMBER_COLUMNS')
+                 'FINANCIAL_SUBJECT_COLUMNS', 'INDEX_MEMBER_COLUMNS',
+                 'ADJUST_FACTOR_COLUMNS')
 REPORT_TYPES_CONST = 'REPORT_TYPES'
 DROPPED_MARKERS_CONST = 'BAOSTOCK_DROPPED_MARKERS'
 
@@ -135,12 +144,16 @@ DB_DRIVER_MODULES = ('psycopg', 'psycopg2', 'sqlalchemy', 'asyncpg', 'aiomysql',
 SOURCE_SDK_MODULES = ('akshare', 'baostock', 'tushare', 'jqdatasdk', 'rqdatac',
                       'efinance', 'adata', 'yfinance')
 
-# 契约 §3.2 的三段列名清单：(标签, 对应常量, 起点锚, 终点锚)。
+# 契约 §3.2 的四段列名清单：(标签, 对应常量, 起点锚, 终点锚)。
 # 锚都是实测唯一的（`--selftest` 的 NEG8b 会证明「锚丢了 = 判 FAIL」而不是跳过）。
+# 第 4 段（adjust_factor，2026-09-29 随附录 B21 落地）两道锚都是新选的，因为既有
+# 锚都不能共用：`列名 ——` 是index 那段的起点锚（再拿它当起点会命中两处 ⇒ 抽失败），
+# 而正文里首个 `，且` 必须紧跟在清单尾巴后面 —— 换行把 `，且` 拆开就等于终点锚不存在。
 CONTRACT_SCHEMA_SPECS = (
     ('daily', 'DAILY_BAR_COLUMNS', '列名必须是标准 schema ——', '，且'),
     ('financial', 'FINANCIAL_REQUIRED_COLUMNS', '必须包含列 ——', '（缺失该列'),
     ('index', 'INDEX_MEMBER_COLUMNS', '列名 ——', '。'),
+    ('adjust_factor', 'ADJUST_FACTOR_COLUMNS', '列名必须恰好是 ——', '，且'),
 )
 
 # 契约正文里除列名之外还会有散文（如财务清单尾巴上的「各财务科目」）。散文允许存在，
@@ -152,18 +165,24 @@ STAT_KEYS = ('scanned_modules', 'str_maps', 'column_maps', 'value_maps',
              'row_classes', 'denylist_names', 'contract_schemas',
              'taxonomy_declared', 'taxonomy_producers', 'taxonomy_wiring')
 
-# A10 的下限：必须是「这个仓库当前实测到的东西」的最小值，不是愿望值。
-# 阈值定高一点是刻意的 —— 提取器一旦失配，这些数会整体掉到 0，而 0 必须红。
+# A10 的下限：必须是「这个门禁**实际会跑到的每一个输入**」的最小值，不是愿望值。
+# 注意它不是「真产物的实测值」：`--selftest` 的 CLEAN 合成样本也走同一条
+# `run_checks`，所以下限是被**最小的那个输入**钉住的 ⇒ 真产物现在比下限高。
+# 每条括注里两个数（真产物 / CLEAN 合成）都是数出来的，不是估的：改产物或改
+# 合成样本后要重新数，否则注文会变成假话 —— 但**不要为了收紧而下调抬高**：
+# 抬到超过 CLEAN 合成会让 POSITIVE 样本变红，那不是收紧，是制造假红。
+# 这些下限只负责「提取器失配 ⇒ 数掉到 0 ⇒ 红」；「已登记的常量被删」由 A0
+# （注册了却不存在）与 A3/A9（存在却没登记）负责，不靠抬高下限。
 MIN_STATS = (
-    ('str_maps', 7, '模块级 str->str 映射表（6 张列名表 + 1 张取值表）'),
-    ('column_maps', 6, '解析到的列名映射表'),
-    ('value_maps', 1, '解析到的取值域映射表'),
-    ('schema_bindings', 4, '标准 schema 列名元组'),
+    ('str_maps', 7, '模块级 str->str 映射表（真产物 8 = 7 张列名表 + 1 张取值表 / CLEAN 7）'),
+    ('column_maps', 6, '解析到的列名映射表（真产物 7 / CLEAN 6）'),
+    ('value_maps', 1, '解析到的取值域映射表（真产物 1 / CLEAN 1）'),
+    ('schema_bindings', 4, '标准 schema 列名元组（真产物 5 / CLEAN 4）'),
     ('module_imports', 1, '模块级 import'),
     ('lazy_source_imports', 1, '函数体内导入的源 SDK（A6 的证据：看不到就说明惰性导入没了）'),
     ('row_classes', 1, '被检查的数据类'),
     ('denylist_names', 1, '反推出来的源特有字段名黑名单'),
-    ('contract_schemas', 3, '从契约 §3.2 抽出的列名清单'),
+    ('contract_schemas', 3, '从契约 §3.2 抽出的列名清单（真产物 4 / CLEAN 3）'),
     ('taxonomy_declared', 8, 'errors.py 里声明出来的取数失败类别（A11 的证据：看不到就说明分类表没了）'),
     ('taxonomy_producers', 8, '适配器实际会产出的类别（判定分支 ＋ 显式 raise）'),
     ('taxonomy_wiring', 1, '把分类结果接成 kind= 的翻译点（A11 的证据：看不到就说明分类没接线）'),
@@ -326,7 +345,7 @@ def run_checks(adapter_text, rows_text, errors_text, contract_text):
             return _MISSING
         return value
 
-    # ── 标准 schema：由四个元组拼出来 ────────────────────────────────────────────
+    # ── 标准 schema：由五个元组拼出来 ────────────────────────────────────────────
     tuples = {}
     for name in SCHEMA_TUPLES:
         value = need(name, '标准 schema 列名元组')
@@ -627,6 +646,34 @@ def _mutate(text, old, new, tag):
     return out
 
 
+def _mutate_all(text, old, new, tag, expect):
+    """把 `old` 的**每一个**出现处都换掉，并断言命中次数正好是 `expect`。
+
+    用于「这个守卫赖以成立的对象不止一个」的变异。教训（2026-09-29 实测）：
+    `NEG11a` 原本只改 `classify_source_failure` 的兑底分支，而 `tushare` 那批新代码又
+    在报文体里写了两处 `kind='UNKNOWN'` ⇒ 该类别**仍然有产出点**，守卫于是**正确地
+    保持沉默**，样本报 0 issue —— 而报告里「变异没打到分支」与「探测器不存在」长得
+    一模一样。所以：① 换就要换光；② 把相信的命中次数写成参数，产物改了它就会**响亮地**红，
+    而不是悄悄变成 no-op。
+    """
+    count = text.count(old)
+    if count == 0:
+        print('    sample %s: ANCHOR NOT FOUND (0 occurrence(s), need %d) %r'
+              % (tag, expect, old[:60]))
+        return None
+    if count != expect:
+        print('    sample %s: SITE COUNT DRIFT (found %d, expected %d) %r —— 这个样本'
+              '必须打到该守卫赖以成立的全部对象，改了产出点就要来改这里的期望值'
+              % (tag, count, expect, old[:60]))
+        return None
+    out = text.replace(old, new)
+    if out == text:
+        print('    sample %s: NO-OP (replacement is byte-identical to the anchor)' % tag)
+        return None
+    print('    applied: %s (%d site(s))' % (tag, count))
+    return out
+
+
 # 合成一套「干净」的三件套：形状与真货同构（常量名、映射表分类、惰性导入），
 # 但内容与真货无关。POSITIVE 样本靠它证明「不会永远报红」—— 没有这个样本，
 # 一个「任何输入都报错」的探测器在上面每个 NEG 里都会显得完美。
@@ -640,6 +687,9 @@ FINANCIAL_REQUIRED_COLUMNS = ('symbol', 'report_type', 'period_end', 'announce_d
 FINANCIAL_SUBJECT_COLUMNS = ('revenue', 'total_assets')
 INDEX_MEMBER_COLUMNS = ('index_code', 'symbol', 'effective_from', 'effective_to',
                         'weight')
+ADJUST_FACTOR_COLUMNS = ('symbol', 'trade_date', 'adjust_factor')
+# 与真货一致：复权因子**故意不进** `STANDARD_COLUMNS`（它不是日线行的列，是另一张表的
+# schema），门禁靠 `SCHEMA_TUPLES` 而不是靠这行拼接去认识它。
 STANDARD_COLUMNS = (DAILY_BAR_COLUMNS + FINANCIAL_REQUIRED_COLUMNS
                     + FINANCIAL_SUBJECT_COLUMNS + INDEX_MEMBER_COLUMNS)
 REPORT_TYPES = ('BALANCE', 'INCOME')
@@ -666,6 +716,11 @@ EASTMONEY_INDEX_MEMBER = {
 }
 EASTMONEY_REPORT_TYPE = {
     'RPT_LICO_FN_CPD': 'INCOME',
+}
+TUSHARE_ADJ_FACTOR = {
+    'ts_code': 'symbol',
+    'trade_date': 'trade_date',
+    'adj_factor': 'adjust_factor',
 }
 
 
@@ -726,7 +781,9 @@ class DailyBar:
     source: str
 """
 
-# A8 判据要求这三段能对上 CLEAN_ADAPTER 里的三个元组，所以列名清单与常量逐字一致。
+# A8 判据要求这四段能对上 CLEAN_ADAPTER 里的四个元组，所以列名清单与常量逐字一致。
+# （第 4 段的终结锚也是「紧跟在清单尾巴后面的那个 `，且`」—— 两边必须一致，
+#  否则 `contract_list` 会因为「找不到终点锚」而抽失败，而那是 A8 的 FAIL、不是跳过。）
 CLEAN_CONTRACT = """\
             pd.DataFrame: 列名必须是标准 schema —— symbol / trade_date / open / high /
                 low / close / volume / amount，且 trade_date 为 date 类型。
@@ -736,6 +793,9 @@ CLEAN_CONTRACT = """\
 
             pd.DataFrame: 列名 —— index_code / symbol / effective_from / effective_to
                 / weight。effective_to 可为空表示仍在成分内。
+
+            pd.DataFrame: 列名必须恰好是 —— symbol / trade_date / adjust_factor，且
+                trade_date 为 date 类型；adjust_factor 是恒为正的累计因子。
 """
 
 
@@ -877,8 +937,8 @@ def selftest():
     else:
         scenario('NEG8-contract-drift', adapter, rows, bad, 'A8')
 
-    # A8 的空转守卫：契约里三个锚一个都找不到。抽不到就必须红，
-    # 而不是「这一段跳过」—— 那样契约改版时门禁会安静地少检查三件事。
+    # A8 的空转守卫：契约里四个锚一个都找不到。抽不到就必须红，
+    # 而不是「这一段跳过」—— 那样契约改版时门禁会安静地少检查四件事。
     scenario('NEG8b-contract-anchors-gone', adapter, rows, 'X = 1\n', 'A8')
 
     # A9：新加一个标准 schema 元组但没登记 —— 它的列名不参与值域判定。
@@ -893,12 +953,16 @@ def selftest():
 
     # A10：常量都在、语法也对，但全是空的 —— 所有探测器都在空转。
     # 这一条与 A0 的区别是关键：A0 是「抽不到」，A10 是「抽到了，但是零个目标」。
+    # 所以这里的常量清单必须与 `SCHEMA_TUPLES` / `COLUMN_MAPS` 同步增删 —— 漏掉一个
+    # 就会把这个样本变成「常量都没找齐」（A0）而不是「找到了但都是空的」（A10）。
     empty_adapter = ("DAILY_BAR_COLUMNS = ()\nFINANCIAL_REQUIRED_COLUMNS = ()\n"
                      "FINANCIAL_SUBJECT_COLUMNS = ()\nINDEX_MEMBER_COLUMNS = ()\n"
+                     "ADJUST_FACTOR_COLUMNS = ()\n"
                      "REPORT_TYPES = ()\nAKSHARE_DAILY_BAR = {}\n"
                      "BAOSTOCK_DAILY_BAR = {}\nEASTMONEY_INCOME_FINANCIAL = {}\n"
                      "EASTMONEY_BALANCE_FINANCIAL = {}\n"
-                     "EASTMONEY_INDEX_MEMBER = {}\nEASTMONEY_REPORT_TYPE = {}\n")
+                     "EASTMONEY_INDEX_MEMBER = {}\nEASTMONEY_REPORT_TYPE = {}\n"
+                     "TUSHARE_ADJ_FACTOR = {}\n")
     scenario('NEG10-extraction-empty', empty_adapter, rows, contract, 'A10')
 
     # A11 的四个方向各给一个样本，而且**刻意做成单向**：一发只点着一个分支，
@@ -906,10 +970,13 @@ def selftest():
     # `_mutate` 会把它回显出来，含 GBK 之外的字符会让控制台把「锚丢了」变成崩溃。
 
     # (a) 声明了没人抛：类别还在表里，判定函数不再返回它。死代码方向。
-    bad = _mutate(adapter,
-                  "    return 'UNKNOWN'\n",
-                  "    return 'SDK_MISSING'\n",
-                  'NEG11a-kind-without-producer')
+    # 用 `_mutate_all` 而不是 `_mutate`：`UNKNOWN` 现在有 **3 个**产出点（分类器的兑底
+    # 分支 ＋ `tushare` 报文体里两处显式 kind=）—— 只改一处的话它仍然有人抛，守卫
+    # 会正当地沉默。只改一处就会得到「0 issue」这个看上去像探测器坏了的形态。
+    bad = _mutate_all(adapter,
+                      "'UNKNOWN'",
+                      "'SOURCE_RATE_LIMITED'",
+                      'NEG11a-kind-without-producer', expect=3)
     if bad is None:
         ok = False
     else:

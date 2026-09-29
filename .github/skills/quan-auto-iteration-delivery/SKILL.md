@@ -1,6 +1,6 @@
 ---
 name: quan-auto-iteration-delivery
-description: "quan-auto 仓库「一轮迭代 / 一个子步收工」的固定动作：拿总判据、读报告而不是重跑、回填会变假的状态陈述、按证据快照抬头钉的东西决定提交粒度、提交后刷新以 git ls-files 为范围的门禁证据、走代理推送并等一次 CI 真跑。Use when the user says 收工 / 交付 / 提交这一轮 / 迭代收尾 / 刷门禁报告 / 推送 / 等 CI / wrap up the iteration, or asks whether an evidence snapshot is still current."
+description: "quan-auto 仓库「一轮迭代 / 一个子步收工」的固定动作：拿总判据、读报告而不是重跑、回填会变假的状态陈述、按证据快照抬头钉的东西决定提交粒度、提交后刷新以 git ls-files 为范围的门禁证据、走代理推送并等一次 CI 真跑，以及收工前把分层记忆整理掉（主文件超 150 行就拆）。Use when the user says 收工 / 交付 / 提交这一轮 / 迭代收尾 / 刷门禁报告 / 推送 / 等 CI / 记忆文件太大 / 拆记忆 / token 税 / wrap up the iteration, or asks whether an evidence snapshot is still current or how to cut context cost."
 ---
 
 # quan-auto 迭代 / 子步收工
@@ -27,8 +27,10 @@ description: "quan-auto 仓库「一轮迭代 / 一个子步收工」的固定�
 
 1. **拿总判据**
    - 一次调用：`.\.venv\Scripts\python.exe tools/dev.py check`（ASCII 总表，省掉 PS 的编码税）；
-     要细节用 `python tools/run_all_gates.py`，只跑一个用 `--gate=NAME`。
-   - 退出码：`0` 全绿 / `1` 有门禁失败或 harness 自身无法完成检查 / `2` harness 自测失败。
+     要细节用 `python tools/run_all_gates.py`，只跑一个用 `--gate=NAME`。 ⚠️ **`--gate=` 会把 `tools/gates-report.txt` 原地覆盖成子集报告**（首行写
+     `SCOPE: PARTIAL -- N of M gate(s) ran`）⇒ 收工前必须**补跑一次全套还原**，
+     否则工作树里躺着一份「只扫了两条」的证据，下次会话会把全绿数读成 `2/2`。
+     这次重跑的理由是「修回被自己弄坏的证据」，不属于「为了看结果重跑」。 - 退出码：`0` 全绿 / `1` 有门禁失败或 harness 自身无法完成检查 / `2` harness 自测失败。
    - 单个门禁的**必填参数**在 `CONTEXT.md` §4 的表里（少一个 `--extra=` 会虚增基线、掩盖真漂移）。
 
 2. **回填会变假的句子**（这一步最容易漏，且**没有任何门禁兜底**）
@@ -66,6 +68,35 @@ description: "quan-auto 仓库「一轮迭代 / 一个子步收工」的固定�
    - `gh` 需要 `$env:HTTPS_PROXY='http://127.0.0.1:7890'`（它不读系统代理）。
      结论用退出码：`gh run watch <id> --exit-status`。
    - `.github/workflows/ci.yml` 只有两条 `run:`，**禁止 `|| true`** 吞退出码。
+
+## 收工前把分层记忆整理掉（主文件 >150 行就拆）
+
+仓库级记忆在 `/memories/repo/`，是**分两层**的，成本完全不同：
+
+- `quan-auto.md` —— **索引**：只放「每次动手前都要知道」的现状、纪律、和指向。
+  这一层**每次会话都自动加载** ⇒ 它每多一行，就是**每一轮都付**的税。
+- `quan-auto-<主题>.md` —— 主题文件，**按需加载**（有哪些主题**现取**：
+  列一下 `/memories/repo/` 目录，不要在别处抄一张清单）。
+
+动作：
+
+1. **拆**：索引超过 **150 行**就按主题拆出去。**交付流水一律进 `quan-auto-iterations.md`**
+   —— 它几乎不会被回读，最该离开自动加载层。（新增/改名主题文件时，同批改索引里那张表，
+   否则那张表本身就是一句会过期的话。）
+   **「哪类内容该去哪个文件」不在本 skill 里抄一份** —— 用索引里那张表的「里面有什么」列，
+   它同时就是写入路由：**对不上任何一行**，就说明该新建一个主题文件（并同批补进那张表）。
+   抄一份到这里 = 制造第二个会漂的副本，正是本仓库反复防的那类病。
+2. **拆完必须扫相对引用**：`见文末 / 见上文 / 见下文 / 见下方 X 节` 这类**相对位置**的说法，
+   拆分后全部指向空地址 ⇒ 一律改写成跨文件引用（``见 `quan-auto-db.md` 的「版本阶梯」节``）。
+   这与文档层「引用是契约、会随结构老去」是同一条病，只是这次是**自己**制造出来的。
+3. **读法**：`memory view` 支持 `view_range`，报告用 `Select-String` 只取 `verdict:` / `FINDING`
+   那几行。**不要整份读** —— 一次整读一份几百行的记忆，能把整整一轮的预算烧光。
+4. 🔴 **记忆路径只能用 `memory` 工具改**：`read_file` / `replace_string_in_file` 对
+   `/memories/**` 一律报「文件不存在」。批量改写落到 `%TEMP%` 的脚本里做是允许的，但必须
+   ① 有 `__main__` 守卫；② 每条替换断言**命中恰好 1 次**；③ 落盘后重读逐字节比对。
+5. **只搬位置、不改结论**：切段与校验交给脚本 —— 断言「脚本认识的小节集合 == 文件里全部
+   `## ` 行」（多一个小节就炸，防静默丢）、断言各段按原顺序拼回去与原文**逐字节相同**。
+   不要让模型「复述式重写」一遍，那会把结论悄悄改掉。
 
 ## 边界
 

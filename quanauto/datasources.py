@@ -91,6 +91,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from datetime import date, timedelta
 import json
+import os
 import re
 import socket
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
@@ -124,7 +125,18 @@ INDEX_MEMBER_COLUMNS = (
     'index_code', 'symbol', 'effective_from', 'effective_to', 'weight',
 )
 
+# 复权因子：契约 §3.2 的 `fetch_adjust_factor` 把 3 个列名写全了。逐字相等。
+# `adjust_factor` 是**累乘因子**（无量纲、恒 > 0），不是「当日比例差」，也不是
+# 「复权后价 / 复权前价」的某一日比值 —— 与 `dc_adjust_factor.adjust_factor`
+# （`numeric(18,8)`、`ck_dc_factor_positive`）同义（契约 §2.3 / D6）。
+ADJUST_FACTOR_COLUMNS = ('symbol', 'trade_date', 'adjust_factor')
+
 # 全量标准列：用来判「泄漏」——任何不在此集合里的列都是源字段名。
+# ⚠️ `ADJUST_FACTOR_COLUMNS` **刻意不在这里**：`STANDARD_COLUMNS` 是
+# `validate_frame` 的判据集合，而 `validate_frame` 还没有复权因子那一套判据
+# （主键、值域），把一条没有判据的 schema 混进去，只会让「校验通过」看起来比
+# 实际覆盖的多。复权因子帧在 `validate_frame` 里有**专支**（它显式报「未实现判据」
+# 而不是被当成源字段泄漏），登记为未收口项，见 DC 契约附录 B21.6。
 STANDARD_COLUMNS = DAILY_BAR_COLUMNS + FINANCIAL_COLUMNS + INDEX_MEMBER_COLUMNS
 
 # 契约 §3.6.1 的 `ck_dc_fin_report_type`。适配器必须在**写库前**就把源的口径
@@ -281,6 +293,24 @@ TENCENT_MAX_PAGES = 40
 # 长度（不带复权 11 段 / 带复权 10 段）本身就说明长度是会变的，所以宽度要显式要求，
 # 不能靠「反正测试时是对的」。由映射表算出，不手写数字（手写的那个会和表慢慢分家）。
 _TENCENT_MIN_WIDTH = max(int(key) for key in TENCENT_DAILY_BAR) + 1
+
+# tushare pro（`api.tushare.pro`）—— 本仓库第一个**要凭证**的源，本迭代只接复权因子
+# 这一条通道。它是**表外源**（契约 §3.2 那张表上是三个子类，理由见 `TushareAdapter`
+# 的类注释与 DC 契约附录 B21）。
+# `ts_code` 的形状与标准符号**恰好相同**（`600000.SH`）⇒ 这一格是「改名字」，
+# 不是「换口径」；也正因为它不是标准列名，A2 不会把它当恒等映射放行。
+TUSHARE_API = 'https://api.tushare.pro'
+TUSHARE_ADJ_FACTOR_API = 'adj_factor'
+#: tushare 用 **body.code** 报告失败（HTTP 状态永远 200）—— 实测到的两个非 0 码
+#: 都是 `40101`（空令牌 / 错令牌），见 DC 契约附录 B21.2。所以只认这一个：
+#: 其余非 0 码一律 `UNKNOWN` 并原样带上 code/msg，**不猜** —— 「积分不足 / 无权限」
+#: 这类码本机观察不到（真令牌下两个接口都是 `code=0`），猜一个映射等于造规则。
+TUSHARE_AUTH_CODE = '40101'
+TUSHARE_ADJ_FACTOR = {
+    'ts_code': 'symbol',
+    'trade_date': 'trade_date',
+    'adj_factor': 'adjust_factor',
+}
 
 EXCHANGES = ('SH', 'SZ', 'BJ')
 
@@ -504,7 +534,49 @@ def normalize_index_members(
     return frame.loc[:, list(INDEX_MEMBER_COLUMNS)]
 
 
-# ── 三个 normalize_* 共用的机械步骤 ────────────────────────────────────────────
+def normalize_adjust_factor(
+    raw: pd.DataFrame,
+    column_map: Mapping[str, str],
+    *,
+    symbol: Optional[str] = None,
+) -> pd.DataFrame:
+    """源复权因子帧 → 标准帧（只含 `ADJUST_FACTOR_COLUMNS`，顺序固定）。
+
+    参数:
+        raw: 源返回的原始帧（tushare 是 `data.fields` + `data.items` 拼出来的）。
+        column_map: 源列名 → 标准列名的映射。
+        symbol: 源不返回 symbol 列（或返回的列名无法识别）时用请求参数回填的标的代码。
+
+    **刻意没有单位/口径开关**（对比 `normalize_daily_bar` 的 `volume_in_lots` /
+    `amount_in_wan`，`normalize_index_members` 的 `weight_is_percent`）：那三个开关的
+    存在理由是「同一个量在两个源上有两种口径」；而复权因子只有一个口径（契约 §2.3
+    的累乘因子）。多一个开关就多一种「两边都以为自己是对的」的可能。
+
+    异常:
+        SourceAdapterError: 缺少必需的源列、因子不是数值、`trade_date` 解析不了或为空、
+            或 `symbol` 既不在帧里也没作为参数给出。
+    """
+    context = '复权因子归一化'
+    source_required = [src for src, std in column_map.items()
+                       if std in ADJUST_FACTOR_COLUMNS]
+    frame = _select(raw, column_map, ADJUST_FACTOR_COLUMNS, source_required, context)
+    if frame.shape[0] == 0:
+        return _empty(*ADJUST_FACTOR_COLUMNS)
+    if 'symbol' not in frame.columns:
+        if symbol is None:
+            raise SourceAdapterError('%s：帧里没有 symbol 列，也没有传 symbol= 回填参数'
+                                     % context)
+        frame['symbol'] = symbol
+    frame['symbol'] = _symbols(frame['symbol'], context)
+    frame['trade_date'] = _to_dates(frame['trade_date'], 'trade_date', context)
+    _require_present(frame['trade_date'], 'trade_date', context)
+    frame['adjust_factor'] = _to_numbers(frame['adjust_factor'], 'adjust_factor', context)
+    # 不做 > 0 的检查：那是**值域判断**，属 `validate_frame` / DDL 的
+    # `ck_dc_factor_positive`，不是机械换算。归一化这一层只保证「类型对、列对」。
+    return frame.loc[:, list(ADJUST_FACTOR_COLUMNS)]
+
+
+# ── 四个 normalize_* 共用的机械步骤 ────────────────────────────────────────────
 # 这些函数只做「机械」的事（选列、转类型、换算），**不做判断**。判断（缺列怎么办、
 # 越界算不算失败）留在调用它的函数里，或者留在 `validate_frame` 里。
 
@@ -624,6 +696,23 @@ def validate_frame(frame: Any) -> ValidationReport:
 
     errors: List[str] = []
     warnings: List[str] = []
+    # 复权因子是**第四张 schema**，而它的校验判据还没接上（DC 契约附录 B21.6）。
+    # 这一支必须显式挡在通用分支之前：让它掉进下面那两条会说
+    # 「`adjust_factor` 是源字段名泄漏」+「列集合不匹配任何标准 schema」——
+    # 两句都是**误诊**，读的人会跑去查源接口，而不是来看这张未收口清单。
+    # 在判据接上之前，这一帧没有经过任何值域 / 主键检查 ⇒ 不构成校验通过。
+    have = set(map(str, frame.columns))
+    if set(ADJUST_FACTOR_COLUMNS) <= have:
+        extra = sorted(have - set(ADJUST_FACTOR_COLUMNS))
+        errors.append('复权因子 schema 的校验判据**尚未实现**（DC 契约附录 B21.6）：'
+                      '本帧没有经过值域（`ck_dc_factor_positive`）与主键'
+                      '（%s）检查，因此**不构成校验通过**。'
+                      % (list(_ADJUST_FACTOR_PRIMARY_KEY),))
+        if extra:
+            errors.append('非标准列 %s：复权因子 schema 只有 %s（契约 §3.2）'
+                          % (', '.join(extra), list(ADJUST_FACTOR_COLUMNS)))
+        return ValidationReport(is_valid=False, row_count=frame.shape[0], errors=errors)
+
     present = [name for name in frame.columns if name in STANDARD_COLUMNS]
     leaked = sorted(set(name for name in frame.columns if name not in STANDARD_COLUMNS))
     if leaked:
@@ -667,6 +756,11 @@ _PRIMARY_KEYS = {
     'financial': ('symbol', 'report_type', 'period_end'),
     'index': ('index_code', 'symbol', 'effective_from'),
 }
+
+#: 复权因子的主键（`dc_adjust_factor` 的 PK）。**刻意不进 `_PRIMARY_KEYS`**：
+#: 那张表登记的是 `validate_frame` **真的判过**的三类帧，而它目前对复权因子
+#: 只做「承认自己还没有判据」这一件事（见 `validate_frame` 里那一支的注释）。
+_ADJUST_FACTOR_PRIMARY_KEY = ('symbol', 'trade_date')
 
 #: 校验项写成一列 `(标签, 判据)` 而不是一串 if：判据是**数据**，于是「哪些规则被检查过」
 #: 可以被打印出来、被触发测试逐一打中。`tools/verify_data_center_adapter.py` 的
@@ -798,6 +892,132 @@ def _violation(frame: pd.DataFrame, tag: str) -> Optional[str]:
 
 
 
+# ── 源凭证：`.env`（本模块第一次遇到「要鉴权的源」）──────────────────────────
+# 契约 §3.2 的既有源（腾讯 / 新浪 / 东财 / akshare / baostock）**全部免鉴权**，
+# 所以「凭证从哪来」这件事在这里第一次要定规矩。三条：
+#
+# * 令牌**只从环境读**。绝不写进源码、绝不写进测试、绝不打印、绝不进 git。
+# * 本机供值通道 = 项目根的 `.env`（`.gitignore` **忽略**它，入库的是模板
+#   `.env.example`）。**没有这份文件是正常状态** —— CI 就是没有。
+# * **真实环境变量优先于文件**。反过来会让 CI / 容器里注入的凭证被一份遗留的
+#   本地文件悄悄盖掉，而症状只是「鉴权失败」—— 最难查的那一种。
+#
+# 解析器**只用标准库**，与 `tools/` 同口径：为二十行代码拖进 `python-dotenv`
+# 违背「依赖由真正用它的模块带进来」—— 没有任何模块真的需要那个库。
+ENV_FILE_NAME = '.env'
+
+#: tushare 令牌的环境变量名。同一个名字出现在三处（`.env.example`、这里、
+#: `tests/test_datasources_env.py`），改一处要三处一起改。
+TUSHARE_TOKEN_ENV = 'TUSHARE_TOKEN'
+
+
+def project_root() -> str:
+    """仓库根目录（`quanauto/` 的上一级）。
+
+    `.env` 在**项目根**而不是包目录里：包安装后可能在 `site-packages`，而凭证
+    属于**这台机器上的这份工作树**，不属于包。
+    """
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _credentials_error(message: str) -> SourceAdapterError:
+    """凭证类失败的**唯一**构造点 —— 这样「报错里不许出现令牌值」只有一个地方要守。
+
+    类别用 `SOURCE_AUTH`（闭集里的已有值，动作是「去配/换凭证」）：本模块的
+    异常类规矩是「只抛 `SourceAdapterError`，别让 `ImportError` / `ValueError`
+    逃上去冒充『上层代码写错了』」，一个坏掉的 `.env` 正属于「源这一侧用不了」。
+    """
+    return SourceAdapterError(message, source='env', kind='SOURCE_AUTH')
+
+
+def read_env_file(path: Optional[str] = None) -> Dict[str, str]:
+    """读一份 `.env`（每行 `KEY=VALUE`），返回 `{键: 值}`。
+
+    **刻意做得很笨**：不认 `${VAR}` 展开、不认多行值、不认行尾注释。一个「聪明」的
+    解析器会让人以为 `.env` 里有 shell 语义，而这里的值是要**原样**喂给 HTTP 的凭证
+    —— 猜错的代价是发一个坏请求，而不是当场报错。
+
+    规则（逐条都有用例）：
+
+    * 空行、以及去掉前导空白后以 `#` 开头的行，跳过；
+    * 行首可选的 `export ` 去掉（兼容 shell 习惯）；
+    * 以**第一个** `=` 切分 —— 值里含 `=` 是合法的（base64 令牌很常见）；
+    * 键与值两端空白去掉；
+    * 值若被**成对**的 `'` 或 `"` 包住，去掉这对外引号；不配对的引号保持原样。
+
+    文件不存在 ⇒ 返回 `{}`，**不抛**：没有本机 `.env` 是正常状态（CI 就没有），
+    不是一个要上层处理的错误。「凭证到底有没有」由调用方判。
+
+    **两处编码坑当红牌打出来**（本仓库在编码上吃过两次亏，这里不静默处理）：
+
+    * UTF-8 BOM：按 `utf-8-sig` 读，BOM 不会混进键名；
+    * **UTF-16**：PS 5.1 的 `>` 重定向写的是 UTF-16LE（不是 UTF-8）。它按 UTF-8 能
+      解出来，只是一堆夹着 NUL 的「键」⇒ 查找落到「没有凭证」那条路，让人去怀疑
+      令牌的值。所以这里显式检出 NUL 并拒绝，把「查错方向」这件事挡住。
+    """
+    path = path or os.path.join(project_root(), ENV_FILE_NAME)
+    try:
+        with open(path, 'r', encoding='utf-8-sig') as handle:
+            raw = handle.read()
+    except FileNotFoundError:
+        return {}
+    except UnicodeDecodeError as exc:
+        raise _credentials_error(
+            '%s 不是 UTF-8（%s）。请把凭证文件另存为 UTF-8 —— '
+            'PS 5.1 的 `>` 重定向写的不是 UTF-8。' % (path, type(exc).__name__)) from exc
+    if '\x00' in raw:
+        raise _credentials_error(
+            '%s 内容里有 NUL 字节，多半是 **UTF-16** —— PS 5.1 的 `>` 重定向写的正是 '
+            'UTF-16LE。按 UTF-8 硬读会得到一堆带 NUL 的键名，症状是「查不到凭证」，'
+            '让人去错怪令牌的值。请改用编辑器另存为 UTF-8，'
+            '或 `Copy-Item %s.example %s` 之后再改。'
+            % (path, ENV_FILE_NAME, ENV_FILE_NAME))
+    values: Dict[str, str] = {}
+    for line in raw.replace('\r\n', '\n').replace('\r', '\n').split('\n'):
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        if line.startswith('export '):
+            line = line[len('export '):].lstrip()
+        key, separator, value = line.partition('=')
+        if not separator:
+            # 没有 `=` 的行（比如误写成 shell 赋值）忽略 —— 不当成「键的值是空」
+            continue
+        key = key.strip()
+        if not key:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+            value = value[1:-1]
+        values[key] = value
+    return values
+
+
+def tushare_token(environ: Optional[Mapping[str, str]] = None,
+                  env_file: Optional[str] = None) -> str:
+    """tushare 令牌：**真实环境变量优先**，其次项目根 `.env`；取不到就抛。
+
+    不返回 `None`：一个「有时候是 None」的凭证会在第一次发请求时变成一个**没有
+    令牌的请求** —— 那是**发到源上**的一次失败，比在这里当场报错贵得多，而且
+    现场离原因很远。
+
+    报错文本里**不含令牌值**（含的是它该去哪配）—— 报错会被贴进日志 / issue。
+    """
+    env = os.environ if environ is None else environ
+    token = (env.get(TUSHARE_TOKEN_ENV) or '').strip()
+    if not token:
+        # 空串按「没有」处理：`.env.example` 原样复制过来就是 `TUSHARE_TOKEN=`。
+        token = (read_env_file(env_file).get(TUSHARE_TOKEN_ENV) or '').strip()
+    if not token:
+        raise _credentials_error(
+            'tushare 令牌为空（环境变量 %s 与项目根 %s 都没有）。把 %s 写进 %s：'
+            '`Copy-Item %s.example %s` 后再填值（`.env` 已被 .gitignore 忽略，'
+            '不会进仓库），或设为真实环境变量。'
+            % (TUSHARE_TOKEN_ENV, ENV_FILE_NAME, TUSHARE_TOKEN_ENV, ENV_FILE_NAME,
+               ENV_FILE_NAME, ENV_FILE_NAME))
+    return token
+
+
 def classify_source_failure(exc: BaseException) -> str:
     """把源侧的任意异常映射到 `SOURCE_FAILURE_KINDS` 里的**一个**类别。
 
@@ -856,6 +1076,12 @@ class SourceAdapter(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def fetch_adjust_factor(self, symbols: List[str], start: date,
+                            end: date) -> pd.DataFrame:
+        """拉取复权因子，列名必须是 `ADJUST_FACTOR_COLUMNS`（见附录 B21）。"""
+        raise NotImplementedError
+
+    @abstractmethod
     def fetch_financial(self, symbols: List[str], period_end: date) -> pd.DataFrame:
         """拉取财务数据，必须包含 `announce_date`（缺失即不合格，见 D4）。"""
         raise NotImplementedError
@@ -871,11 +1097,16 @@ class SourceAdapter(ABC):
         raise NotImplementedError
 
 
-# ── 唯一网络出口 ─────────────────────────────────────────────────────────────
+# ── 网络出口（全模块只有这两个函数碰网络：一个 GET、一个 POST）─────────────────
+# 为什么是两个函数而不是一个带 `method=` 的：两条通道的**失败形状**不同 —— GET 那边
+# 的鉴权失败是 HTTP 401/403（`classify_source_failure` 看得见状态码），而 tushare 的
+# 鉴权失败是 **HTTP 200 + body.code != 0**（状态码永远 200）⇒ 判据只能写在解帧之后。
+# 塞进同一个函数，会让「取数失败」在两处各有一套判据却写在一个地方。
 def _http_get_json(url: str, params: Mapping[str, Any], *,
                    timeout: float = HTTP_TIMEOUT_SECONDS,
                    opener: Optional[Callable[..., Any]] = None) -> Any:
-    """GET `url?params` 并解成 JSON。**全模块只有这里碰网络。**
+    """GET `url?params` 并解成 JSON。**全模块两个网络出口之一**（另一个是
+    `_http_post_json` —— tushare 只吃 POST）。
 
     参数:
     opener: 替换用的请求函数（签名同 `urllib.request.urlopen` 且被当作上下文管理器用）。
@@ -894,6 +1125,32 @@ def _http_get_json(url: str, params: Mapping[str, Any], *,
     request = urllib.request.Request(
         url + '?' + urllib.parse.urlencode(dict(params)),
         headers={'User-Agent': HTTP_USER_AGENT},
+    )
+    real_opener = urllib.request.urlopen if opener is None else opener
+    with real_opener(request, timeout=timeout) as response:
+        body = response.read()
+    return json.loads(body.decode('utf-8'))
+
+
+def _http_post_json(url: str, payload: Mapping[str, Any], *,
+                    timeout: float = HTTP_TIMEOUT_SECONDS,
+                    opener: Optional[Callable[..., Any]] = None) -> Any:
+    """POST 一份 JSON 并解成 JSON。**tushare 只吃 POST**（GET 不认这些参数）。
+
+    与 `_http_get_json` 一样**不在这里 try/except**：异常原样上抛，交给唯一的翻译点
+    `_AdapterBase._call` 去分类。不一样的是 `payload` 里**装着凭证**，所以这个函数
+    （以及调用它的 `_default_fetch`）**绝不把 payload 打进任何消息、日志或异常**。
+
+    参数:
+    opener: 替换用的请求函数（签名同 `urllib.request.urlopen` 且被当作上下文管理器
+        用）。测试传本机实现就能把「JSON 体 → Content-Type → 解帧 → 分类」整条链路
+        验完，**不碰外网**。
+    """
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(dict(payload)).encode('utf-8'),
+        method='POST',
+        headers={'Content-Type': 'application/json', 'User-Agent': HTTP_USER_AGENT},
     )
     real_opener = urllib.request.urlopen if opener is None else opener
     with real_opener(request, timeout=timeout) as response:
@@ -1031,14 +1288,15 @@ def _tencent_rows(payload: Any, code: str) -> List[Any]:
 class _AdapterBase(SourceAdapter):
     """各子类共用的管道。**不是契约类** —— 契约 §3.2 只画了基类与三个子类。
 
-    放这里而不复制进每个子类的东西只有两样：`validate` 的委托，和
-    「源这一侧的任何异常都翻译成 `SourceAdapterError`」的包装。后者尤其不该复制 ——
+    放这里而不复制进每个子类的东西只有三样：`validate` 的委托、
+    「源这一侧的任何异常都翻译成 `SourceAdapterError`」的包装，以及
+    `fetch_adjust_factor` 的默认实现（= 这一源没有这条通道）。第二样尤其不该复制 ——
     漏掉一处，那一处就会开始向上层抛 `ModuleNotFoundError` / `KeyError` / `ValueError`，
     而那些类型在上层读起来是「调用方写错了」，会被当成 bug 去查错地方。
 
     **子类不止三个**：契约表上的三个之外还有 `TencentAdapter`（它为何存在见自己的
-    类注释与附录 B16）。子类数量与契约那张表**不是一回事**，所以「照表实现了三个」
-    这句话在本模块里不能当成兜底理由。
+    类注释与附录 B16）与 `TushareAdapter`（附录 B21）。子类数量与契约那张表
+    **不是一回事**，所以「照表实现了三个」这句话在本模块里不能当成兜底理由。
     """
 
     #: 子类覆盖。契约给 `source_name` 写的是抽象方法而不是类属性，所以这里保留
@@ -1060,6 +1318,24 @@ class _AdapterBase(SourceAdapter):
         """委托给 `validate_frame`。三个子类的判据是**同一套**（标准 schema 与 DDL
         的 CHECK 是同一条规则），所以没有理由让它们各自实现一份。"""
         return validate_frame(frame)
+
+    def fetch_adjust_factor(self, symbols: List[str], start: date,
+                            end: date) -> pd.DataFrame:
+        """默认 = **这一源没有复权因子这条通道**。
+
+        为什么默认实现放在基类，而 `fetch_daily_bar` / `fetch_financial` /
+        `fetch_index_members` 留在 `SourceAdapter` 里当抽象方法：那三条是「一个源适配器
+        至少要能做的是什么」，而这条目前**只有 tushare 有**（附录 B21.1）。留成抽象
+        方法，会让另外四个源各写一份一模一样的 `raise`，而重复的 `raise` 在下次有人
+        加源时不会提醒他任何事。
+
+        **必须显式抛，绝不返回空帧**：空帧会被下游读成「这段区间没有因子」（= 不复权），
+        而真相是「这个源不给因子」—— 两件事在回测里的后果相反，而报告里长得一样。
+        """
+        raise SourceAdapterError(
+            '%s 这条通道没有复权因子（本迭代只接了 tushare 的 adj_factor，见 DC 契约附录 B21）'
+            % self._SOURCE,
+            source=self._SOURCE, kind='UNSUPPORTED')
 
     def _default_fetch(self, **kwargs: Any) -> pd.DataFrame:
         """子类覆盖为真实的源调用（惰性导入）。"""
@@ -1507,6 +1783,152 @@ class TencentAdapter(_AdapterBase):
     def fetch_index_members(self, index_code: str, as_of_date: date) -> pd.DataFrame:
         raise SourceAdapterError(
             '腾讯这条通道只有日线（实测过的也只有日线；指数成分股走东财，见契约 §3.2）',
+            source=self._SOURCE, kind='UNSUPPORTED')
+
+
+def _tushare_rows(doc: Any) -> Tuple[List[str], List[Any]]:
+    """tushare 信封 → `(fields, items)`。**成功与失败都是 HTTP 200**。
+
+    这是「tushare 为什么不能直接套 `classify_source_failure`」的落地：那个分类器看的是
+    `HTTPError.code`，而 tushare 的鉴权失败根本不产生 `HTTPError`。所以判据必须读 body。
+
+    三种结果三种 `kind`，**不合并**：
+      * `code == 0` ⇒ 正常，返回 `fields` / `items`；
+      * `code == TUSHARE_AUTH_CODE` ⇒ `SOURCE_AUTH`（动作 = 换/补凭证）；
+      * 其余非 0 码 ⇒ `UNKNOWN`（动作 = **先看 msg**，因为「积分不足 / 无权限 / 接口
+        下线」这些码本机都没观察到，编一个映射比报 UNKNOWN 更坏）。
+    """
+    if not isinstance(doc, dict):
+        raise SourceAdapterError(
+            'tushare 返回的不是 JSON 对象，而是 %s' % type(doc).__name__,
+            source='tushare', kind='SOURCE_SCHEMA_MISMATCH')
+    code = doc.get('code')
+    if code != 0:
+        # `str(code)`：实测是数字，但不赌版本 —— 字符串形态要同样认得出来。
+        if str(code) == TUSHARE_AUTH_CODE:
+            raise SourceAdapterError(
+                'tushare 拒绝了凭证（code=%s，msg=%s）—— 检查环境变量 %s 或项目根的 %s'
+                % (code, doc.get('msg'), TUSHARE_TOKEN_ENV, ENV_FILE_NAME),
+                source='tushare', kind='SOURCE_AUTH')
+        raise SourceAdapterError(
+            'tushare 返回 code=%s（msg=%s）—— 本仓库只认 0（成功）与 %s（凭证被拒），'
+            '其余码不猜，先照着 msg 去查文档'
+            % (code, doc.get('msg'), TUSHARE_AUTH_CODE),
+            source='tushare', kind='UNKNOWN')
+    data = doc.get('data')
+    if not isinstance(data, dict):
+        raise SourceAdapterError(
+            'tushare code=0 但 data 不是对象（%s）—— 信封形状变了'
+            % type(data).__name__,
+            source='tushare', kind='SOURCE_SCHEMA_MISMATCH')
+    if data.get('has_more'):
+        # 宁可报错也不能只留第一页：静默截断会让「这段区间的因子少了一截」在库里
+        # 长得像「这段时间就是没数据」。本迭代**不实现翻页**（tushare 的分页口径与
+        # 腾讯的倒序翻页不同，没实测过就不写），所以这是个响亮的未收口项。
+        raise SourceAdapterError(
+            'tushare 报了 has_more=true，请求的区间一次拿不完，而本迭代没有实现翻页 —— '
+            '拆小区间再取，不要拿截断的结果当全量（附录 B21.6）',
+            source='tushare', kind='UNKNOWN')
+    fields, items = data.get('fields'), data.get('items')
+    if not isinstance(fields, list) or not isinstance(items, list):
+        raise SourceAdapterError(
+            'tushare 的 data.fields / data.items 不是列表（%s / %s）—— 信封形状变了'
+            % (type(fields).__name__, type(items).__name__),
+            source='tushare', kind='SOURCE_SCHEMA_MISMATCH')
+    return [str(name) for name in fields], items
+
+
+class TushareAdapter(_AdapterBase):
+    """tushare pro（`api.tushare.pro`）—— 本仓库第一个**要凭证**的源。
+
+    **它不在契约 §3.2 那张表里**（与 `TencentAdapter` 同一种情况：表上写的是「MVP 阶段
+    必须实现的三个子类」，表外的源是接进来的事实，不能从表里读出来）。本迭代只接一条
+    通道：复权因子（`adj_factor`）。这条通道是 `dc_adjust_factor` 到目前为止**唯一的**
+    采集路径（我看到的采集路径只有它；写入与读侧见附录 B21.3 / B7）。
+
+    它是本模块**第一个只覆盖一个数据面的源**，所以另外三个面必须在类里显式写出来
+    （不能靠基类兜 —— 基类只给 `fetch_adjust_factor` 默认实现，那三条仍是抽象方法，
+    不写就**实例化不了**；见下面那三条前的注释）。
+
+    凭证**不从签名传入**（契约 §3.2 的签名里没有凭证参数，也不打算加 —— 加上去每一处
+    调用都得跟着改，而「换源/加源不改下游签名」正是这一层存在的理由）。它在取数那一刻
+    由 `tushare_token()` 从环境变量 `TUSHARE_TOKEN` 或项目根的 `.env` 读；读不到就抛
+    `SourceAdapterError(kind='SOURCE_AUTH')`，消息里**只有变量名**。
+
+    为什么用 stdlib 而不是 tushare SDK（附录 B21.1）：这条 API 就是「POST 一份 JSON，
+    读 `data.fields` + `data.items`」，SDK 是一层没有加信息的包装；而少一个运行时依赖
+    就少一种「本机没装 ⇒ SOURCE_SDK_MISSING」的失败，同时这条适配器能与东财/腾讯一样
+    被**离线**整条验完（本机没装 tushare，它也不会被装）。
+    """
+
+    _SOURCE = 'tushare'
+    priority = SourcePriority.FALLBACK
+
+    @staticmethod
+    def _default_fetch(**kwargs: Any) -> pd.DataFrame:
+        """真实取数：**单标的**一段区间（`api_name='adj_factor'`）。
+
+        `symbols` 的展开在 `fetch_adjust_factor` 里做（与其它源同一分工）。
+        `opener` 只给测试用（同 `_http_get_json`）；生产路径不传。
+        """
+        symbol = normalize_symbol(kwargs['symbol'])
+        start = pd.Timestamp(kwargs['start']).date()
+        end = pd.Timestamp(kwargs['end']).date()
+        if start > end:
+            raise SourceAdapterError(
+                'tushare %s 的区间是反的：start=%s > end=%s' % (symbol, start, end),
+                source='tushare', kind='UNSUPPORTED')
+        fields, items = _tushare_rows(_http_post_json(
+            TUSHARE_API,
+            {'api_name': TUSHARE_ADJ_FACTOR_API,
+             # 凭证只出现在这一行；它不进消息、不进日志。
+             'token': kwargs.get('token') or tushare_token(),
+             'params': {'ts_code': symbol,
+                        # tushare 要 `YYYYMMDD` 的无分隔形式。
+                        'start_date': start.strftime('%Y%m%d'),
+                        'end_date': end.strftime('%Y%m%d')},
+             'fields': ''},
+            opener=kwargs.get('opener')))
+        if not items:
+            # 空区间：把**列名**带上。不带的话 `normalize_adjust_factor` 会先撞
+            # 「源返回的不是 DataFrame」那条分支，报出一句与真因无关的话。
+            return pd.DataFrame(columns=fields or sorted(TUSHARE_ADJ_FACTOR))
+        return pd.DataFrame(items, columns=fields)
+
+    def fetch_adjust_factor(self, symbols: List[str], start: date,
+                            end: date) -> pd.DataFrame:
+        """逐标的取数后拼接（与其它源同一形状）。"""
+        frames = [normalize_adjust_factor(self._call(symbol=symbol, start=start, end=end),
+                                          TUSHARE_ADJ_FACTOR, symbol=symbol)
+                  for symbol in symbols]
+        if not frames:
+            return _empty(*ADJUST_FACTOR_COLUMNS)
+        return pd.concat(frames, ignore_index=True)
+
+    # ── 本类**不覆盖**的三个数据面 ───────────────────────────────────────────
+    # 这三段不是「照抄基类」：`_AdapterBase` **故意**只给了 `fetch_adjust_factor`
+    # 一个默认实现，另外三个留在 `SourceAdapter` 里当抽象方法（理由见基类注释：
+    # 那三条是「一个源适配器至少要能做的是什么」）。于是**一个只覆盖单个数据面的
+    # 源必须自己把这三条写出来** —— 不写就实例化不了。
+    #
+    # 2026-09-29 实测：本类第一版**没写**这三条，而 `TushareAdapter` 此前从未被
+    # 导入、从未被实例化（只被 `ast` 解析过），所以门禁全绿、用例全绿，直到实测
+    # `TushareAdapter()` 才当场 `TypeError: Can't instantiate abstract class`。
+    # ⇒ 「采集通道已接」当时在运行时是不成立的。守这件事的用例是
+    # `tests/test_data_center_adapter.py::test_every_concrete_adapter_can_be_constructed`。
+    def fetch_daily_bar(self, symbols: List[str], start: date, end: date) -> pd.DataFrame:
+        raise SourceAdapterError(
+            'tushare 这条通道只有复权因子（附录 B21.1）—— 日线走腾讯或东财，见契约 §3.2',
+            source=self._SOURCE, kind='UNSUPPORTED')
+
+    def fetch_financial(self, symbols: List[str], period_end: date) -> pd.DataFrame:
+        raise SourceAdapterError(
+            'tushare 有财务接口，但本迭代没接（附录 B21.1）—— 财务走东财，见契约 §3.2',
+            source=self._SOURCE, kind='UNSUPPORTED')
+
+    def fetch_index_members(self, index_code: str, as_of_date: date) -> pd.DataFrame:
+        raise SourceAdapterError(
+            'tushare 的指数成分股接口本迭代没接（附录 B21.1）—— 指数成分股走东财，见契约 §3.2',
             source=self._SOURCE, kind='UNSUPPORTED')
 
 
