@@ -794,7 +794,60 @@ def scope_line(rows, all_names):
     return 'SCOPE: FULL -- all %d registered gate(s) ran.' % len(all_names)
 
 
-def write_report(rows, registry, report_path=REPORT_PATH, notes=()):
+def verdict_of(rows, side_problems=()):
+    """THE definition of green. Returns (all_green, [lines to write into the report]).
+
+    Both the process exit code and the head of tools/gates-report.txt come from this one
+    function, because two definitions of green drift apart exactly like two definitions
+    of a count: the file would end up saying PASS while the exit code says 1 (or the
+    reverse), and the reader told to 'read the report instead of re-running' has no way
+    to notice. `side_problems` is part of the definition on purpose -- the side-effect
+    guard failing keeps the run red, and a file that omitted it would contradict the code.
+
+    Why the file needs an aggregate line at all: that verdict used to exist only on the
+    console, and the console is not what this project points readers at. Summing gate
+    headers by eye is not a verdict -- and one of those headers carries a word ('DIRTY',
+    printed by tier-B scripts to mean 'found N findings') that a reader reasonably takes
+    for a failure, because nothing in the file says which words are a ratchet's own and
+    which are the harness'. It sits on the LAST line of the file today, so the last thing
+    a reader sees is the only non-PASS word in it.
+
+    Three ways to be red, each getting its own sentence:
+      * 0 rows        -- nothing was audited. An empty report must never read as green;
+                         that is the 'extraction came back empty' family, and for a
+                         whole-file verdict it is worse, not better.
+      * a bad gate    -- named, so the reader does not have to hunt the sections.
+      * side problems -- named, so all-PASS headers cannot be totalled into a green run.
+    """
+    if not rows:
+        return False, ['VERDICT: FAIL -- this report carries 0 gate section(s): nothing '
+                       'was audited, which is not the same as nothing being wrong.']
+    bad = [r['name'] for r in rows if not r['ok']]
+    if bad or side_problems:
+        why = []
+        if bad:
+            why.append('%d of %d gate(s) not ok: %s'
+                       % (len(bad), len(rows), ', '.join(bad)))
+        if side_problems:
+            why.append('%d side-effect problem(s): %s'
+                       % (len(side_problems), '; '.join(side_problems)))
+        return False, ['VERDICT: FAIL -- %s. See the GATE sections below.'
+                       % '; '.join(why)]
+    lines = ['VERDICT: PASS -- %d of %d gate(s) ok.' % (len(rows), len(rows))]
+    odd = [r for r in rows if r['verdict'] != 'PASS']
+    if odd:
+        lines.append(
+            'NOTE: %s report a body verdict other than PASS and still count as ok. A '
+            'tier-B ratchet prints DRIFT+/DRIFT-/DRIFT~ in its GATE header when the debt '
+            'moved, and RATCHET at baseline; the line under it says verdict: DIRTY in '
+            'every one of those cases (DIRTY is that script\'s own word for found N '
+            'findings; it prints CLEAN when the count is zero). Read the GATE header, '
+            'not that word.'
+            % ', '.join('%s=%s %s' % (r['name'], r['verdict'], r['detail']) for r in odd))
+    return True, lines
+
+
+def write_report(rows, registry, report_path=REPORT_PATH, notes=(), verdict=()):
     """`registry` must be the WHOLE gate list, never the --gate= filtered subset.
 
     scope_line() answers 'which registered gates are missing from rows?', so the
@@ -812,6 +865,10 @@ def write_report(rows, registry, report_path=REPORT_PATH, notes=()):
     gates_by_name = {g['name']: g for g in registry}
     lines = []
     lines.append(scope_line(rows, list(gates_by_name)))
+    # 汇总结论写进证据文件的开头，紧挨 scope 行：读这份文件的人没有控制台，而
+    # 「把 17 条 GATE 表头加一遍」不是结论。顺序 = 先「跑了什么」再「结论如何」。
+    for vline in verdict:
+        lines.append(vline)
     for note in notes:
         lines.append(note)
     lines.append('')
@@ -927,6 +984,7 @@ def selftest():
     not_run = [g['name'] for g in GATES if g['name'] != picked_one]
     first = ''
     second = ''
+    third = ''
     e2e_out = ''
     try:
         buf = io.StringIO()
@@ -936,6 +994,7 @@ def selftest():
         with open(tmp_report, encoding='utf-8-sig') as f:
             first = f.readline().strip()
             second = f.readline().strip()
+            third = f.readline().strip()
     except (OSError, IndexError) as exc:
         first = '(unreadable: %s)' % exc
     hit = (len(GATES) >= 2 and first.startswith('SCOPE: PARTIAL')
@@ -946,24 +1005,82 @@ def selftest():
 
     # 同一趟里再证一次「副作用守卫接上了」。上面那条 scope 守卫踩过的坑正是
     # 「纯函数全对、调用点传错了参数」，所以这里也只认真实运行留下的字节：
-    # 报告的第二行必须是守卫自己的结论，且必须是「没写」；控制台上也要有同一行
+    # 报告的第 3 行必须是守卫自己的结论（第 1 行是 scope、第 2 行是汇总结论），
+    # 且必须是「没写」；控制台上也要有同一行
     # （报告与终端不许各说一套）。这同时是一条**防误报**样本 —— 真实运行里
     # verify_dashboard 会 import quanauto 并落 __pycache__，守卫若把那算成写入就会
     # 常红，而常红的守卫一定会被人关掉。
     want_note = 'SIDE-EFFECT: gates wrote nothing'
-    hit = (second.startswith(want_note) and 'file(s) watched' in second
+    hit = (third.startswith(want_note) and 'file(s) watched' in third
            and want_note in e2e_out)
-    print('  [sideeffect-guard-wired-e2e] report_line2=%s %s'
-          % (second[:52], 'OK' if hit else 'MISSED'))
+    print('  [sideeffect-guard-wired-e2e] report_line3=%s %s'
+          % (third[:52], 'OK' if hit else 'MISSED'))
     if not hit:
         print('      console lines=%s'
               % [l for l in e2e_out.splitlines()
                  if l.startswith('SIDE-EFFECT:') or l.startswith('GATE FAIL')])
     ok = ok and hit
+
+    # 报告的**汇总结论**同样只认真实运行留下的字节：文件第 2 行与控制台那行必须
+    # 同源（都由 verdict_of() 产出）。这个门禁以前踩过的正是「两处各判一次绿」——
+    # 只要两处各自演化，早晚一处 PASS 一处 FAIL，而项目恰恰叫人「读报告而不是
+    # 重跑」，分叉时读文件的人正好无从发现。这里**不断言那个门禁本身是绿是红**
+    # （同一个道理：scope 样本也不断言它），只断言两边一致。
+    console_verdict = [l for l in e2e_out.splitlines() if l.startswith('verdict: ')]
+    hit = (bool(console_verdict) and second.startswith('VERDICT: ')
+           and second.startswith('VERDICT: PASS')
+           == console_verdict[0].startswith('verdict: PASS'))
+    print('  [verdict-line-agrees-with-console] report_line2=%s console=%s %s'
+          % (second[:32], console_verdict[0][:32] if console_verdict else '(none)',
+             'OK' if hit else 'MISSED'))
+    ok = ok and hit
     try:
         os.remove(tmp_report)
     except OSError:
         pass
+
+    # ---- verdict_of() 的每个出口都要有样本 ---------------------------------------
+    # 这是全仓库「绿」的唯一定义，它有四种出口：没毛病 / 有坏门禁 / 有副作用问题 /
+    # **一行都没有**。少测一支 ⇒ 「那一支没人守」与「那一支不会出事」在报告里长得
+    # 一模一样（本项目历史上最贵的那类假绿）。最后一支尤其要测：空报告报 0 条
+    # GATE 却 PASS，就是把「什么都没审」印成「什么都没错」。
+    def _vrow(name, ok_flag, verdict='PASS', detail=''):
+        return {'name': name, 'tier': 'A', 'selftest': 'PASS', 'verdict': verdict,
+                'detail': detail, 'ok': ok_flag, 'problems': [], 'seconds': 0.0,
+                'output': ''}
+
+    green, vlines = verdict_of([_vrow('a', True), _vrow('b', True)])
+    hit = (green is True and len(vlines) == 1
+           and vlines[0].startswith('VERDICT: PASS -- 2 of 2 gate(s) ok.'))
+    print('  [verdict-clean-is-green] %s' % ('OK' if hit else 'MISSED'))
+    ok = ok and hit
+
+    green, vlines = verdict_of([_vrow('a', True), _vrow('b', False)])
+    hit = (green is False
+           and any(l.startswith('VERDICT: FAIL') and '1 of 2' in l and 'b' in l
+                   for l in vlines))
+    print('  [verdict-red-names-the-gate] %s' % ('OK' if hit else 'MISSED'))
+    ok = ok and hit
+
+    green, vlines = verdict_of([_vrow('a', True)],
+                               ['gate(s) created 1 file(s) inside the repository'])
+    hit = (green is False
+           and any(l.startswith('VERDICT: FAIL') and 'side-effect problem' in l
+                   for l in vlines))
+    print('  [verdict-red-names-side-effects] %s' % ('OK' if hit else 'MISSED'))
+    ok = ok and hit
+
+    green, vlines = verdict_of([])
+    hit = (green is False and len(vlines) == 1 and vlines[0].startswith('VERDICT: FAIL'))
+    print('  [verdict-empty-report-is-NOT-green] %s' % ('OK' if hit else 'MISSED'))
+    ok = ok and hit
+
+    green, vlines = verdict_of([_vrow('r', True, verdict='RATCHET', detail='2/2')])
+    hit = (green is True and len(vlines) == 2
+           and any(l.startswith('NOTE:') and 'DIRTY' in l and 'RATCHET' in l
+                   for l in vlines))
+    print('  [verdict-note-explains-dirty] %s' % ('OK' if hit else 'MISSED'))
+    ok = ok and hit
 
     # ---- 副作用指纹的四类出口，外加一条空转守卫样本 ------------------------------
     # 每一项都必须有样本：少一个，「守卫没接上」和「确实没写」在报告里长得一样。
@@ -1187,7 +1304,14 @@ def selftest():
            # 印出了 `PASS (1/1 gate(s) green; SIDE-EFFECT GUARD FAILED)`：一行里
            # PASS 与 GUARD FAILED 并存。判据只断言「有 SIDE-EFFECT GUARD FAILED
            # 字样」的话，那种自相矛盾的行照样算过，所以断言的必须是整句。
-           and 'verdict: FAIL (1/1 gate(s) green; SIDE-EFFECT GUARD FAILED)' in wrote_out)
+           and 'verdict: FAIL (1/1 gate(s) green; SIDE-EFFECT GUARD FAILED)' in wrote_out
+           # 报告的**第 2 行**也必须在**这一趟真红的运行里**说出同一条结论。这是
+           # 「一份产物两种读法」的唯一可自动化的观测点：只要有人让 verdict_of()
+           # 不再把副作用问题算进去（或让它不接进文件），报告就会在这一趟写 PASS，
+           # 而控制台那行仍写 FAIL —— 读文件的人与读终端的人会得到相反的结论。
+           # 断言的是内容（点名 side-effect problem）而不只是「有个 VERDICT 行」。
+           and rep2.splitlines()[1].startswith('VERDICT: FAIL')
+           and 'side-effect problem' in rep2.splitlines()[1])
     print('  [sideeffect-guard-fails-e2e] rc=%s %s' % (rc_wrote, 'OK' if hit else 'MISSED'))
     if not hit:
         print('      stdout=%s'
@@ -1330,8 +1454,11 @@ def execute(picked, report_path=REPORT_PATH):
     # reads gates-report.txt has no console, and a guard whose result is missing from the
     # file cannot be audited from the file.
     notes = ['SIDE-EFFECT: %s' % side_summary] + ['PROBLEM: %s' % p for p in side_problems]
+    # 一句话结论与退出码同源：两处各自判绿早晚会分叉（文件写 PASS 而退出码 1，或反过来），
+    # 而本项目恰恰叫人「读报告而不是重跑」——分叉时那个读文件的人无从发现。
+    all_green, verdict_lines = verdict_of(rows, side_problems)
     # GATES, not `gates`: the report must be able to say what was NOT run.
-    n = write_report(rows, GATES, report_path, notes)
+    n = write_report(rows, GATES, report_path, notes, verdict_lines)
     try:
         shown_report = os.path.relpath(report_path, ROOT)
     except ValueError:
@@ -1341,7 +1468,6 @@ def execute(picked, report_path=REPORT_PATH):
     print('')
     print('report: %s (%d lines) -- read this instead of re-running the gates'
           % (shown_report, n))
-    all_green = not failed and not side_problems
     print('verdict: %s (%d/%d gate(s) green%s)'
           % ('PASS' if all_green else 'FAIL', len(rows) - len(failed), len(rows),
              '' if not side_problems else '; SIDE-EFFECT GUARD FAILED'))

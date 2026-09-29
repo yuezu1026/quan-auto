@@ -1,4 +1,6 @@
 SCOPE: FULL -- all 17 registered gate(s) ran.
+VERDICT: PASS -- 17 of 17 gate(s) ok.
+NOTE: core-contract-refs=RATCHET 2/2 report a body verdict other than PASS and still count as ok. A tier-B ratchet prints DRIFT+/DRIFT-/DRIFT~ in its GATE header when the debt moved, and RATCHET at baseline; the line under it says verdict: DIRTY in every one of those cases (DIRTY is that script's own word for found N findings; it prints CLEAN when the count is zero). Read the GATE header, not that word.
 SIDE-EFFECT: gates wrote nothing (133 file(s) watched)
 
 ==============================================================================
