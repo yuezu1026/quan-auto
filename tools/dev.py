@@ -38,10 +38,14 @@
     python tools/dev.py gate NAME [NAME…]  # 单跑若干门禁（走 --gate=NAME）
     python tools/dev.py test [pytest …]    # 只跑 pytest，参数透传
     python tools/dev.py status             # 只读：git 状态 + 棘轮基线 + 上次报告首行
-    python tools/dev.py outline FILE       # 只读：文件的标题目录 + 每节行范围与 ≈token
-    python tools/dev.py section FILE TITLE # 只读：按标题取**恰好一节**，原文
+    python tools/dev.py outline FILE       # 只读：标题目录 + 每节行范围与 ≈token；
+    #                                        `.py` 另附 AST 符号地图（每个 def/class 的
+    #                                        行范围与成本）
+    python tools/dev.py section FILE TITLE # 只读：按标题取**恰好一节**，原文；`.py` 上
+    #                                        标题 0 命中时退到符号路（见下）
     python tools/dev.py find REGEX         # 只读：只回命中行，不回整份文件
-    python tools/dev.py brief              # 只读：每轮开工该看的那几节（机械取片，非摘要）
+    python tools/dev.py brief [--budget=N] # 只读：每轮开工该看的那几节（机械取片，非摘要）；
+    #                                        超预算时从计划表末尾往前丢并**打印丢了哪几节**
     python tools/dev.py ci [ID] [--wait=S] # 有界 CI 查询（取代无界的 `gh run watch`）
     #   --wait>0 是「等」：没等到终态就退 1（否则「没读到」会被读成「绿」）
     python tools/dev.py --selftest         # 证明本 runner 真的能报 FAIL
@@ -52,6 +56,7 @@
 2 = 本脚本自身用法/自测错。
 """
 
+import ast
 import fnmatch
 import json
 import os
@@ -404,6 +409,55 @@ def heading_sections(lines, depth):
     return out
 
 
+def symbol_sections(lines):
+    """按 **AST** 取每个 def/class 的行范围。返回 (rows, error)。
+
+    为什么需要这条路（2026-09-29 实测）：`headings()` 只认 markdown 标题，于是对 `.py`
+    只认得 `# ── … ──` 这类横幅。实测 `quanauto/engine.py`：整份 13224 tok，而目录里
+    **只有一个 12093 tok 的块（占 91%）** —— 看起来「切不动」。但 AST 说它不是一块，是
+    **38 个符号**，其中最大的**函数**（`__init__` / `_execute` / `_risk_gate`）都在 1k tok
+    以内 ⇒ 单次定位的成本差一个数量级。结论：**文件不是切不动，是提取器不认识它的结构。**
+    这跟「变异没打到分支 / 探测器不存在长得一样」是同一族：提取器的粒度错了，却报出一份
+    看着很合理的目录。
+
+    rows = [(行号, 级别, 名字(含 `Class.` 限定), 节起, 节止, ≈tok)]；级别与标题 depth 同义
+    （顶层 = 1，方法 = 2），所以两种 rows 可以走同一条打印/落盘路径。
+
+    error 非空 = **这份 .py 解析不了**。那时 rows=None 而不是 [] —— 「提取器坏了」与「文件里
+    真的没有符号」必须分得开，否则空转会被读成「没有」。
+
+    只递归 ClassDef（取方法），**不递归函数体**：函数里的嵌套 def 极少需要单独定位，
+    而把它们也列进来会让同一段代码在目录里出现两次（`dev.py` 的 `selftest.check` 就是
+    这种「看着是个符号、其实只是内层实现」的东西）。
+    """
+    src = '\n'.join(lines)
+    try:
+        tree = ast.parse(src)
+    except SyntaxError as exc:
+        return None, 'ast.parse 失败（line %s: %s）' % (exc.lineno, exc.msg)
+    except ValueError as exc:  # 例如源码里带 NUL 字节
+        return None, 'ast.parse 失败（%s）' % exc
+    rows = []
+
+    def visit(body, prefix, level):
+        for node in body:
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                     ast.ClassDef)):
+                continue
+            end = getattr(node, 'end_lineno', None)
+            if not end:
+                continue
+            rows.append((node.lineno, min(level, 6), prefix + node.name,
+                         node.lineno, end,
+                         est_tokens('\n'.join(lines[node.lineno - 1:end]))))
+            if isinstance(node, ast.ClassDef):
+                visit(node.body, node.name + '.', level + 1)
+
+    visit(tree.body, '', 1)
+    rows.sort(key=lambda row: (row[3], row[2]))
+    return rows, None
+
+
 def owner_of(marks, lineno):
     """某个行号落在哪个标题下（find 的上下文）。"""
     title = '(no heading)'
@@ -479,6 +533,9 @@ def cmd_outline(argv):
         return 2
     rows = heading_sections(lines, depth)
     total = est_tokens('\n'.join(lines))
+    is_py = path.endswith('.py')
+    sym_rows, sym_err = symbol_sections(lines) if is_py else ([], None)
+    rc_out = 0
     body = ['outline %s  lines=%d  ~tokens=%d  depth=%d'
             % (path, len(lines), total, depth)]
     if not rows:
@@ -494,13 +551,35 @@ def cmd_outline(argv):
     if rows:
         body.append('TOTAL   %d tok（=整份读进来要付的成本）；'
                     '取某一节的内容用 `dev.py find`，或按上面的行范围读' % total)
+    if is_py:
+        # `.py` 的目录必须带上**符号层**：headings() 对代码文件只认得 `# ── … ──` 横幅，
+        # 实测 engine.py 只切出一个占 91% 的块，看着像「切不动」；AST 层能切到单个函数。
+        # 两级都打，谁也不替谁 —— 横幅回答「模块分几段」，符号回答「哪个函数在哪」。
+        body.append('')
+        if sym_err:
+            body.append('SYMBOL-PARSE-FAIL  %s' % sym_err)
+            body.append('  ⇒ 这份 .py 解析不了、符号层取不到。**别**把上面的标题行范围'
+                        '当成它的全部结构（提取失败不得静默通过）。')
+            rc_out = 2
+        elif not sym_rows:
+            body.append('NOTE: AST 里一个 def/class 都没有 —— 这就是这份 .py 的全部结构')
+        else:
+            body.append('symbols (AST)  n=%d  -- 取某一个：'
+                        '`python tools/dev.py section %s NAME`' % (len(sym_rows), path))
+            body.append('  （class 是**容器**行，它的 tok 含内部所有方法，别与方法行相加）')
+            for _lineno, level, name, start, end, tokens in sym_rows[:limit]:
+                body.append('%5d-%-5d %7d tok  %s%s'
+                            % (start, end, tokens, '  ' * (level - 1), name))
+            if len(sym_rows) > limit:
+                body.append('NOTE: 只打了前 %d 个符号（共 %d 个），要全用 --max= 放宽'
+                            % (limit, len(sym_rows)))
     if out_path:
         write_out(out_path, '\n'.join(body) + '\n')
         print('outline written: %s (%d lines)' % (out_path, len(body)))
-        return 0
+        return rc_out
     for line in body:
         say(line)
-    return 0
+    return rc_out
 
 
 def cmd_find(argv):
@@ -609,21 +688,45 @@ BRIEF_PLAN = (
 
 
 def section_by_title(lines, needle):
-    """按标题**子串**取一节。
+    """按标题**子串**取一节。返回 (hit, candidates, n_hits)。
 
-    返回 (hit, candidates)：命中恰好一次时 hit = (行号, 级别, 标题, 节起, 节止, ≈tok)；
-    否则 hit = None 且 candidates 里给出行号+标题（0 命中 = 全部标题，供调用方挑；
-    ≥2 命中 = 歧义的那几条）。
+    命中恰好一次时 hit = (行号, 级别, 标题, 节起, 节止, ≈tok)；否则 hit = None 且
+    candidates 里给出行号+标题（n_hits==0 = 全部标题，供调用方挑；n_hits>=2 = 歧义的那几条）。
 
     0 与 ≥2 **都必须能被调用方看见**：前者是「提取为空」，后者是「选错了节」，
     两者都不是「取到了」，所以都不许静默退化成一个默认匹配。
+
+    n_hits 单列出来，**不叫调用方拿 len(candidates) 去猜**：0 命中时 candidates 会回退成
+    全部标题，于是 `len(cands)` 可以是「歧义的那 3 个」也可以是「全部 12 个」——
+    cmd_section 靠它决定「该不该退到符号路」，猜错就会把**歧义当成 0 命中**、
+    再退到符号路，从而把「选错了节」这个真信号杀掉。
     """
     rows = heading_sections(lines, 6)
     hits = [r for r in rows if needle in r[2]]
     all_titles = [(r[0], r[2]) for r in rows]
     if len(hits) == 1:
-        return hits[0], all_titles
-    return None, [(r[0], r[2]) for r in hits] or all_titles
+        return hits[0], all_titles, 1
+    return None, ([(r[0], r[2]) for r in hits] or all_titles), len(hits)
+
+
+def section_by_symbol(lines, needle):
+    """按符号名的**子串**取恰好一个 def/class。返回 (hit, candidates, n_hits, error)。
+
+    hit 形状与 section_by_title 一致（同一个 6 元组）⇒ 打印/落盘两条路可以共用。
+    needle 可以命中 `Class.method` 这种限定名 —— 方法名常与顶层名撞车，限定名用来消歧。
+
+    error 非空 = 这份 .py 解析不了。那时「0 命中」不是「文件里没有这个符号」，而是
+    提取器坏了（`symbol_sections` 返回 None 而不是 []）—— 调用方必须把这两件事
+    分成两句话说，否则又一个「提取为空却报成功」。
+    """
+    rows, err = symbol_sections(lines)
+    if err:
+        return None, [], 0, err
+    hits = [r for r in rows if needle in r[2]]
+    all_syms = [(r[0], r[2]) for r in rows]
+    if len(hits) == 1:
+        return hits[0], all_syms, 1, None
+    return None, ([(r[0], r[2]) for r in hits] or all_syms), len(hits), None
 
 
 def cmd_section(argv):
@@ -648,41 +751,105 @@ def cmd_section(argv):
     if lines is None:
         print('cannot read: %s' % path)
         return 2
-    hit, cands = section_by_title(lines, needle)
+    hit, cands, n_hits = section_by_title(lines, needle)
+    route = 'heading'
+    sym_cands, sym_n, sym_err = [], None, None
+    if hit is None and n_hits == 0 and path.endswith('.py'):
+        # 只有「标题 0 命中」才退到符号路。歧义（>=2）**绝不**退：那会把「选错了节」
+        # 悄悄降级成一个符号命中，读者永远不知道他本来该改的是标题。
+        hit, sym_cands, sym_n, sym_err = section_by_symbol(lines, needle)
+        if hit is not None:
+            route = 'symbol'
     if hit is None:
-        if not cands:
-            print('FAIL: %s 里一个标题都没有，取不到 %r' % (path, needle))
+        if sym_err:
+            print('FAIL: %s :: %s' % (path, sym_err))
+            print('  ⇒ 符号层取不到（提取器坏了），别把这一行读成「文件里没有这个符号」')
+        elif not cands and not sym_cands:
+            print('FAIL: %s 里一个标题、一个符号都没有，取不到 %r' % (path, needle))
         else:
-            print('FAIL: %r 命中 %d 个标题 —— 标题必须唯一，写更长一段来消歧'
-                  % (needle, len(cands)))
-            for lineno, title in cands[:30]:
-                say('  L%-5d %s' % (lineno, title))
+            print('FAIL: %r 没有唯一命中（标题 %s / 符号 %s）—— '
+                  '标题与符号都必须各自唯一，写更完整的一段来消歧'
+                  % (needle, n_hits,
+                     'n/a' if sym_n is None else sym_n))
+            rows = cands if n_hits else sym_cands
+            if n_hits:
+                label = '标题候选（歧义的那几条）'
+            elif sym_n == 0:
+                label = '符号候选（0 命中 ⇒ 列全部）'
+            else:
+                label = '符号候选（歧义的那几条）'
+            for lineno, title in rows[:30]:
+                say('  [%s] L%-5d %s' % (label, lineno, title))
+            if len(rows) > 30:
+                say('  …（%s共 %d 条，只列了前 30 条；这不是「只有 30 条」）'
+                    % (label, len(rows)))
         return 2
     _lineno, _level, title, start, end, tokens = hit
     body = lines[start - 1:end]
     if out_path:
         write_out(out_path, '\n'.join(body) + '\n')
-        print('section written: %s  %s :: %s  L%d-%d  ~%d tok'
-              % (out_path, path, title, start, end, tokens))
+        print('section written: %s  %s :: %s  L%d-%d  ~%d tok  route=%s'
+              % (out_path, path, title, start, end, tokens, route))
         return 0
-    say('%s :: %s   L%d-%d   ~%d tok' % (path, title, start, end, tokens))
+    say('%s :: %s   L%d-%d   ~%d tok   route=%s'
+        % (path, title, start, end, tokens, route))
     for line in body:
         say(line)
     return 0
 
 
+def apply_budget(picked, budget):
+    """按预算把**计划表末尾**的那几节丢掉。纯函数，返回 (kept, dropped, note)。
+
+    picked 的元素 = (rel, title, start, end, tokens, 正文行)，索引 4 是 tokens。
+    `dropped` 里的顺序 = **实际被丢的顺序**（末尾那节最先），不是计划表顺序。
+
+    规则三条：
+      * `budget` 为 None 或 <=0 ⇒ 一律不丢（预算**不是判据**，默认关着）；
+      * **从末尾往前丢**：BRIEF_PLAN 的顺序就是重要性的顺序，末尾那节最可省；
+      * **至少留一节**：丢空会撞 BRIEF-EMPTY（那就成了「提取为空」），所以宁可超预算
+        也要留一节，并且**把这件事说出来**（note 非空）—— 静默地把预算执行成一份空简报
+        是这个仓库最忌讳的失败形态。
+    """
+    if not budget or budget <= 0:
+        return list(picked), [], None
+    kept, dropped = list(picked), []
+    while len(kept) > 1 and sum(p[4] for p in kept) > budget:
+        dropped.append(kept.pop())          # 落进 dropped 的顺序 = 实际被丢的顺序
+    note = None
+    if sum(p[4] for p in kept) > budget:
+        note = ('NOTE: --budget=%d 比最省的那一节（~%d tok）还低 ⇒ 保留它、不再往下丢；'
+                '丢空会撞 BRIEF-EMPTY' % (budget, kept[0][4] if kept else 0))
+    return kept, dropped, note
+
+
 def cmd_brief(argv):
-    """把「每轮开工该看的那几节」原文打出来，并报出这次取片的成本与省下的量。"""
-    out_path = None
+    """把「每轮开工该看的那几节」原文打出来，并报出这次取片的成本与省下的量。
+
+    **输出顺序：正文在前、易变抬头在后。** 抬头那 4 行（git head / dirty / gates scope /
+    verdict）每轮都会变，放在最前会让整段输出从第 1 个 token 起就与上一次不同；挪到末尾
+    之后，同一产物下的重复取片里，正文那一段是输出的**前缀**且逐字节相同 ——
+    前缀缓存（KV / prompt cache）要省的就是这个前缀。
+
+    边界说实话：**这一条我在仓库内部测不出收益**（缓存在服务端），我能保证的只有
+    「正文在前 + 字节稳定」这个机械性质，所以不声称省了多少 token。要关掉这个顺序、
+    或者要看丢掉哪几节，见 `--budget=N`。
+    """
+    out_path, budget = None, None
     for arg in argv:
         if arg.startswith('--out='):
             out_path = arg[6:]
+        elif arg.startswith('--budget='):
+            if not arg[9:].isdigit():
+                print('bad --budget: %s' % arg)
+                return 2
+            budget = int(arg[9:])
         else:
-            print('brief takes only --out=FILE (got %s)' % arg)
+            print('brief takes only --out=FILE / --budget=N (got %s)' % arg)
             return 2
 
-    problems, body = [], []
-    body_tokens, full_tokens = 0, 0
+    problems, picked = [], []
+    full_tokens = 0
     for rel, needles in BRIEF_PLAN:
         lines = read_lines(os.path.join(ROOT, *rel.split('/')))
         if lines is None:
@@ -690,19 +857,23 @@ def cmd_brief(argv):
             continue
         full_tokens += est_tokens('\n'.join(lines))
         for needle in needles:
-            hit, cands = section_by_title(lines, needle)
+            hit, cands, n_hits = section_by_title(lines, needle)
             if hit is None:
                 problems.append(
                     'BRIEF-SECTION %s :: %s -- %s'
                     % (rel, needle,
-                       '0 命中' if not cands else '%d 命中（歧义）' % len(cands)))
+                       '0 命中' if n_hits == 0 else '%d 命中（歧义）' % n_hits))
                 continue
             _lineno, _level, title, start, end, tokens = hit
-            body.append('%s :: %s   L%d-%d   ~%d tok' % (rel, title, start, end, tokens))
-            body.append('')
-            body.extend(lines[start - 1:end])
-            body.append('')
-            body_tokens += tokens
+            picked.append((rel, title, start, end, tokens, lines[start - 1:end]))
+    picked, dropped, budget_note = apply_budget(picked, budget)
+    body, body_tokens = [], 0
+    for rel, title, start, end, tokens, src in picked:
+        body.append('%s :: %s   L%d-%d   ~%d tok' % (rel, title, start, end, tokens))
+        body.append('')
+        body.extend(src)
+        body.append('')
+        body_tokens += tokens
     if not body:
         # 取不到任何一节 ⇒ 后面所有读数都在空转，绝不能打印一份「看着很干净」的简报。
         problems.append('BRIEF-EMPTY 一节都没取到，拒绝通过（提取为空必须判 FAIL）')
@@ -724,13 +895,24 @@ def cmd_brief(argv):
     ]
     header = ('BRIEF  ~%d tok of source sections   (这几份文件整份读 = ~%d tok; '
               '省下 ~%d)' % (body_tokens, full_tokens, full_tokens - body_tokens))
-    if problems:
-        header = 'BRIEF FAILED -- %d 个问题（下面这些节没取到，读数请勿据此下结论）' \
-                 % len(problems)
-    payload = [header] + meta + [''] + body + [
+    tail = ['-- meta（每轮都会变，故意放末尾：上面的正文才是字节稳定的那一段）--']
+    tail += meta + [header]
+    tail += [
         'SKIPPED -- 上面没打的节按需读：`dev.py outline FILE` 看目录与每节 ≈tok，',
         '           再 `dev.py section FILE TITLE` 取那一节（别再整份读）。']
+    if dropped:
+        tail.append('budget  --budget=%d ⇒ 丢掉了 %d 节（**按实际被丢的顺序**列，'
+                    '都是从计划表末尾往前丢的；--budget=0 关掉）：%s'
+                    % (budget, len(dropped),
+                       ', '.join('%s :: %s (~%d tok)' % (item[0], item[1], item[4])
+                                 for item in dropped)))
+    if budget_note:
+        tail.append(budget_note)
+    payload = body + [''] + tail
     if problems:
+        # 失败横幅放**最前**（红不是「稳定前缀」问题，必须一眼看见），明细放最后。
+        payload = ['BRIEF FAILED -- %d 个问题；明细在末尾的 PROBLEM 行' % len(problems),
+                   '（下面的正文照发，但读数请勿据此下结论）', ''] + payload
         payload += [''] + ['PROBLEM: %s' % p for p in problems]
 
     if out_path:
@@ -1028,6 +1210,113 @@ def selftest():
     check('CLEAN-tilde-fence-not-headings',
           [s[2] for s in heading_sections(tilde, 2)] == ['T', 'A'],
           'titles=%s' % [s[2] for s in heading_sections(tilde, 2)])
+
+    # ---- AST 符号层：干净 / 负 / 空转 / 变异打在靶子 ----
+    # 为什么非要这一层：headings() 对 `.py` 只能认出 `# ── … ──` 横幅，实测 engine.py
+    # 只切出一个占 91% 的块，看着像「这个文件切不动」；而 AST 说它有 38 个 def/class、
+    # 最大的函数 ~850 tok ⇒ **不是文件切不动，是提取器不认识它的结构**。
+    pysrc = ('import os\n'
+             '\n'
+             '\n'
+             'def top_one(a):\n'
+             '    def nested_should_not_be_listed():\n'
+             '        return 1\n'
+             '    return nested_should_not_be_listed() + a\n'
+             '\n'
+             '\n'
+             'class Thing:\n'
+             '    def __init__(self):\n'
+             '        self.x = 1\n'
+             '\n'
+             '    def method(self):\n'
+             '        return self.x\n')
+    py_lines = pysrc.split('\n')
+    if py_lines and py_lines[-1] == '':
+        py_lines.pop()
+    prows, perr = symbol_sections(py_lines)
+    pnames = [r[2] for r in prows]
+    check('CLEAN-symbols-found',
+          perr is None
+          and pnames == ['top_one', 'Thing', 'Thing.__init__', 'Thing.method'],
+          'err=%s names=%s' % (perr, pnames))
+    check('CLEAN-symbols-levels-and-ranges',
+          [r[1] for r in prows] == [1, 1, 2, 2]
+          and [(r[3], r[4]) for r in prows] == [(4, 7), (10, 15), (11, 12), (14, 15)],
+          'levels=%s ranges=%s'
+          % ([r[1] for r in prows], [(r[3], r[4]) for r in prows]))
+    # 🔴 函数体**内部**的 def 不进清单 —— 这是设计约束，不是实现细节：收进去同一段代码
+    #    会出现两次，`section` 还可能取到「一半的函数」。必须钉住。
+    check('CLEAN-symbols-skip-nested-in-function',
+          'nested_should_not_be_listed' not in ' '.join(pnames), 'names=%s' % pnames)
+    # 负样本：一个 def/class 都没有 ⇒ 空清单且**没有** error（文件是好的，只是没符号）
+    neg_rows, neg_err = symbol_sections(['x = 1', 'y = 2'])
+    check('NEG-symbols-none', neg_rows == [] and neg_err is None,
+          'rows=%s err=%s' % (neg_rows, neg_err))
+    # 🔴 空转样本（本层最要紧的一条）：解析不了必须是 **None + 非空 error**，绝不能是
+    #    `[]` —— 若「提取器坏了」与「文件里没有符号」长得一样，上层那个 0 命中就会被
+    #    读成「这个符号不存在」，也就是又一次「提取为空却报成功」。
+    bad_rows, bad_err = symbol_sections(['def broken(:', '    pass'])
+    check('EMPTY-symbols-parse-failure-is-None-not-empty-list',
+          bad_rows is None and bool(bad_err), 'rows=%s err=%s' % (bad_rows, bad_err))
+    check('EMPTY-symbols-error-names-the-line', 'line 1' in (bad_err or ''),
+          str(bad_err))
+
+    # ---- section_by_symbol：干净 / 0 命中 / 歧义 / 变异打在靶子 ----
+    sym_hit, _sc, sym_n, sym_err = section_by_symbol(py_lines, 'method')
+    check('CLEAN-section-by-symbol',
+          sym_err is None and sym_n == 1
+          and (sym_hit[2], sym_hit[3], sym_hit[4]) == ('Thing.method', 14, 15),
+          'hit=%s n=%s err=%s' % ((sym_hit and sym_hit[2]), sym_n, sym_err))
+    sym_hit, sym_cands, sym_n, sym_err = section_by_symbol(py_lines, 'Thing')
+    check('NEG-section-by-symbol-ambiguous',
+          sym_hit is None and sym_n == 3
+          and [c[1] for c in sym_cands]
+          == ['Thing', 'Thing.__init__', 'Thing.method'],
+          'n=%s cands=%s' % (sym_n, [c[1] for c in sym_cands]))
+    # 🔴 变异打在靶子：符号名写错**一个字符**必须变成 0 命中。这层唯一防误取的手段就是
+    #    「必须唯一命中」，模糊匹配到相邻那个符号会把「你写错了名字」变成「这是你要的那节」。
+    typo_hit, _tc, typo_n, typo_err = section_by_symbol(py_lines, 'top_onne')
+    check('MUTATION-symbol-needle-typo-detected',
+          typo_hit is None and typo_n == 0 and typo_err is None,
+          'n=%s err=%s' % (typo_n, typo_err))
+    # 解析不了时，符号路必须把 error 交出来，而不是报「0 命中」让上层以为符号不存在
+    sym_hit, sym_cands, sym_n, sym_err = section_by_symbol(['def broken(:'], 'x')
+    check('EMPTY-section-by-symbol-surfaces-parse-error',
+          sym_hit is None and bool(sym_err) and sym_cands == [],
+          'err=%s cands=%s' % (sym_err, sym_cands))
+
+    # ---- apply_budget：默认关 / 从末尾丢 / 至少留一节 / 边界刚好 ----
+    # 元素 = (rel, title, start, end, tokens, 正文行)；索引 4 是 tokens。
+    demo = [('a.md', 'A', 1, 2, 100, ['a']),
+            ('a.md', 'B', 3, 4, 200, ['b']),
+            ('b.md', 'C', 5, 6, 300, ['c'])]
+    kept, dropped, note = apply_budget(demo, None)
+    check('CLEAN-budget-none-keeps-all',
+          kept == demo and dropped == [] and note is None,
+          'kept=%d dropped=%d' % (len(kept), len(dropped)))
+    kept, dropped, note = apply_budget(demo, 0)
+    check('CONTROL-budget-zero-means-off',
+          len(kept) == 3 and dropped == [] and note is None, '')
+    # 预算刚好等于总量 == 不丢（边界不能把「刚好」判成「超了」）
+    kept, dropped, note = apply_budget(demo, 600)
+    check('CONTROL-budget-exact-fits',
+          len(kept) == 3 and dropped == [] and note is None, '')
+    # 干净样本：从**末尾**往前丢（计划表的顺序就是重要性的顺序）
+    kept, dropped, note = apply_budget(demo, 450)
+    check('CLEAN-budget-drops-from-the-end',
+          [r[1] for r in kept] == ['A', 'B'] and [r[1] for r in dropped] == ['C']
+          and note is None,
+          'kept=%s dropped=%s' % ([r[1] for r in kept], [r[1] for r in dropped]))
+    # `dropped` 的顺序 = **实际被丢的顺序**（末尾最先），不是计划表顺序 —— 报告里那行
+    # 写的是「按实际被丢的顺序列」，样本与那句话必须一致，否则报告会骗人。
+    check('CLEAN-budget-dropped-in-drop-order', [r[1] for r in dropped] == ['C'], '')
+    # 🔴 至少留一节：丢空会撞 BRIEF-EMPTY（「提取为空」是 FAIL），所以宁可超预算也要留
+    #    一节，而且**必须把这件事说出来** —— 静默地把预算执行成一份空简报是最坏的形态。
+    kept, dropped, note = apply_budget(demo, 10)
+    check('NEG-budget-never-empties-and-says-so',
+          len(kept) == 1 and kept[0][1] == 'A' and len(dropped) == 2
+          and bool(note) and '--budget=10' in note,
+          'kept=%s note=%s' % ([r[1] for r in kept], note))
     # 空转样本：「读不到」必须是 None，与「空文件」（[]）分得开
     check('EMPTY-missing-file-is-None',
           read_lines(os.path.join(tempfile.gettempdir(), 'no-such-dev-file.md')) is None)
@@ -1059,6 +1348,60 @@ def selftest():
     rc, out = run(['tools/dev.py', 'outline', 'tools/dev.py'])
     check('REAL-outline-own-source', rc == 0 and 'TOTAL' in out,
           'rc=%d bytes=%d' % (rc, len(out)))
+    # .py 的 outline 必须**同时**给标题行与 AST 符号行 —— 只给标题的那一版是
+    # 本次要修的那个洞（engine.py 会被读成「一整块 12093 tok」）。
+    check('REAL-outline-py-has-symbol-map',
+          rc == 0 and 'symbols (AST)' in out and 'symbol_sections' in out,
+          'rc=%d has_symbols=%s' % (rc, 'symbols (AST)' in out))
+    # 真实仓库那一次：.py 上按符号取一段 —— 这是 L1 的主路径
+    sec_sym = os.path.join(tempfile.gettempdir(), 'dev-selftest-section-sym.txt')
+    bad_py = os.path.join(tempfile.gettempdir(), 'dev-selftest-bad-syntax.py')
+    try:
+        if os.path.exists(sec_sym):
+            os.remove(sec_sym)
+        rc, out = run(['tools/dev.py', 'section', 'tools/dev.py', 'symbol_sections',
+                       '--out=' + sec_sym])
+        size = os.path.getsize(sec_sym) if os.path.exists(sec_sym) else 0
+        check('REAL-section-py-symbol-route',
+              rc == 0 and size > 0 and 'route=symbol' in out,
+              'rc=%d bytes=%d route=%s' % (rc, size, 'route=symbol' in out))
+        # 负样本（真实）：一个真不存在的符号 ⇒ 必须是 2，不能回落到「整个文件」
+        rc, out = run(['tools/dev.py', 'section', 'tools/dev.py',
+                       'definitely_no_such_symbol_zzz'])
+        check('REAL-section-absent-symbol-exits-2', rc == 2, 'rc=%d' % rc)
+        # 负样本（真实）：符号歧义 —— `_by_` 在标题里 0 命中 ⇒ 退到符号路，
+        # 而符号层命中 2 条（section_by_title / section_by_symbol）⇒ 必须拒绝，
+        # 不许挑一个给出去。断言打的是 **「符号 2」这个计数**，而不是只断言 rc=2：
+        # 「0 命中」也退 2，两者在退出码上长得一模一样（就是「变异没打到分支」
+        # 与「探测器不存在」同族的那种混淆），所以必须钉住走的是歧义那一支。
+        # ⚠️ 不用 `section` 当 needle：本文件有一条 `# section / brief —— …` 的注释
+        # 会被当成 markdown 标题，恰好唯一命中 ⇒ 走标题路、rc=0，样本会静默打空。
+        rc, out = run(['tools/dev.py', 'section', 'tools/dev.py', '_by_'])
+        check('REAL-section-ambiguous-symbol-exits-2',
+              rc == 2 and '符号 2' in out,
+              'rc=%d 走的是歧义分支=%s' % (rc, '符号 2' in out))
+        # 控制组（与上一条配对）：同一个词一旦在**标题**里也唯一命中，就必须走标题路。
+        # 本文件那条 `# section / brief —— …` 注释就是这样一个标题 ⇒ rc=0 且
+        # route=heading。它同时钉住「标题优先于符号」这个次序 —— 若哪天实现改成
+        # 「先试符号」，这个样本会红。
+        rc, out = run(['tools/dev.py', 'section', 'tools/dev.py', 'section'])
+        check('CONTROL-heading-route-takes-priority-on-py',
+              rc == 0 and 'route=heading' in out, 'rc=%d out=%s' % (rc, out[:60]))
+        # 🔴 空转守卫的真实样本：ast.parse 读不了的 .py ⇒ 必须 2 且**明说提取器坏了**，
+        #    不能打出「0 个符号」让人读成「这文件结构简单」。
+        write_out(bad_py, 'def broken(:\n    pass\n')
+        rc, out = run(['tools/dev.py', 'section', bad_py, 'anything'])
+        check('EMPTY-real-parse-failure-exits-2-and-says-so',
+              rc == 2 and 'ast.parse' in out,
+              'rc=%d says=%s' % (rc, 'ast.parse' in out))
+        rc, out = run(['tools/dev.py', 'outline', bad_py])
+        check('EMPTY-real-outline-parse-failure-exits-2',
+              rc == 2 and 'SYMBOL-PARSE-FAIL' in out,
+              'rc=%d says=%s' % (rc, 'SYMBOL-PARSE-FAIL' in out))
+    finally:
+        for p in (sec_sym, bad_py):
+            if os.path.exists(p):
+                os.remove(p)
     rc, out = run(['tools/dev.py', 'find', 'def cmd_find', '--in=tools/dev.py'])
     check('REAL-find-own-source', rc == 0 and 'tools/dev.py' in out,
           'rc=%d bytes=%d' % (rc, len(out)))
@@ -1070,26 +1413,38 @@ def selftest():
     tlines = tdoc.split('\n')
     if tlines and tlines[-1] == '':
         tlines.pop()
-    hit, cands = section_by_title(tlines, '二、乙')
+    hit, cands, n = section_by_title(tlines, '二、乙')
     check('CLEAN-section-found',
-          hit is not None and (hit[2], hit[3], hit[4]) == ('二、乙', 7, 10),
-          'hit=%s' % ((hit and (hit[2], hit[3], hit[4])),))
+          hit is not None and (hit[2], hit[3], hit[4]) == ('二、乙', 7, 10) and n == 1,
+          'hit=%s n=%d' % ((hit and (hit[2], hit[3], hit[4])), n))
     # 负样本：标题不存在 ⇒ 0 命中，但候选清单**非空**（要能告诉调用方有哪些可选）
-    hit, cands = section_by_title(tlines, '不存在的节')
-    check('NEG-section-absent', hit is None and len(cands) == 4,
-          'hit=%s cands=%d' % (hit, len(cands)))
+    hit, cands, n = section_by_title(tlines, '不存在的节')
+    check('NEG-section-absent', hit is None and len(cands) == 4 and n == 0,
+          'hit=%s cands=%d n=%d' % (hit, len(cands), n))
     # 负样本：标题歧义 ⇒ 也必须拒绝。≥2 命中 = 选错了节，不是「取到了」
-    hit, cands = section_by_title(tlines, '甲')
+    hit, cands, n = section_by_title(tlines, '甲')
     check('NEG-section-ambiguous',
-          hit is None and [c[1] for c in cands] == ['一、甲', '三、甲又'],
-          'cands=%s' % [c[1] for c in cands])
+          hit is None and [c[1] for c in cands] == ['一、甲', '三、甲又'] and n == 2,
+          'cands=%s n=%d' % ([c[1] for c in cands], n))
     # 空转样本：一个标题都没有的文件 ⇒ 任何 needle 都取不到，且候选清单为空
-    hit, cands = section_by_title(['plain', 'text'], '一')
-    check('EMPTY-no-headings-section', hit is None and cands == [],
-          'cands=%s' % cands)
-    # 🔴 变异打到靶子：brief 的计划表若指向一个不存在的标题，必须**报问题**而不是
+    hit, cands, n = section_by_title(['plain', 'text'], '一')
+    check('EMPTY-no-headings-section', hit is None and cands == [] and n == 0,
+          'cands=%s n=%d' % (cands, n))
+    # 🔴 n 是**单列的命中数**，不是 `len(cands)`：0 命中时候选清单会回退成全部标题，
+    #    于是 `len(cands)` 既可能是「歧义的 2 个」也可能是「全部的 4 个」——
+    #    两个完全不同的语义在同一个数字上撞车。`cmd_section` 靠 `n == 0` 决定
+    #    「该不该退到符号路」；若改用 `len(cands)` 判断，下面这个歧义样本就会退到
+    #    符号路、把「你选错了节」这个真信号杀掉。
+    absent = section_by_title(tlines, '不存在的节')      # 0 命中
+    everything = section_by_title(tlines, '')            # 空串是任何标题的子串 ⇒ 4 命中
+    check('CONTROL-hit-count-tells-0-from-4-while-cands-match',
+          absent[2] == 0 and everything[2] == 4
+          and len(absent[1]) == len(everything[1]) == 4,
+          'n=%d/%d cands=%d/%d —— len(cands) 一样，只有 n 分得开'
+          % (absent[2], everything[2], len(absent[1]), len(everything[1])))
+    # 🔴 变异打在靶子：brief 的计划表若指向一个不存在的标题，必须**报问题**而不是
     # 静默少打一节。这里用同一份纯函数模拟——把 needle 换成垃圾，结果必须是 None。
-    hit, _ = section_by_title(tlines, 'BRIEF_PLAN 里的标题打错了')
+    hit, _c, _n = section_by_title(tlines, 'BRIEF_PLAN 里的标题打错了')
     check('MUTATION-brief-needle-typo-detected', hit is None, 'hit=%s' % hit)
     # ci 的两个纯函数：解析成功 / 不是 JSON / 空清单 / 缺 status
     ok, err = fmt_run_list('[{"databaseId":1,"status":"completed",'
@@ -1178,9 +1533,41 @@ def selftest():
         check('REAL-brief-states-its-own-cost',
               'BRIEF  ~' in text and 'tok' in text, '')
         check('REAL-brief-carries-gate-verdict', 'gates verdict' in text, '')
+        # L2：抬头与元信息必须落在**末尾**，正文在最前 —— 这是「可缓存前缀」的机械
+        # 性质（缓存的是稳定的字节前缀）。仓库内部**测不出**省了多少 token（缓存在
+        # 服务端），能测的只有这个顺序，所以样本也只断言顺序，不声称收益。
+        first_body = text.find('CONTEXT.md :: 1.')
+        meta_at = text.find('-- meta')
+        check('REAL-brief-body-precedes-meta',
+              first_body >= 0 and meta_at > first_body,
+              'body_at=%d meta_at=%d' % (first_body, meta_at))
+        check('REAL-brief-meta-precedes-cost-line',
+              meta_at >= 0 and text.find('BRIEF  ~') > meta_at, '')
     finally:
         if os.path.exists(brief_out):
             os.remove(brief_out)
+    # L3：--budget 在真产物上跑一次 —— 必须退 0、必须**说出丢了哪几节**（静默少打
+    #     一节是这个仓库最忌讳的失败形态），且丢的顺序是「从计划表末尾往前」。
+    bud_out = os.path.join(tempfile.gettempdir(), 'dev-selftest-brief-budget.txt')
+    try:
+        if os.path.exists(bud_out):
+            os.remove(bud_out)
+        rc, out = run(['tools/dev.py', 'brief', '--budget=3000', '--out=' + bud_out])
+        text = ''
+        if os.path.exists(bud_out):
+            with open(bud_out, encoding='utf-8') as handle:
+                text = handle.read()
+        check('REAL-brief-budget-rc', rc == 0, 'rc=%d' % rc)
+        check('REAL-brief-budget-names-the-dropped-sections',
+              'budget  --budget=3000' in text and '丢掉了' in text
+              and '6. 当前状态' in text,
+              'has_budget_line=%s' % ('budget  --budget=' in text))
+        # 预算生效时至少留一节 ⇒ 那一个计划里的第一节必须还在（预算不许把简报清空）
+        check('REAL-brief-budget-keeps-at-least-one-section',
+              text.count('CONTEXT.md :: 1. 这是什么') == 1, '')
+    finally:
+        if os.path.exists(bud_out):
+            os.remove(bud_out)
     sec_out = os.path.join(tempfile.gettempdir(), 'dev-selftest-section.txt')
     try:
         if os.path.exists(sec_out):
@@ -1214,10 +1601,15 @@ dev -- local dev loop, one command (stdlib only).
   python tools/dev.py gate NAME [NAME]   run one or more gates
   python tools/dev.py test [pytest ...]  pytest only (args passed through)
   python tools/dev.py status             read-only: git + ratchet baseline + report head
-  python tools/dev.py outline FILE       read-only: heading map + per-section ~tokens
-  python tools/dev.py section FILE TITLE read-only: exactly one section, verbatim
+  python tools/dev.py outline FILE       read-only: heading map + per-section ~tokens;
+                                         for .py also an AST symbol map (def/class + cost)
+  python tools/dev.py section FILE TITLE read-only: exactly one section, verbatim; on a .py
+                                         with 0 heading hits it falls back to a symbol
+                                         lookup and prints route=heading|symbol
   python tools/dev.py find REGEX         read-only: matching lines only, not whole files
-  python tools/dev.py brief [--out=F]    read-only: per-round startup slices, verbatim
+  python tools/dev.py brief [--budget=N] read-only: per-round startup slices, verbatim;
+                                         over budget it drops from the END of the plan and
+                                         prints which sections it dropped
   python tools/dev.py ci [ID] [--wait=S] bounded CI status; never blocks unbounded
   python tools/dev.py --selftest         prove this runner can report FAIL
 
@@ -1225,6 +1617,8 @@ Use .venv\\Scripts\\python.exe. The verdict/status output is ASCII on purpose; t
 Chinese detail lives in tools/gates-report.txt (UTF-8) -- read it, do not re-run.
 outline/find print the matched text verbatim (ASCII-ising it would drop the payload)
 and fall back to backslash escapes with a NOTE only when the console cannot encode.
+A .py that ast.parse cannot read makes `outline` exit 2 (SYMBOL-PARSE-FAIL): the symbol
+layer is an extraction, and an empty extraction must never look like "no symbols".
 """
 
 

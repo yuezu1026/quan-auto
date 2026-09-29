@@ -1,7 +1,7 @@
 SCOPE: FULL -- all 17 registered gate(s) ran.
 VERDICT: PASS -- 17 of 17 gate(s) ok.
 NOTE: core-contract-refs=RATCHET 2/2 report a body verdict other than PASS and still count as ok. A tier-B ratchet prints DRIFT+/DRIFT-/DRIFT~ in its GATE header when the debt moved, and RATCHET at baseline; the line under it says verdict: DIRTY in every one of those cases (DIRTY is that script's own word for found N findings; it prints CLEAN when the count is zero). Read the GATE header, not that word.
-SIDE-EFFECT: gates wrote nothing (134 file(s) watched)
+SIDE-EFFECT: gates wrote nothing (135 file(s) watched)
 
 ==============================================================================
 GATE md-fidelity (tier A) selftest=PASS verdict=PASS 0 finding(s)
@@ -162,7 +162,7 @@ argv: tools/verify_appendix_refs.py
 scan scope: git ls-files=100 file(s), read as text=97, skipped=3
   skipped (binary/undecodable): docs/智能量化交易平台-数据中心数据源选型与接入规范.docx, docs/智能量化交易平台-核心模块接口契约文档.docx, docs/智能量化交易平台.docx
 appendix index: core=7L/24I dc=4L/73I prd=2L/0I risk=0L/0I
-citations: 318 total, 193 with an item label, 95 naming an owner, in 35 file(s)
+citations: 316 total, 192 with an item label, 94 naming an owner, in 35 file(s)
 verdict: PASS (0 issue(s))
 
 ==============================================================================
