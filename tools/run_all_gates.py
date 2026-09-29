@@ -69,21 +69,57 @@ be silently skipped and reported green, which is the fake-gate pattern this proj
 getting bitten by. Integrating it properly means "no docker => explicit SKIPPED, counted
 as not-green", and that is a separate piece of work.
 
+Parallelism, and the guard that makes it safe
+---------------------------------------------
+A gate's two runs share nothing but the read-only tree, so the pairs run in a small
+thread pool instead of one after another:
+the console prints each gate as it finishes, but the report is rebuilt in REGISTRY
+order, so the scheduling cannot change a single byte of it. `--jobs=N` sets the width
+(default min(8, cpu_count); `--jobs=1` forces the old serial order, which is what you
+want when reading interleaved output). Measured 2026-09-29 with the 17 gates: serial
+wall 17.8s, parallel wall 11.3s. So it is a 1.6x win, not an 8x one, and the reason is
+worth recording: the wall is now the SLOWEST SINGLE GATE'S PAIR. One gate dominates --
+risk-table-wiring's selftest alone is 9.6s (14 negative controls, each re-parsing the
+contract and the tree), while every other gate's selftest is <= 0.9s and the whole
+`real` side is only ~4.1s. 9.6 + 0.8 is already ~10.4s, so the pool has removed
+everything removable without touching a gate's own cost. Speeding that gate up would
+mean caching its parses between samples, which is precisely how 14 negative controls
+turn into 14 no-ops, so it is deliberately left alone.
+
+Parallelism is only safe because no gate writes the repository, and that is now a
+CHECK rather than a recollection: the run is bookended by a side-effect fingerprint
+(relative path -> size + mtime_ns) taken before the gates start and again before the
+report is written. Anything created, deleted or modified under the repo root fails the
+run. Two directory CLASSES are skipped, deliberately and for stated reasons -- `.git`
+(a gate that calls `git ls-files` may refresh the index stat cache, which is git's own
+bookkeeping) and `__pycache__` / `*.pyc` (verify_dashboard re-imports quanauto, so
+bytecode WILL appear; it is derived and gitignored, and nothing meaningful can hide in
+it). Everything else is watched, UNTRACKED files included -- droppings a gate leaves
+behind are exactly what this guard is for. If the fingerprint sees zero files it
+reports FAIL rather than "clean": an empty check must never read as a passing one.
+
 Usage:
   python tools/run_all_gates.py                 # run everything, print the table
   python tools/run_all_gates.py --full          # also dump each gate's raw output
   python tools/run_all_gates.py --gate=NAME     # run one gate
+  python tools/run_all_gates.py --jobs=N        # pool width (default min(8, cpu))
+  python tools/run_all_gates.py --selftest-simulate-write=PATH
+                                                # SELFTEST ONLY, never use by hand:
+                                                # writes PATH inside the repo so the
+                                                # side-effect guard can be shown failing
   python tools/run_all_gates.py --list          # show the registry
   python tools/run_all_gates.py --selftest      # prove this harness can report FAIL
 
 Exit codes: 0 = all gates green, 1 = at least one gate failed or the harness itself
 could not run its checks, 2 = the harness' own self-test failed.
 """
+import concurrent.futures
 import contextlib
 import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -477,6 +513,132 @@ def run_argv(argv, timeout=900):
             'seconds': round(time.time() - started, 1)}
 
 
+DEFAULT_JOBS_CAP = 8
+
+# Directory NAMES skipped by the side-effect fingerprint (see the module docstring for
+# why exactly these two classes). Category skips only -- there is deliberately no
+# per-file exemption list, because an exemption list is a hole and the first thing
+# anyone would widen when it goes red.
+FINGERPRINT_SKIP_DIRS = frozenset(('__pycache__', '.git', '.venv', 'venv',
+                                   '.pytest_cache', '.mypy_cache', '.ruff_cache'))
+FINGERPRINT_SKIP_SUFFIXES = ('.pyc', '.pyo')
+
+
+def parse_jobs(raw, cpu):
+    """Pure: (value of --jobs= or None, cpu count) -> (jobs, error).
+
+    A bad value is an ERROR, never a silent fall back to serial: `--jobs=8x` would then
+    give a correct-looking run that is 3x slower, so the typo would be invisible. On
+    error returns (None, message) so main() can refuse and say why.
+    """
+    if raw is None:
+        return max(1, min(DEFAULT_JOBS_CAP, max(1, int(cpu)))), None
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        return None, '--jobs=%r is not an integer' % (raw,)
+    if n < 1:
+        return None, '--jobs=%d is not >= 1' % n
+    return n, None
+
+
+def fingerprint(root):
+    """{relative path (/-separated): (size, mtime_ns)} for every file under `root`."""
+    out = {}
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in FINGERPRINT_SKIP_DIRS]
+        for fn in filenames:
+            if fn.endswith(FINGERPRINT_SKIP_SUFFIXES):
+                continue
+            full = os.path.join(dirpath, fn)
+            try:
+                st = os.stat(full)
+            except OSError:
+                continue
+            out[os.path.relpath(full, root).replace(os.sep, '/')] = \
+                (st.st_size, st.st_mtime_ns)
+    return out
+
+
+def diff_fingerprint(before, after):
+    """Pure: the three sets of paths that differ. Sorted, so the report is stable."""
+    added = sorted(set(after) - set(before))
+    removed = sorted(set(before) - set(after))
+    changed = sorted(p for p in set(before) & set(after) if before[p] != after[p])
+    return added, removed, changed
+
+
+def repo_side_effect_report(before, after):
+    """Pure: (problems, one-line summary) for a pair of fingerprints.
+
+    The zero-file case is a FAIL, not a pass: `fingerprint()` returning {} makes every
+    comparison trivially empty, so the guard would print "nothing was written" forever.
+    That is the vacuity pattern this project keeps meeting, so it is checked first.
+    """
+    added, removed, changed = diff_fingerprint(before, after)
+    watched = len(after)
+    problems = []
+    if watched == 0:
+        problems.append('the side-effect fingerprint saw 0 file(s) under the repo root, '
+                        'so it can detect nothing -- "no gate wrote the repo" would be '
+                        'an empty claim rather than a finding')
+    for label, paths in (('created', added), ('deleted', removed),
+                         ('modified', changed)):
+        if paths:
+            shown = ', '.join(paths[:8])
+            if len(paths) > 8:
+                shown += ' (+%d more)' % (len(paths) - 8)
+            problems.append('gate(s) %s %d file(s) inside the repository: %s'
+                            % (label, len(paths), shown))
+    if problems:
+        summary = ('side effects: %d created / %d deleted / %d modified (%d watched)'
+                   % (len(added), len(removed), len(changed), watched))
+    else:
+        summary = 'gates wrote nothing (%d file(s) watched)' % watched
+    return problems, summary
+
+
+def run_gate_pairs(gates, jobs):
+    """Yield (gate, selftest result, real result); the ORDER is whichever finishes first.
+
+    The caller rebuilds the rows in registry order before writing the report, so
+    completion order is a console-only detail and cannot change a byte of the evidence.
+    A worker that raises is turned into a FAILing result instead of propagating: an
+    exception here would kill the run before the report exists, and a missing report
+    reads as "we did not run", which is the one thing a gate harness must never say.
+    """
+    def one(g):
+        try:
+            return g, run_argv(g['selftest']), run_argv(g['runner'])
+        except Exception as exc:            # defensive: never lose the report
+            dead = {'rc': None, 'text': '', 'seconds': 0.0,
+                    'error': 'worker raised %s: %s' % (type(exc).__name__, exc)}
+            return g, dict(dead), dead
+
+    if jobs <= 1 or len(gates) <= 1:
+        for g in gates:
+            yield one(g)
+        return
+    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+        futures = [pool.submit(one, g) for g in gates]
+        for fut in concurrent.futures.as_completed(futures):
+            yield fut.result()
+
+
+def order_rows(gates, rows_by_name):
+    """Rows in REGISTRY order, whatever order the pool finished them in.
+
+    Extracted and given its own sample because the entire determinism claim of the
+    parallel run rests on this one line: as `rows_by_name.values()` the report would list
+    gates in completion order, and two runs of the same tree would produce two different
+    gates-report.txt files. Returns (rows, missing names) so the caller can refuse to
+    write a short report instead of silently stamping it FULL.
+    """
+    rows = [rows_by_name[g['name']] for g in gates if g['name'] in rows_by_name]
+    missing = [g['name'] for g in gates if g['name'] not in rows_by_name]
+    return rows, missing
+
+
 def parse(text):
     findings = {}
     for code in FINDING_RE.findall(text):
@@ -632,7 +794,7 @@ def scope_line(rows, all_names):
     return 'SCOPE: FULL -- all %d registered gate(s) ran.' % len(all_names)
 
 
-def write_report(rows, registry, report_path=REPORT_PATH):
+def write_report(rows, registry, report_path=REPORT_PATH, notes=()):
     """`registry` must be the WHOLE gate list, never the --gate= filtered subset.
 
     scope_line() answers 'which registered gates are missing from rows?', so the
@@ -641,10 +803,17 @@ def write_report(rows, registry, report_path=REPORT_PATH):
     registered gate(s) ran.' on its own artifact -- the exact false green the scope line
     exists to prevent. The parameter is named `registry` (not `gates_by_name`) on
     purpose: the old name invited passing a mapping built from the filtered list.
+
+    `notes` are harness-level lines printed immediately after the scope line (currently
+    the side-effect verdict). They belong IN the evidence and not only on the console:
+    the reader of this file does not have the console, and a guard whose result is
+    absent from the file cannot be audited from the file.
     """
     gates_by_name = {g['name']: g for g in registry}
     lines = []
     lines.append(scope_line(rows, list(gates_by_name)))
+    for note in notes:
+        lines.append(note)
     lines.append('')
     for r in rows:
         lines.append('=' * 78)
@@ -757,11 +926,16 @@ def selftest():
     picked_one = GATES[0]['name']
     not_run = [g['name'] for g in GATES if g['name'] != picked_one]
     first = ''
+    second = ''
+    e2e_out = ''
     try:
-        with contextlib.redirect_stdout(io.StringIO()):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
             execute([picked_one], report_path=tmp_report)
+        e2e_out = buf.getvalue()
         with open(tmp_report, encoding='utf-8-sig') as f:
             first = f.readline().strip()
+            second = f.readline().strip()
     except (OSError, IndexError) as exc:
         first = '(unreadable: %s)' % exc
     hit = (len(GATES) >= 2 and first.startswith('SCOPE: PARTIAL')
@@ -769,10 +943,95 @@ def selftest():
     print('  [scope-line-wired-e2e] picked=%s first=%s %s'
           % (picked_one, first[:40], 'OK' if hit else 'MISSED'))
     ok = ok and hit
+
+    # 同一趟里再证一次「副作用守卫接上了」。上面那条 scope 守卫踩过的坑正是
+    # 「纯函数全对、调用点传错了参数」，所以这里也只认真实运行留下的字节：
+    # 报告的第二行必须是守卫自己的结论，且必须是「没写」；控制台上也要有同一行
+    # （报告与终端不许各说一套）。这同时是一条**防误报**样本 —— 真实运行里
+    # verify_dashboard 会 import quanauto 并落 __pycache__，守卫若把那算成写入就会
+    # 常红，而常红的守卫一定会被人关掉。
+    want_note = 'SIDE-EFFECT: gates wrote nothing'
+    hit = (second.startswith(want_note) and 'file(s) watched' in second
+           and want_note in e2e_out)
+    print('  [sideeffect-guard-wired-e2e] report_line2=%s %s'
+          % (second[:52], 'OK' if hit else 'MISSED'))
+    if not hit:
+        print('      console lines=%s'
+              % [l for l in e2e_out.splitlines()
+                 if l.startswith('SIDE-EFFECT:') or l.startswith('GATE FAIL')])
+    ok = ok and hit
     try:
         os.remove(tmp_report)
     except OSError:
         pass
+
+    # ---- 副作用指纹的四类出口，外加一条空转守卫样本 ------------------------------
+    # 每一项都必须有样本：少一个，「守卫没接上」和「确实没写」在报告里长得一样。
+    sandbox = tempfile.mkdtemp(prefix='gates-sideeffect-')
+    empty_dir = tempfile.mkdtemp(prefix='gates-sideeffect-empty-')
+    watched = os.path.join(sandbox, 'watched.txt')
+    with open(watched, 'w', encoding='utf-8', newline='\n') as f:
+        f.write('before\n')
+
+    def side_probe(mutate):
+        b = fingerprint(sandbox)
+        mutate()
+        return repo_side_effect_report(b, fingerprint(sandbox))
+
+    def side_expect(tag, mutate, want_label, want_path):
+        nonlocal ok
+        problems, _summary = side_probe(mutate)
+        hit = (len(problems) == 1
+               and any(want_label in p and want_path in p for p in problems))
+        print('  [%s] problems=%s %s' % (tag, problems, 'OK' if hit else 'MISSED'))
+        ok = ok and hit
+
+    def _modify():
+        # 长度也变了，(size, mtime_ns) 两半都会动，不会依赖时钟精度
+        with open(watched, 'a', encoding='utf-8', newline='\n') as f:
+            f.write('after-after-after\n')
+
+    def _create():
+        with open(os.path.join(sandbox, 'new.txt'), 'w', encoding='utf-8',
+                  newline='\n') as f:
+            f.write('x\n')
+
+    def _delete():
+        os.remove(os.path.join(sandbox, 'new.txt'))
+
+    def _cache():
+        d = os.path.join(sandbox, '__pycache__')
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, 'x.pyc'), 'wb') as f:
+            f.write(b'\x00\x01\x02')
+        with open(os.path.join(sandbox, 'loose.pyc'), 'wb') as f:
+            f.write(b'\x00\x01\x02')
+
+    pr, sm = side_probe(lambda: None)
+    hit = (pr == [] and '1 file(s) watched' in sm)
+    print('  [sideeffect-clean] problems=%s summary=%s %s'
+          % (pr, sm, 'OK' if hit else 'MISSED'))
+    ok = ok and hit
+    side_expect('sideeffect-modified', _modify, 'modified', 'watched.txt')
+    side_expect('sideeffect-created', _create, 'created', 'new.txt')
+    side_expect('sideeffect-deleted', _delete, 'deleted', 'new.txt')
+    # 豁免必须是**类别**而不是逐个文件：真实运行里 __pycache__ 一定会出现。
+    # 判据取「看着的文件数不变」而不是「problems 为空」—— 后者在指纹本身空转时
+    # 照样成立。
+    pr, sm = side_probe(_cache)
+    hit = (pr == [] and '1 file(s) watched' in sm)
+    print('  [sideeffect-cache-class-ignored] problems=%d summary=%s %s'
+          % (len(pr), sm, 'OK' if hit else 'MISSED'))
+    ok = ok and hit
+    # 空转守卫：指纹看不到任何文件时，比对永远为空、守卫会永远打印「没写」。
+    pr, sm = repo_side_effect_report(fingerprint(empty_dir), fingerprint(empty_dir))
+    hit = (len(pr) == 1 and 'saw 0 file(s)' in pr[0])
+    print('  [sideeffect-empty-is-a-failure] problems=%s %s'
+          % (pr, 'OK' if hit else 'MISSED'))
+    ok = ok and hit
+
+    for _d in (sandbox, empty_dir):
+        shutil.rmtree(_d, ignore_errors=True)
 
     # '(N lines)' must be the number of physical lines in the file, checked against the
     # bytes on disk rather than against the formula -- a refactor of the join must not be
@@ -854,6 +1113,95 @@ def selftest():
              'OK' if hit else 'MISSED'))
     ok = ok and hit
 
+    # --jobs：默认值、上限、显式值、以及**坏值必须报错**。坏值静默退回串行是最坏的
+    # 一种处理 —— 报告完全正确、只是慢 3 倍，打字错误就此隐身。cpu=0 也要落在 1，
+    # 否则池宽 0 会让整趟一个门禁都不跑。
+    j_default, e_default = parse_jobs(None, 4)
+    j_capped, _ = parse_jobs(None, 64)
+    j_one, _ = parse_jobs('1', 64)
+    j_bad, e_bad = parse_jobs('8x', 4)
+    j_zero, e_zero = parse_jobs('0', 4)
+    j_nocpu, _ = parse_jobs(None, 0)
+    hit = (j_default == 4 and e_default is None and j_capped == DEFAULT_JOBS_CAP
+           and j_one == 1 and j_bad is None and bool(e_bad)
+           and j_zero is None and bool(e_zero) and j_nocpu == 1)
+    print('  [jobs-parse] default=%s capped=%s explicit=%s bad=%s zero=%s cpu0=%s %s'
+          % (j_default, j_capped, j_one, e_bad, e_zero, j_nocpu,
+             'OK' if hit else 'MISSED'))
+    ok = ok and hit
+
+    # 并行唯一能污染证据的通道就是「行的顺序」。这里喂给 order_rows 一个**完成顺序**
+    # （倒序）的映射，要求它照样输出注册表顺序；否则同一棵树跑两次会得到两份不同的
+    # gates-report.txt。半份结果必须被报成 missing，而不是写成一条 FULL。
+    three = [{'name': n} for n in ('alpha', 'beta', 'gamma')]
+    got, miss = order_rows(three, {'gamma': {'name': 'gamma'},
+                                   'alpha': {'name': 'alpha'},
+                                   'beta': {'name': 'beta'}})
+    short, short_miss = order_rows(three, {'alpha': {'name': 'alpha'}})
+    hit = ([r['name'] for r in got] == ['alpha', 'beta', 'gamma'] and not miss
+           and short_miss == ['beta', 'gamma'] and len(short) == 1)
+    print('  [parallel-order-is-registry-order] order=%s short_missing=%s %s'
+          % ([r['name'] for r in got], short_miss, 'OK' if hit else 'MISSED'))
+    ok = ok and hit
+
+    # 最后一条，也是最重要的一条：上面所有副作用样本都只证明「比对算术对」。它们
+    # 一条都证明不了 `execute()` 把结论接到了退出码上 —— 接线漏掉时，一个真的会写
+    # 仓库的门禁拿到 PASS，而报告里只多一行没人会看的 SIDE-EFFECT。所以这里让
+    # execute() 自己在两次指纹之间写一个文件，断言退出码 == 1、控制台点名、报告里
+    # 留下 PROBLEM 行。删掉守卫 ⇒ 这一条必红（其余样本全绿）。
+    probe = os.path.join(ROOT, '_selftest_side_effect_probe.txt')
+    tmp_w_report = os.path.join(tempfile.gettempdir(), 'gates-selftest-write.txt')
+    argv_backup = list(sys.argv)
+    rc_wrote = None
+    wrote_out = ''
+    rep2 = ''
+    try:
+        if os.path.exists(probe):
+            os.remove(probe)
+        sys.argv.append('--selftest-simulate-write=' + probe)
+        buf2 = io.StringIO()
+        with contextlib.redirect_stdout(buf2):
+            rc_wrote = execute([picked_one], report_path=tmp_w_report)
+        wrote_out = buf2.getvalue()
+        with open(tmp_w_report, encoding='utf-8-sig') as f:
+            rep2 = f.read()
+    except (OSError, IndexError) as exc:
+        rep2 = '(unreadable: %s)' % exc
+    finally:
+        sys.argv[:] = argv_backup
+        if os.path.exists(probe):
+            os.remove(probe)
+
+    def _fired(text):
+        return ('PROBLEM: gate(s) created 1 file(s) inside the repository: '
+                '_selftest_side_effect_probe.txt') in text
+
+    hit = (rc_wrote == 1
+           and 'GATE FAIL: gate(s) created 1 file(s) inside the repository' in wrote_out
+           and 'SIDE-EFFECT GUARD FAILED' in wrote_out
+           and 'SIDE-EFFECT: side effects: 1 created' in wrote_out
+           and 'SIDE-EFFECT: side effects: 1 created' in rep2
+           and _fired(rep2)
+           # 连判决词一起钉住。注释里不写「本来写错过」—— 这一行从未写错过；是
+           # 上面那次证伪变异（把 side_problems 从 all_green 里摘掉）让同一条运行
+           # 印出了 `PASS (1/1 gate(s) green; SIDE-EFFECT GUARD FAILED)`：一行里
+           # PASS 与 GUARD FAILED 并存。判据只断言「有 SIDE-EFFECT GUARD FAILED
+           # 字样」的话，那种自相矛盾的行照样算过，所以断言的必须是整句。
+           and 'verdict: FAIL (1/1 gate(s) green; SIDE-EFFECT GUARD FAILED)' in wrote_out)
+    print('  [sideeffect-guard-fails-e2e] rc=%s %s' % (rc_wrote, 'OK' if hit else 'MISSED'))
+    if not hit:
+        print('      stdout=%s'
+              % [l for l in wrote_out.splitlines()
+                 if l.startswith('SIDE-EFFECT') or l.startswith('GATE FAIL')
+                 or l.startswith('verdict:')])
+        print('      report_notes=%s' % [l for l in rep2.splitlines()[:6]])
+    ok = ok and hit
+    for _p in (tmp_w_report,):
+        try:
+            os.remove(_p)
+        except OSError:
+            pass
+
     # Registry guards: an empty or tier-A-less registry must not produce a green run.
     reg_ok = bool(GATES) and any(g['tier'] == 'A' for g in GATES)
     print('  [registry-nonempty] gates=%d %s' % (len(GATES), 'OK' if reg_ok else 'MISSED'))
@@ -915,15 +1263,54 @@ def execute(picked, report_path=REPORT_PATH):
               'has ever seen fail is not a detector' % noself)
         return 1
 
+    raw_jobs = None
+    for a in sys.argv:
+        if a.startswith('--jobs='):
+            raw_jobs = a.split('=', 1)[1]
+    jobs, jerr = parse_jobs(raw_jobs, os.cpu_count() or 1)
+    if jerr:
+        print('GATE FAIL: %s -- refusing to fall back silently, because a wrong pool '
+              'width still produces a correct-looking report' % jerr)
+        return 1
+
+    # Snapshot the tree BEFORE any gate runs. The matching `after` snapshot is taken
+    # before write_report(), so this report file cannot be a false positive of itself.
+    before = fingerprint(ROOT)
+
+    # SELFTEST-ONLY HOOK, and it deliberately sits AFTER the `before` snapshot: it exists
+    # so that `--selftest` can show a run going red end to end instead of only asserting
+    # the comparison arithmetic. The guard's whole job is to stop a report from being
+    # stamped FULL while a gate wrote the tree, and the way that fails in practice is not
+    # a wrong diff -- it is `side_problems` never reaching the exit code. Without this
+    # sample, deleting the two `all_green` clauses leaves every other sample green.
+    # Called from the selftest ONLY; a normal run has no such argv entry.
+    for _a in sys.argv:
+        if _a.startswith('--selftest-simulate-write='):
+            with open(_a.split('=', 1)[1], 'w', encoding='utf-8', newline='\n') as _f:
+                _f.write('simulated gate side effect\n')
+
     gates_what_short.update({g['name']: g['what'][:44] for g in gates})
-    rows = []
-    for g in gates:
-        st = run_argv(g['selftest'])
-        real = run_argv(g['runner'])
+    print('  running %d gate(s) with jobs=%d (per gate: selftest then real)'
+          % (len(gates), jobs))
+    rows_by_name = {}
+    for g, st, real in run_gate_pairs(gates, jobs):
         row = evaluate(g, st, real, baseline)
-        rows.append(row)
+        rows_by_name[g['name']] = row
         print('  ran %-20s selftest=%-6s verdict=%-10s (%.1fs)'
               % (g['name'], row['selftest'], row['verdict'], row['seconds']))
+
+    # Completion order must not leak into the evidence.
+    rows, missing_rows = order_rows(gates, rows_by_name)
+    if missing_rows:
+        print('GATE FAIL: %d of %d gate(s) produced no result (%s) -- refusing to write '
+              'a report that would read as a full verdict'
+              % (len(missing_rows), len(gates), ', '.join(missing_rows)))
+        return 1
+
+    side_problems, side_summary = repo_side_effect_report(before, fingerprint(ROOT))
+    print('SIDE-EFFECT: %s' % side_summary)
+    for p in side_problems:
+        print('GATE FAIL: %s' % p)
 
     print('')
     print_table(rows)
@@ -939,8 +1326,12 @@ def execute(picked, report_path=REPORT_PATH):
             print('=== %s full output ===' % r['name'])
             print(r['output'])
 
+    # The side-effect verdict goes INTO the report, not only onto the console: whoever
+    # reads gates-report.txt has no console, and a guard whose result is missing from the
+    # file cannot be audited from the file.
+    notes = ['SIDE-EFFECT: %s' % side_summary] + ['PROBLEM: %s' % p for p in side_problems]
     # GATES, not `gates`: the report must be able to say what was NOT run.
-    n = write_report(rows, GATES, report_path)
+    n = write_report(rows, GATES, report_path, notes)
     try:
         shown_report = os.path.relpath(report_path, ROOT)
     except ValueError:
@@ -950,8 +1341,10 @@ def execute(picked, report_path=REPORT_PATH):
     print('')
     print('report: %s (%d lines) -- read this instead of re-running the gates'
           % (shown_report, n))
-    print('verdict: %s (%d/%d gate(s) green)'
-          % ('PASS' if not failed else 'FAIL', len(rows) - len(failed), len(rows)))
+    all_green = not failed and not side_problems
+    print('verdict: %s (%d/%d gate(s) green%s)'
+          % ('PASS' if all_green else 'FAIL', len(rows) - len(failed), len(rows),
+             '' if not side_problems else '; SIDE-EFFECT GUARD FAILED'))
     # 这行以前写的是「no SQL was executed … remains UNPROVEN」。2026-09-23 起
     # tools/run_sql_smoke.py 已在真实 PostgreSQL 上跑过两套 DDL+smoke，那句话变成假话，
     # 留着就是漂移。现在如实说明：本报告不含运行时结论，且**故意不转述**它的结论，
@@ -973,7 +1366,7 @@ def execute(picked, report_path=REPORT_PATH):
     print('NOTE: proof that the runtime green has teeth lives in %s (produced by %s).'
           % (os.path.relpath(FALSIFY_REPORT_PATH, ROOT), os.path.relpath(FALSIFY_TOOL, ROOT)))
     print('      One case per named CHECK; every case must turn exactly one sample red.')
-    return 0 if not failed else 1
+    return 0 if all_green else 1
 
 
 if __name__ == '__main__':

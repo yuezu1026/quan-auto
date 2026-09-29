@@ -1,4 +1,5 @@
 SCOPE: FULL -- all 17 registered gate(s) ran.
+SIDE-EFFECT: gates wrote nothing (133 file(s) watched)
 
 ==============================================================================
 GATE md-fidelity (tier A) selftest=PASS verdict=PASS 0 finding(s)
