@@ -39,7 +39,10 @@
     python tools/dev.py test [pytest …]    # 只跑 pytest，参数透传
     python tools/dev.py status             # 只读：git 状态 + 棘轮基线 + 上次报告首行
     python tools/dev.py outline FILE       # 只读：文件的标题目录 + 每节行范围与 ≈token
+    python tools/dev.py section FILE TITLE # 只读：按标题取**恰好一节**，原文
     python tools/dev.py find REGEX         # 只读：只回命中行，不回整份文件
+    python tools/dev.py brief              # 只读：每轮开工该看的那几节（机械取片，非摘要）
+    python tools/dev.py ci [ID] [--wait=S] # 有界 CI 查询（取代无界的 `gh run watch`）
     python tools/dev.py --selftest         # 证明本 runner 真的能报 FAIL
 
 必须用 `.venv\\Scripts\\python.exe` 运行（裸 `python` 是 anaconda base，没装 pytest）。
@@ -55,6 +58,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REPORT_PATH = os.path.join(ROOT, 'tools', 'gates-report.txt')
@@ -85,15 +89,20 @@ def run(argv, timeout=900):
     return run_raw([sys.executable, '-X', 'utf8'] + list(argv), timeout=timeout)
 
 
-def run_raw(argv, timeout=900):
+def run_raw(argv, timeout=900, extra_env=None):
     """跑任意可执行文件（不带 Python 前缀）。
 
     区分这两个入口是必须的：一个「总是拼上 sys.executable」的 runner 会把
     `git rev-parse` 送到 Python 解释器那里，报错信息长得像「git 不存在」——
     本文件的 selftest 第一次跑就把这个 bug 抓出来了。
+
+    extra_env 只给 `ci` 用：`gh` 在本机不读系统代理，需要显式注入 HTTPS_PROXY。
+    其他调用方一律不传，保持「继承当前环境」这个默认行为。
     """
     env = dict(os.environ)
     env['PYTHONIOENCODING'] = 'utf-8'
+    if extra_env:
+        env.update(extra_env)
     cmd = list(argv)
     try:
         proc = subprocess.run(cmd, cwd=ROOT, stdout=subprocess.PIPE,
@@ -152,6 +161,21 @@ def report_scope():
     except OSError:
         return 'SCOPE: (no report yet)'
     return 'SCOPE: (no SCOPE line)'
+
+
+def report_verdict():
+    """读上次报告里的总判据行（只读，不重跑）。取不到返回 None。
+
+    **取不到时故意不给一个像样的默认值。** 这一行会被 brief 原样转述，若拿
+    `(no report yet)` 这类占位串顶替，读者会把它当成「门禁是绿的」—— 与「提取为空
+    必须判 FAIL」是同一条理由：空集不能打印成通过。
+    """
+    try:
+        with open(REPORT_PATH, encoding='utf-8-sig') as handle:
+            text = handle.read()
+    except OSError:
+        return None
+    return parse_verdict(text)['line']
 
 
 def print_header(title):
@@ -556,6 +580,279 @@ def cmd_find(argv):
 
 
 # ---------------------------------------------------------------------------------
+# section / brief —— 「按标题取一节」与「每轮开工该看的那几节」
+#
+# 为什么：本仓库的开工规矩是「先读 CONTEXT.md，再读迭代计划」。2026-09-29 用
+# `dev.py outline` 实测：CONTEXT.md 整份 ≈17.8k tok、迭代计划 整份 ≈23.5k tok
+# ⇒ **两份额定读量 41.3k tok/轮**。但这 41.3k 里，仓库地图（9.6k）与 DoD 明细（18.2k）
+# 是**最不会变**的部分；每轮真正会变的是 §6 当前状态（3.3k）与 §三 迭代总览（1.0k）。
+#
+# brief 是**机械取片，不是摘要**。这条边界是硬的：摘要会随产物老去而变成假话
+# （本项目「引用会老去」已经踩过两次：悬空的 §案例N、漂了 47 行的 L###），而机械取片
+# 不可能说假话 —— 它打出来的就是原文，只是少了你不看的那些节。取不到就判 FAIL，
+# 绝不用一个「看起来很全」的空壳顶替（提取为空必须判 FAIL）。
+#
+# 选节**按标题内容不按行号**：行号会漂且漂了没人报，标题不会。
+# ---------------------------------------------------------------------------------
+BRIEF_PLAN = (
+    ('CONTEXT.md', (
+        '1. 这是什么',
+        '2. 硬约束',
+        '6. 当前状态',
+        '7. 工作纪律',
+    )),
+    ('docs/迭代计划.md', (
+        '三、迭代总览',
+    )),
+)
+
+
+def section_by_title(lines, needle):
+    """按标题**子串**取一节。
+
+    返回 (hit, candidates)：命中恰好一次时 hit = (行号, 级别, 标题, 节起, 节止, ≈tok)；
+    否则 hit = None 且 candidates 里给出行号+标题（0 命中 = 全部标题，供调用方挑；
+    ≥2 命中 = 歧义的那几条）。
+
+    0 与 ≥2 **都必须能被调用方看见**：前者是「提取为空」，后者是「选错了节」，
+    两者都不是「取到了」，所以都不许静默退化成一个默认匹配。
+    """
+    rows = heading_sections(lines, 6)
+    hits = [r for r in rows if needle in r[2]]
+    all_titles = [(r[0], r[2]) for r in rows]
+    if len(hits) == 1:
+        return hits[0], all_titles
+    return None, [(r[0], r[2]) for r in hits] or all_titles
+
+
+def cmd_section(argv):
+    path, needle, out_path = None, None, None
+    for arg in argv:
+        if arg.startswith('--out='):
+            out_path = arg[6:]
+        elif arg.startswith('-'):
+            print('unknown option: %s' % arg)
+            return 2
+        elif path is None:
+            path = arg
+        elif needle is None:
+            needle = arg
+        else:
+            print('section takes FILE TITLE (got %s)' % ' '.join(argv))
+            return 2
+    if path is None or needle is None:
+        print('usage: python tools/dev.py section FILE TITLE [--out=FILE]')
+        return 2
+    lines = read_lines(path if os.path.isabs(path) else os.path.join(ROOT, path))
+    if lines is None:
+        print('cannot read: %s' % path)
+        return 2
+    hit, cands = section_by_title(lines, needle)
+    if hit is None:
+        if not cands:
+            print('FAIL: %s 里一个标题都没有，取不到 %r' % (path, needle))
+        else:
+            print('FAIL: %r 命中 %d 个标题 —— 标题必须唯一，写更长一段来消歧'
+                  % (needle, len(cands)))
+            for lineno, title in cands[:30]:
+                say('  L%-5d %s' % (lineno, title))
+        return 2
+    _lineno, _level, title, start, end, tokens = hit
+    body = lines[start - 1:end]
+    if out_path:
+        write_out(out_path, '\n'.join(body) + '\n')
+        print('section written: %s  %s :: %s  L%d-%d  ~%d tok'
+              % (out_path, path, title, start, end, tokens))
+        return 0
+    say('%s :: %s   L%d-%d   ~%d tok' % (path, title, start, end, tokens))
+    for line in body:
+        say(line)
+    return 0
+
+
+def cmd_brief(argv):
+    """把「每轮开工该看的那几节」原文打出来，并报出这次取片的成本与省下的量。"""
+    out_path = None
+    for arg in argv:
+        if arg.startswith('--out='):
+            out_path = arg[6:]
+        else:
+            print('brief takes only --out=FILE (got %s)' % arg)
+            return 2
+
+    problems, body = [], []
+    body_tokens, full_tokens = 0, 0
+    for rel, needles in BRIEF_PLAN:
+        lines = read_lines(os.path.join(ROOT, *rel.split('/')))
+        if lines is None:
+            problems.append('BRIEF-SOURCE-UNREADABLE %s' % rel)
+            continue
+        full_tokens += est_tokens('\n'.join(lines))
+        for needle in needles:
+            hit, cands = section_by_title(lines, needle)
+            if hit is None:
+                problems.append(
+                    'BRIEF-SECTION %s :: %s -- %s'
+                    % (rel, needle,
+                       '0 命中' if not cands else '%d 命中（歧义）' % len(cands)))
+                continue
+            _lineno, _level, title, start, end, tokens = hit
+            body.append('%s :: %s   L%d-%d   ~%d tok' % (rel, title, start, end, tokens))
+            body.append('')
+            body.extend(lines[start - 1:end])
+            body.append('')
+            body_tokens += tokens
+    if not body:
+        # 取不到任何一节 ⇒ 后面所有读数都在空转，绝不能打印一份「看着很干净」的简报。
+        problems.append('BRIEF-EMPTY 一节都没取到，拒绝通过（提取为空必须判 FAIL）')
+
+    rc, out = run_raw(['git', 'log', '-1', '--oneline'])
+    head_line = out.strip() if rc == 0 else ('(git failed rc=%d)' % rc)
+    rc, out = run_raw(['git', 'status', '--porcelain'])
+    dirty = ('%d file(s)' % len([l for l in out.splitlines() if l.strip()])
+             if rc == 0 else '(git failed rc=%d)' % rc)
+    verdict = report_verdict()
+
+    meta = [
+        'git head      %s' % head_line,
+        'git dirty     %s' % dirty,
+        'gates scope   %s' % report_scope(),
+        'gates verdict %s' % (verdict or
+                              '(none -- 报告里没有 verdict 行；请用 UTF-8 读 '
+                              'tools/gates-report.txt，不要把「没读到」读成「绿」)'),
+    ]
+    header = ('BRIEF  ~%d tok of source sections   (这几份文件整份读 = ~%d tok; '
+              '省下 ~%d)' % (body_tokens, full_tokens, full_tokens - body_tokens))
+    if problems:
+        header = 'BRIEF FAILED -- %d 个问题（下面这些节没取到，读数请勿据此下结论）' \
+                 % len(problems)
+    payload = [header] + meta + [''] + body + [
+        'SKIPPED -- 上面没打的节按需读：`dev.py outline FILE` 看目录与每节 ≈tok，',
+        '           再 `dev.py section FILE TITLE` 取那一节（别再整份读）。']
+    if problems:
+        payload += [''] + ['PROBLEM: %s' % p for p in problems]
+
+    if out_path:
+        write_out(out_path, '\n'.join(payload) + '\n')
+        print('brief written: %s (%d lines)' % (out_path, len(payload)))
+    else:
+        for line in payload:
+            say(line)
+    return 1 if problems else 0
+
+
+# ---------------------------------------------------------------------------------
+# ci —— 有界的 CI 查询（取代 `gh run watch`）
+#
+# 为什么必须由本文件提供：`gh run watch` 是**无界阻塞**的，而 PowerShell 会话是持久的
+# —— 命令一旦被转入后台，它完成时的通知会把**自上次读取以来累积的整个终端缓冲重放**
+# 回上下文。2026-09-29 实测：本轮会话用户侧注入 119,802 字符里 99.7% 来自三个这样的
+# 通知（42,188 / 51,181 / 26,127），而且内容全是我**刚看过**的测量命令输出 —— 纯废字、
+# 零信息，还直接把那次会话顶到了压缩。
+#
+# 所以形状是**有界**的：默认一次查询就返回（不等）；要等就显式给 --wait=N 的上限。
+# 反复短查询优于一次长阻塞 —— 长阻塞的代价不是等待，是它把已付过的字节重新付费一遍。
+# ---------------------------------------------------------------------------------
+GH_RUN_LIST_FIELDS = 'databaseId,status,conclusion,headSha,workflowName'
+
+
+def fmt_run_list(text):
+    """`gh run list --json …` → ASCII 行。纯函数：不联网，可自测。"""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return None, 'gh run list 的输出不是 JSON（%d 字节）' % len(text)
+    if not isinstance(data, list) or not data:
+        return None, 'gh run list 没返回任何运行记录'
+    rows = []
+    for item in data:
+        rows.append('%s  %-12s %-10s %s'
+                    % (item.get('databaseId'), item.get('status'),
+                       item.get('conclusion') or '-',
+                       (item.get('headSha') or '')[:10]))
+    return rows, None
+
+
+def fmt_run_view(text):
+    """`gh run view --json …` → 一行 ASCII 摘要。纯函数。"""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return None, 'gh run view 的输出不是 JSON（%d 字节）' % len(text)
+    if not isinstance(data, dict) or 'status' not in data:
+        return None, 'gh run view 没有 status 字段'
+    return ['run %s  status=%s  conclusion=%s  sha=%s'
+            % (data.get('databaseId', '?'), data.get('status'),
+               data.get('conclusion') or '-',
+               (data.get('headSha') or '')[:10])], None
+
+
+def cmd_ci(argv):
+    run_id, wait, limit, proxy = None, 0, 3, None
+    for arg in argv:
+        if arg.startswith('--wait='):
+            if not arg[7:].isdigit():
+                print('bad --wait: %s' % arg)
+                return 2
+            wait = int(arg[7:])
+        elif arg.startswith('--limit='):
+            if not arg[8:].isdigit():
+                print('bad --limit: %s' % arg)
+                return 2
+            limit = int(arg[8:])
+        elif arg.startswith('--proxy='):
+            proxy = arg[8:]
+        elif arg.startswith('-'):
+            print('unknown option: %s' % arg)
+            return 2
+        elif run_id is None:
+            run_id = arg
+        else:
+            print('ci takes at most one run id (got %s)' % ' '.join(argv))
+            return 2
+    if wait > 600:
+        print('FAIL: --wait is capped at 600s. A long blocking call gets moved to the '
+              'background, and a backgrounded terminal replays its whole scrollback '
+              'back into the conversation -- poll in short calls instead.')
+        return 2
+    extra = {}
+    if proxy:
+        extra['HTTPS_PROXY'] = extra['HTTP_PROXY'] = proxy
+    if not (os.environ.get('HTTPS_PROXY') or os.environ.get('HTTP_PROXY')):
+        print('NOTE: 环境里没有 HTTPS_PROXY/HTTP_PROXY。本机 `gh` 不读系统代理，'
+              '若卡住请传 --proxy=http://127.0.0.1:7890。')
+    deadline = time.time() + wait
+    while True:
+        if run_id is None:
+            rc, out = run_raw(['gh', 'run', 'list', '--limit', str(limit),
+                               '--json', GH_RUN_LIST_FIELDS], timeout=90,
+                              extra_env=extra)
+            rows, err = fmt_run_list(out)
+        else:
+            rc, out = run_raw(['gh', 'run', 'view', str(run_id), '--json',
+                               'databaseId,status,conclusion,headSha'], timeout=90,
+                              extra_env=extra)
+            rows, err = fmt_run_view(out)
+        if rc != 0:
+            print('gh rc=%d (没装 gh / 没登录 / 代理不通都长这样)' % rc)
+            print(out.strip()[:600])
+            return 1
+        if err:
+            print('FAIL: %s -- 提取为空必须判 FAIL，不能当通过' % err)
+            return 1
+        for row in rows:
+            print(row)
+        if run_id is None or any('status=completed' in row for row in rows):
+            return 0
+        if wait == 0 or time.time() >= deadline:
+            print('NOTE: 仍在跑（本次没等）。CI 要 1~2 分钟，隔一会儿再问一次比'
+                  '一次长等更省 —— 长等会被转后台，而转后台的通知会把整段终端'
+                  '缓冲重放回上下文。')
+            return 0
+        time.sleep(10)
+
+
+# ---------------------------------------------------------------------------------
 # selftest —— 三类样本：命中第 1 项的、命中第 2..N 项的、期望 0 报错的
 # ---------------------------------------------------------------------------------
 CLEAN_HARNESS_OUT = """\
@@ -694,6 +991,100 @@ def selftest():
     check('REAL-find-own-source', rc == 0 and 'tools/dev.py' in out,
           'rc=%d bytes=%d' % (rc, len(out)))
 
+    # ---- section_by_title / brief / ci 的纯函数 ----
+    # 干净样本：唯一命中的节，且节范围必须跨过它后面的同级标题
+    tdoc = ('# Top\n\n## 一、甲\n\nalpha\n\n## 二、乙\n\nbeta\n\n'
+            '## 三、甲又\n\ngamma\n')
+    tlines = tdoc.split('\n')
+    if tlines and tlines[-1] == '':
+        tlines.pop()
+    hit, cands = section_by_title(tlines, '二、乙')
+    check('CLEAN-section-found',
+          hit is not None and (hit[2], hit[3], hit[4]) == ('二、乙', 7, 10),
+          'hit=%s' % ((hit and (hit[2], hit[3], hit[4])),))
+    # 负样本：标题不存在 ⇒ 0 命中，但候选清单**非空**（要能告诉调用方有哪些可选）
+    hit, cands = section_by_title(tlines, '不存在的节')
+    check('NEG-section-absent', hit is None and len(cands) == 4,
+          'hit=%s cands=%d' % (hit, len(cands)))
+    # 负样本：标题歧义 ⇒ 也必须拒绝。≥2 命中 = 选错了节，不是「取到了」
+    hit, cands = section_by_title(tlines, '甲')
+    check('NEG-section-ambiguous',
+          hit is None and [c[1] for c in cands] == ['一、甲', '三、甲又'],
+          'cands=%s' % [c[1] for c in cands])
+    # 空转样本：一个标题都没有的文件 ⇒ 任何 needle 都取不到，且候选清单为空
+    hit, cands = section_by_title(['plain', 'text'], '一')
+    check('EMPTY-no-headings-section', hit is None and cands == [],
+          'cands=%s' % cands)
+    # 🔴 变异打到靶子：brief 的计划表若指向一个不存在的标题，必须**报问题**而不是
+    # 静默少打一节。这里用同一份纯函数模拟——把 needle 换成垃圾，结果必须是 None。
+    hit, _ = section_by_title(tlines, 'BRIEF_PLAN 里的标题打错了')
+    check('MUTATION-brief-needle-typo-detected', hit is None, 'hit=%s' % hit)
+    # ci 的两个纯函数：解析成功 / 不是 JSON / 空清单 / 缺 status
+    ok, err = fmt_run_list('[{"databaseId":1,"status":"completed",'
+                           '"conclusion":"success","headSha":"abcdef1234567890"}]')
+    check('CLEAN-run-list-parsed',
+          ok and 'success' in ok[0] and 'abcdef1234' in ok[0], str(ok))
+    ok, err = fmt_run_list('not json at all')
+    check('NEG-run-list-not-json', ok is None and bool(err), str(err))
+    ok, err = fmt_run_list('[]')
+    check('EMPTY-run-list-no-runs', ok is None and bool(err), str(err))
+    ok, err = fmt_run_view('{"status":"in_progress","conclusion":null,'
+                           '"headSha":"0123456789abcdef"}')
+    check('CLEAN-run-view-parsed',
+          ok and 'status=in_progress' in ok[0] and 'conclusion=-' in ok[0], str(ok))
+    ok, err = fmt_run_view('{"foo":1}')
+    check('NEG-run-view-no-status', ok is None and bool(err), str(err))
+
+    # ---- brief / section 在真产物上各跑一次（用 --out 落盘 ⇒ 不把 ~6.7k tok
+    #      的中文正文打进自测输出里；自测该输出的是结论，不是载荷）----
+    brief_out = os.path.join(tempfile.gettempdir(), 'dev-selftest-brief.txt')
+    try:
+        if os.path.exists(brief_out):
+            os.remove(brief_out)
+        rc, out = run(['tools/dev.py', 'brief', '--out=' + brief_out])
+        text = ''
+        if os.path.exists(brief_out):
+            with open(brief_out, encoding='utf-8') as handle:
+                text = handle.read()
+        check('REAL-brief-rc', rc == 0, 'rc=%d' % rc)
+        # 🔴 判据必须钉到**发出的那一行的形状**，且必须 `startswith` 而不是 `in`。
+        # 第一版写的是「needle 出现在 text 里」，被实测证伪：标题写错时那一行
+        # `PROBLEM: BRIEF-SECTION CONTEXT.md :: 6. 当前状态X故意写错 -- 0 命中`
+        # **自身就含那个 needle** ⇒ 判据恒真、样本空转（覆盖类判据被「名字出现过」
+        # 满足，和「约束名出现在清单里」是同一族）。改用 `startswith` 后那一行以
+        # `PROBLEM: ` 开头，满足不了；同时数一下行数并禁掉 PROBLEM 行，三条一起判。
+        # 注意标题比 needle 长（真实行 = `CONTEXT.md :: 6. 当前状态（一句话版）   L243-308`），
+        # 所以只能拿 needle 当**前缀**比对。
+        expected = ['%s :: %s' % (rel, n)
+                    for rel, needles in BRIEF_PLAN for n in needles]
+        text_lines = text.splitlines()
+        missing = [p for p in expected
+                   if not any(line.startswith(p) for line in text_lines)]
+        rows = [line for line in text_lines if line.startswith(tuple(expected))]
+        check('REAL-brief-covers-every-planned-section',
+              not missing and len(rows) == len(expected) and 'PROBLEM:' not in text,
+              'missing=%s rows=%d/%d problem_lines=%d'
+              % (missing, len(rows), len(expected), text.count('PROBLEM:')))
+        check('REAL-brief-states-its-own-cost',
+              'BRIEF  ~' in text and 'tok' in text, '')
+        check('REAL-brief-carries-gate-verdict', 'gates verdict' in text, '')
+    finally:
+        if os.path.exists(brief_out):
+            os.remove(brief_out)
+    sec_out = os.path.join(tempfile.gettempdir(), 'dev-selftest-section.txt')
+    try:
+        if os.path.exists(sec_out):
+            os.remove(sec_out)
+        rc, out = run(['tools/dev.py', 'section', 'CONTEXT.md', '6. 当前状态',
+                       '--out=' + sec_out])
+        size = os.path.getsize(sec_out) if os.path.exists(sec_out) else 0
+        check('REAL-section-rc', rc == 0 and size > 0, 'rc=%d bytes=%d' % (rc, size))
+    finally:
+        if os.path.exists(sec_out):
+            os.remove(sec_out)
+    rc, out = run(['tools/dev.py', 'section', 'CONTEXT.md', '根本没有这一节'])
+    check('REAL-section-absent-exits-2', rc == 2, 'rc=%d' % rc)
+
     print('-' * 68)
     if failures:
         print('SELFTEST FAIL: %d/%d checks failed: %s'
@@ -714,7 +1105,10 @@ dev -- local dev loop, one command (stdlib only).
   python tools/dev.py test [pytest ...]  pytest only (args passed through)
   python tools/dev.py status             read-only: git + ratchet baseline + report head
   python tools/dev.py outline FILE       read-only: heading map + per-section ~tokens
+  python tools/dev.py section FILE TITLE read-only: exactly one section, verbatim
   python tools/dev.py find REGEX         read-only: matching lines only, not whole files
+  python tools/dev.py brief [--out=F]    read-only: per-round startup slices, verbatim
+  python tools/dev.py ci [ID] [--wait=S] bounded CI status; never blocks unbounded
   python tools/dev.py --selftest         prove this runner can report FAIL
 
 Use .venv\\Scripts\\python.exe. The verdict/status output is ASCII on purpose; the
@@ -751,6 +1145,12 @@ def main(argv):
         return cmd_outline(rest)
     if head == 'find':
         return cmd_find(rest)
+    if head == 'section':
+        return cmd_section(rest)
+    if head == 'brief':
+        return cmd_brief(rest)
+    if head == 'ci':
+        return cmd_ci(rest)
     print('unknown command: %s' % head)
     print(USAGE)
     return 2
