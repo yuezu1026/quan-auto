@@ -1849,7 +1849,8 @@ class TushareAdapter(_AdapterBase):
     因子从 `dc_adjust_factor` 读得出来、写入口是 `quanauto/pgstore.py` 的 `PgFactorIngestor`。
     订正（2026-09-29 晚 Ⅱ）：这里原写「但**复权价仍未实施**：`BarData` 的 OHLC 仍是不复权价」，
     **那句已作废** —— `DbDataFeed._row_to_bar` 现在会乘 `datacenter._price_scale()` 给的倍数
-    （唯一一处算术是 `datacenter._rescale_price`），`volume`/`amount` 刻意不乘。
+    （唯一一处算式在 `quanauto/datafeed.py`：`_rescale_price`，全仓库**两个**调用点 ——
+    `DbDataFeed._row_to_bar` 与 `CsvDataFeed._load_data`，2026-09-29 晩 Ⅲ 补上第二条），`volume`/`amount` 刻意不乘。
     逐条见 DC 契约附录 B21.3 / A6 的订正块）。
 
     它是本模块**第一个只覆盖一个数据面的源**，所以另外三个面必须在类里显式写出来

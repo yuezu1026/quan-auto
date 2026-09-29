@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import csv
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -28,7 +29,7 @@ from quanauto.cli import (
 )
 from quanauto.datafeed import CsvDataFeed
 from quanauto.engine import BacktestEngine, dump_report, report_payload
-from quanauto.enums import Direction, OrderStatus, OrderType
+from quanauto.enums import BacktestStatus, Direction, OrderStatus, OrderType
 from quanauto.errors import BacktestExecutionError, InsufficientFundsError, NoResultError
 from quanauto.models import BarData, Order, SlippageConfig
 from quanauto.strategies import MA_Cross_Strategy
@@ -39,13 +40,21 @@ STRATEGY_ID = "ma-cross"
 
 
 # ── 夹具 ──────────────────────────────────────────────────────────────────
-def cli_args(*extra: str):
-    return build_parser().parse_args(["backtest", "--strategy-csv", FIXTURE, *extra])
+def cli_args(*extra: str, csv_path: str = FIXTURE):
+    """`csv_path` 是关键字参数（2026-09-29 晚 **Ⅲ** 加的）：默认那份夹具，
+    换别的（如临时带 `adjust_factor` 列的 CSV）时不影响任何既有调用。
+    """
+    return build_parser().parse_args(["backtest", "--strategy-csv", csv_path, *extra])
 
 
-def make_engine(seed: int = 7, *extra: str):
-    """照 `cli.run_backtest` 的顺序组装引擎（用的是契约里的公开方法）。"""
-    args = cli_args(*extra)
+def make_engine(seed: int = 7, *extra: str, csv_path: str = FIXTURE, strategy_factory=MA_Cross_Strategy):
+    """照 `cli.run_backtest` 的顺序组装引擎（用的是契约里的公开方法）。
+
+    两个可选口子是 2026-09-29 晚 **Ⅲ** 加的，只为让「CSV 侧的复权价」也能被端到端
+    观察到：`csv_path` 指向一份带 `adjust_factor` 列的临时 CSV，`strategy_factory` 换成
+    一只记录版双均线。两个都不传时行为与之前**逐字一致**。
+    """
+    args = cli_args(*extra, csv_path=csv_path)
     feed = CsvDataFeed(args.strategy_csv)
     symbol = pick_symbol(feed, args.symbol)
     start, end = window_from_feed(feed, symbol, args.start, args.end)
@@ -60,7 +69,7 @@ def make_engine(seed: int = 7, *extra: str):
             slippage=config.slippage_config,
         )
     )
-    strategy = MA_Cross_Strategy(
+    strategy = strategy_factory(
         args.strategy_id,
         {
             "short_window": int(args.short),
@@ -339,3 +348,172 @@ def test_insufficient_cash_is_refused_at_submit_time() -> None:
     broker.on_bar(make_bar())
     with pytest.raises(InsufficientFundsError):
         broker.submit_order(make_order(quantity=1000, price=10.0))
+
+# ── CSV 侧的复权口径：与 DB 侧同一份算式、同一形状的控制组 ──────────────
+# 背景：`DataFeed` 是**一个**协议、有两条实现体（`CsvDataFeed` / `DbDataFeed`）。
+# 只让其中一条真的乘因子时，同一个类名会交出两种**量纲**的价格而两边都不报错 ——
+# 而 `engine.py` 又把 `feed.get_adjustment_factor()` 原样写进 `ReportBundle.adjust_factor`，
+# 于是 CSV 侧那句因子会与它自己那根 bar 的价格互相矛盾（登记在 DC 契约附录 A6）。
+# 下面三条就是把这个口径钉到 CSV 侧：一条证明该乘的乘了、一条证明不该动的一分没动、
+# 一条端到端证明「声明的因子」与「实际乘上去的数」是同一个。
+CSV_ADJUST_SYMBOL = "600519.SH"
+CSV_ADJUST_FACTOR = 2.0   # 故意非 1.0：1.0 的因子会让「乘法没接上」完全隐身
+CSV_ADJUST_ROWS = 30
+
+
+def _adjust_csv_text(factor=None):
+    """造一份 CSV；`factor=None` ⇒ **不写** `adjust_factor` 列。返回 `(文本, 逐根原始 close)`。
+
+    四列价格**故意取互不相等的数**（open/high/low/close = base, base+2, base-1, base+1）：
+    `open == high == low == close` 的写法会让「只把 close 乘了因子」与「四列都乘了」在
+    数值上完全一致，用例对最容易漏的那种改法免疫（同族的教训写在 DB 侧那条
+    `test_all_four_price_columns_are_scaled_not_just_close` 的 docstring 里）。
+
+    也**不写** `amount` 列：这样 `amount` 走的是 `close * volume` 折算，正好能测出
+    折算用的是**未复权**的 close。
+    """
+    header = "symbol,datetime,open,high,low,close,volume"
+    if factor is not None:
+        header += ",adjust_factor"
+    lines = [header]
+    closes = []
+    for index in range(CSV_ADJUST_ROWS):
+        base = round(10.0 + index * 0.1, 4)
+        day = (datetime(2024, 3, 1) + timedelta(days=index)).strftime("%Y-%m-%d")
+        open_price, high = base, round(base + 2.0, 4)
+        low, close = round(base - 1.0, 4), round(base + 1.0, 4)
+        closes.append(close)
+        line = "%s,%s,%s,%s,%s,%s,1000" % (CSV_ADJUST_SYMBOL, day, open_price, high, low, close)
+        if factor is not None:
+            line += ",%s" % factor
+        lines.append(line)
+    return "\n".join(lines) + "\n", closes
+
+
+def test_csv_feed_scales_all_four_price_columns(tmp_path) -> None:
+    """CSV 侧的 `adjust_factor` 真的乘到四列价格上，而且**只乘价格**。
+
+    观察点选在 feed 交出来的 `BarData` 上（不是内部字典）：那是策略与引擎唯一看得到的东西。
+    """
+    text, closes = _adjust_csv_text(factor=CSV_ADJUST_FACTOR)
+    path = tmp_path / "prices_with_factor.csv"
+    path.write_text(text, encoding="utf-8")
+    feed = CsvDataFeed(str(path))
+    stamp = datetime(2024, 3, 1)
+
+    bar = feed.get_bar(CSV_ADJUST_SYMBOL, stamp)
+    assert bar is not None, "第一根没进索引 ⇒ 下面每条都在描述一个不存在的对象"
+    raw = {"open": 10.0, "high": 12.0, "low": 9.0, "close": 11.0}
+    for name, value in raw.items():
+        got = getattr(bar, name)
+        assert got == pytest.approx(value * CSV_ADJUST_FACTOR), (
+            "%s 没乘因子：文件 %.4f ⇒ 该是 %.4f，实际 %.4f"
+            % (name, value, value * CSV_ADJUST_FACTOR, got)
+        )
+        assert got != value, "%s 还是文件里的未复权价 ⇒ 复权没生效" % name
+
+    assert bar.volume == 1000, "成交量不该被乘"
+    assert bar.amount == pytest.approx(11.0 * 1000), (
+        "成交额不该被乘 —— 缺列时 `close * volume` 的折算也必须用**未复权**的 close"
+    )
+    assert feed.get_adjustment_factor(CSV_ADJUST_SYMBOL, stamp) == pytest.approx(CSV_ADJUST_FACTOR)
+
+    # 最后一根也乘了：只乘第一根是最容易犯的那种「接了一半」
+    last_stamp = datetime(2024, 3, 1) + timedelta(days=CSV_ADJUST_ROWS - 1)
+    last = feed.get_bar(CSV_ADJUST_SYMBOL, last_stamp)
+    assert last is not None, "最后一根没进索引 ⇒ 上面那句「最后一根也乘了」是空话"
+    assert last.close == pytest.approx(closes[-1] * CSV_ADJUST_FACTOR)
+
+
+def test_csv_feed_without_a_factor_column_leaves_file_prices_untouched() -> None:
+    """真夹具没有 `adjust_factor` 列 ⇒ 四列价格**逐位**等于文件里的原值。
+
+    这条是防误报的那一半：上面那条证明「该乘的乘了」，这条证明「不该乘的一分没动」。
+    它同时钉住 I1 的证据 —— `.rounds/i1/report-seed7-*.json` 是逐字节比对的，CSV 侧的价格
+    只要被乘上一个非 1.0 的数，那份证据就当场作废。期望值**自己从文件里读**，
+    不是抄 `CsvDataFeed` 的实现。
+
+    先断言前提：夹具真没有因子列。哪天给夹具加了因子列，这条用例的语义就变了 ——
+    那时候该看的是它还要不要存在，而不是让它默默变成一个恒真的断言。
+    """
+    with open(FIXTURE, encoding="utf-8-sig", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    assert rows, "夹具读出来 0 行 ⇒ 这条断言形同虚设"
+    assert "adjust_factor" not in rows[0], "夹具现在有因子列了 ⇒ 本条用例的前提变了，先看它还要不要"
+
+    feed = CsvDataFeed(FIXTURE)
+    for row in rows:
+        stamp = datetime.strptime(row["datetime"], "%Y-%m-%d")
+        bar = feed.get_bar(row["symbol"], stamp)
+        assert bar is not None, "夹具里的行没进索引: %s %s" % (row["symbol"], row["datetime"])
+        for name in ("open", "high", "low", "close"):
+            expected = float(row[name])
+            got = getattr(bar, name)
+            assert got == expected, (
+                "%s 的 %s 被动过了：文件 %.10g ⇒ feed %.10g" % (row["symbol"], name, expected, got)
+            )
+        assert feed.get_adjustment_factor(row["symbol"], stamp) == 1.0, "没有因子列时该报 1.0"
+
+
+class _RecordingMA_Cross(MA_Cross_Strategy):
+    """双均线 + 把**真正送到策略手上**的 bundle 记下来（与 DB 侧那只记录版同形）。
+
+    行为与父类完全一致（`on_data` 记一笔就交回去），所以它跑出来的成交与信号跟真跑
+    双均线一样 —— 记录版不会把「被测对象」换成另一个东西。
+    """
+
+    def __init__(self, strategy_id, config):
+        super().__init__(strategy_id, config)
+        self.bundles = []
+
+    def on_data(self, data):
+        self.bundles.append(data)
+        return super().on_data(data)
+
+
+def test_csv_feed_bundle_factor_matches_the_multiplier_it_applied(tmp_path) -> None:
+    """端到端：策略收到的是复权价，而 bundle 声明的因子就是**实际乘上去**的那个数。
+
+    这是 DB 侧那条端到端控制组（`test_adjusted_prices_reach_the_strategy_through_the_engine`）
+    在**第二条实现体**上的同形版本。为什么要两边各一条：`DataFeed` 是一个协议、两条实现体
+    —— 只端到端钉住一条时，另一条可以悄悄退回不复权口径，而所有单层用例各自仍是绿的。
+
+    钉三件事：① 每一根的 `close` 都是文件里那根 × 因子，且**不等于**原值；② bundle 里那句
+    `adjust_factor` 等于实际乘上去的数（策略照它自己除回去必须拿到文件里的原值）；
+    ③ 策略真被喂满了 `CSV_ADJUST_ROWS` 根 —— 否则上面两条只是在描述一个没跑起来的策略。
+    """
+    text, closes = _adjust_csv_text(factor=CSV_ADJUST_FACTOR)
+    path = tmp_path / "prices_with_factor.csv"
+    path.write_text(text, encoding="utf-8")
+
+    holder = []
+
+    def factory(strategy_id, config):
+        strategy = _RecordingMA_Cross(strategy_id, config)
+        holder.append(strategy)
+        return strategy
+
+    engine, _feed, symbol = make_engine(
+        7, "--short", "2", "--long", "3", csv_path=str(path), strategy_factory=factory
+    )
+    assert symbol == CSV_ADJUST_SYMBOL, "标的选错了 ⇒ 下面每一条都在看另一只股票"
+    result = engine.run()
+    assert result.status is BacktestStatus.SUCCESS
+    assert len(holder) == 1, "策略工厂没被调用 ⇒ 下面每条都在描述一个没跑起来的策略"
+    bundles = holder[0].bundles
+    assert len(bundles) == CSV_ADJUST_ROWS, (
+        "策略收到 %d 根，该是 %d 根" % (len(bundles), CSV_ADJUST_ROWS)
+    )
+
+    for index, bundle in enumerate(bundles):
+        raw = closes[index]
+        assert bundle.close == pytest.approx(raw * CSV_ADJUST_FACTOR), (
+            "第 %d 根没有乘上因子：文件 %.4f ⇒ 策略该看到 %.4f，实际 %.4f"
+            % (index, raw, raw * CSV_ADJUST_FACTOR, bundle.close)
+        )
+        assert bundle.close != raw, "第 %d 根还是文件里的未复权价 ⇒ 复权没生效" % index
+        assert bundle.adjust_factor == pytest.approx(CSV_ADJUST_FACTOR)
+        assert bundle.close / bundle.adjust_factor == pytest.approx(raw), (
+            "第 %d 根：bundle 声明的因子与实际乘上去的数不是同一个，策略自己算一遍会有第二个答案"
+            % index
+        )

@@ -44,7 +44,9 @@ bug），没有越界时返回**最后一次访问**的报告；全部越界点�
 
 * **复权价已实施**（2026-09-29 晚 **Ⅱ**，即 `docs/迭代计划.md` §四 的「A6 收口 Ⅱ」那一轮；
   **不是**「I2 收口」—— I2 还开着另外几条）：`BarData` 的 OHLC 现在**真的乘了累计因子**
-  —— 唯一的复权算术在模块级 `_rescale_price`，唯一的调用点是 `DbDataFeed._row_to_bar`
+  —— 全仓库的复权算术只有一份（模块级 `_rescale_price`，2026-09-29 晚 **Ⅲ** 从本模块
+  下移到 `quanauto/datafeed.py`），两条实现体各调它一次（`DbDataFeed._row_to_bar` 与
+  `CsvDataFeed._load_data`）
   ⇒ D6 第二条"复权是**读取时的视图行为**"（按 `as_of_date` 现算）**已兑现**：
 
   | `AdjustType` | 价格倍数 | 查库？ |
@@ -75,7 +77,7 @@ from datetime import date, datetime
 from enum import Enum
 from typing import List, Optional, Sequence, Tuple
 
-from .datafeed import DataFeed, epoch_seconds
+from .datafeed import DataFeed, _rescale_price, epoch_seconds
 from .enums import AdjustType, FillPolicy, MarketStatus
 from .errors import DataNotAvailableError, DataVersionError, FutureDataAccessError
 from .models import BarData
@@ -376,27 +378,11 @@ def _as_float(value) -> float:
     return float(value)
 
 
-def _rescale_price(value: float, factor: float) -> float:
-    """不复权价 → 复权价：**全仓库唯一一处复权算术**（D6 第二句「读取时现算」）。
-
-    为什么单独一个模块级函数而不是内联的 `value * factor`：`_row_to_bar` 里要乘四列
-    （open/high/low/close），内联就是四份同样的乘法；更要紧的是这条口径要**一眼可见地
-    只有一份** —— 附录 B21 那句「归一化只发生在 `_row_to_bar` 一处」在这里扩成
-    「归一化 + 复权都只在这一处、这一份算式」。
-
-    `factor == 1.0` 时**原样返回**（不做乘法）：
-
-    * 不复权路径（`AdjustType.NONE`）与 I2 A6 之前的实现**逐字节一致**，不会被一次
-      `× 1.0` 引入本不存在的浮点尾巴 —— 附录 B18.3 那条 "842270400 vs 842270399.9999999"
-      就是同一个家族的老祖宗（能不一样的地方就一定会不一样）；
-    * 判据是**值相等**而不是 `is`，因为 `1.0` 与 `1.25 / 1.25` 都是「没有净缩放」，
-      而后者在浮点下并不总是逐位等于 `1.0` —— 用 `factor == 1.0` 只挡最干净的那一种，
-      不假装能挡住所有。这条**不**claim「不复权价与复权价一定逐位相等」，只 claim
-      「`NONE` 走的是恒等路径」。
-    """
-    if factor == 1.0:
-        return value
-    return value * factor
+# `_rescale_price`（全仓库唯一一处复权算术）2026-09-29 晚 **Ⅲ** 下移到
+# `quanauto/datafeed.py`：那个模块是 `DataFeed` 协议的所在地，两条实现体都依赖它 ——
+# 留在本模块会让 `datafeed` → `datacenter` 变成循环导入。这里是把它 import 进来复用，
+# 与 `epoch_seconds` 一模一样（它一直住在 `datafeed.py`）。名字保留在本模块的命名空间里，
+# 所以 `datacenter._rescale_price` 仍然解析得到。
 
 
 class DbDataFeed(DataFeed):
@@ -434,10 +420,12 @@ class DbDataFeed(DataFeed):
         """存储行 → `BarData`。**归一化与复权都只发生在这一处**（附录 B21 第 2518 行）。
 
         D6 第二句「复权在**读取时**现算」就落在这里：四列价格各乘一次 `_price_scale()`
-        给出的倍数。这份模块里没有第二个地方做复权算术 —— 判据是"`_rescale_price` 的
-        调用点只有本方法"。之所以要这么死：只要有一条读路径复了权、另一条没复，
-        同一根 K 线在 `get_bar` 与 `get_available_dates` 里就是两个价，而**报告里看不见**
-        （曲线照样画得出来）。
+        给出的倍数。复权算术本体是全仓库唯一的一份（`datafeed._rescale_price`），
+        调用点全仓库**恰好两个**：本方法与 `CsvDataFeed._load_data` —— 两条实现体各乘一次，
+        用的是同一份算式。之所以要这么死：只要有一条读路径复了权、另一条没复，
+        同一个 `DataFeed` 协议下就会给出两种量纲的价格，而**报告里看不见**
+        （曲线照样画得出来；更糟的是 `ReportBundle.adjust_factor` 会把「声明」与「实际」
+        的矛盾一起印出来）。
 
         **`volume` / `amount` 刻意不乘因子**（这是一条决定，不是漏改）：
 

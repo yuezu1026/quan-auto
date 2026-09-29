@@ -20,10 +20,11 @@
   * `MUTATION` 触发出来的失败必须是**断言/异常**，不能是 `ImportError`/语法错
     （收集阶段就炸掉，等于测试根本没跑）。
 
-**它不进 `run_all_gates.py` 的注册表**：每条样本要跑一次 pytest（2026-09-29 复权价实施后实测 **66 条样本：
-61 条变异 + 5 条 CONTROL + 0 条 ENV-LIMIT**（基线七套件 `passed=249`；报告里那行 `mutations=61 caught=61
-control=5 env_limited=0` 的 `mutations` **只数变异、不含 CONTROL**，所以总数是 66 而不是 61 —— 别把两处
-加混了）；同一日的 A6 收口那轮是 59 条 = 54 + 5 + 0
+**它不进 `run_all_gates.py` 的注册表**：每条样本要跑一次 pytest（2026-09-29 晚 Ⅲ「CSV 侧复权口径」后实测 **68 条样本：
+63 条变异 + 5 条 CONTROL + 0 条 ENV-LIMIT**（基线七套件 `passed=252`；报告里那行 `mutations=63 caught=63
+control=5 env_limited=0` 的 `mutations` **只数变异、不含 CONTROL**，所以总数是 68 而不是 63 —— 别把两处
+加混了）；同日晚 Ⅱ「复权价实施」那轮是 66 条 = 61 + 5 + 0
+（基线七套件 `passed=249`）；同一日的 A6 收口那轮是 59 条 = 54 + 5 + 0
 （基线七套件 `passed=241`），I4 是 54 条 = 49 + 5 + 0（基线六套件 `passed=181`），I3 那轮是 43 条 = 39 + 4 + 0
 （基线五套件 `passed=145`），再往前 B20 后是 32 条 = 29 + 3 + 0），慢，且它验证的对象是测试而不是产物契约。
 
@@ -54,6 +55,19 @@ control=5 env_limited=0` 的 `mutations` **只数变异、不含 CONTROL**，所
   ④ `A10`/`A11` 这两条能成立，前提是夹具的四列价格**可分**（本轮给 `test_data_center_pit.py` 的
      `_row()` 加了 `open_/high/low` 参数）—— 夹具里 `open==high==low==close` 时，
      "只乘一列"与"全乘了"在数值上完全一样，变异会在**正确的实现上**保持沉默。
+
+⚠️ **2026-09-29 晩 ⅲ「CSV 侧复权口径」那一批：新增 2 条 + 重锚 1 条，是同一批**：
+  ① **重锚 1 条**（`A8` 的 `path`）：`_rescale_price` 的函数本体从 `quanauto/datacenter.py`
+     下移到 `quanauto/datafeed.py`（两条实现体共用同一份算式）⇒ 这条变异的针**命中 0 次**。
+     又一次"新产物把有效变异变成 no-op"（铁律⑤）—— 这次动的是**位置**而不是字。
+  ② **新增 `A13`~`A14`**：`A13` CSV 侧完全不乘因子（就是本轮关掉的那个缺口本身）、
+     `A14` CSV 侧只乘 `close`（`A10` 的第二条实现体版本）。
+  ③ 为什么值得为第二条实现体各加一条：`DataFeed` 是**一个**协议、两条实现体。只端到端钉住
+     `DbDataFeed` 时，`CsvDataFeed` 可以悄悄退回不复权口径，而所有单层用例各自仍是绿的
+     —— 「量纲分裂」就是这么发生的，也是最难从报告里看出来的那一类错。
+  ④ `A13`/`A14` 成主的前提是自造 CSV 的四列价格**可分**（`_adjust_csv_text()` 里
+     `open/high/low/close = base, base+2, base-1, base+1`）—— 与 `A10` 同一条教训。
+  ⚠️ 这一批**没有**动 `tools/run_all_gates.py` 的注册表（本检查器本来就不在里面）。
 手动跑，或改完测试后跑一次。
 
 **`env_limit`（一条变异的出口）**：有的缺陷在**当前环境里根本不可能被断言抓住**
@@ -531,7 +545,12 @@ MUTATIONS = [
         # 全都照常出得来 ⇒ 只能靠数值断言抓（`A5` 管的是**因子**，这条管的是**乘法**）。
         "tag": "A8-rescale-price-becomes-identity",
         "tests": TESTS_PIT,
-        "path": "quanauto/datacenter.py",
+        # ⚠️ 2026-09-29 晩 ⅲ：函数本体从 `quanauto/datacenter.py` 下移到
+        # `quanauto/datafeed.py`（两条实现体共用一份算式）⇒ 这条变异的针**命中 0 次**。
+        # `path` 必须跟着走，否则工具报的是 `[MUTATION-HARNESS]`，而报告里看起来像
+        # 「这条变异没生效」——又是一次「新产物把有效变异变成 no-op」（铁律⑤），
+        # 只不过这次动的是位置而不是字。
+        "path": "quanauto/datafeed.py",
         "old": (
             "    if factor == 1.0:\n"
             "        return value\n"
@@ -598,6 +617,43 @@ MUTATIONS = [
         "old": "        adjust_factor=feed.get_adjustment_factor(bar.symbol, bar.datetime),\n",
         "new": "        adjust_factor=1.0,  # MUT：bundle 声明的因子与实际乘上去的不是同一个\n",
         "expect": ["test_adjusted_prices_reach_the_strategy_through_the_engine"],
+    },
+    # ---- I2 收口 ⅲ：CSV 侧复权口径（第二条实现体） ------------------------
+    {
+        # CSV 侧**完全不乘因子** —— 就是 2026-09-29 晩 ⅲ 之前那个缺口本身。
+        # 与 `A8`（改算法本体）不同：这条改的是**第二条实现体的调用**，算式本体完好，
+        # 所以只有盯 CSV 的那些用例看得见。代价是「量纲分裂」：同一个 `DataFeed`
+        # 协议下两条实现体交出已复权/未复权两种价格，而两条路径各自都跑得通、都不报错。
+        "tag": "A13-csv-feed-does-not-scale-prices",
+        "tests": TARGET,
+        "path": "quanauto/datafeed.py",
+        "old": (
+            '                open=_rescale_price(values["open"], factor),\n'
+            '                high=_rescale_price(values["high"], factor),\n'
+            '                low=_rescale_price(values["low"], factor),\n'
+            '                close=_rescale_price(values["close"], factor),\n'
+        ),
+        "new": (
+            '                open=values["open"],  # MUT：CSV 侧完全不乘因子\n'
+            '                high=values["high"],\n'
+            '                low=values["low"],\n'
+            '                close=values["close"],\n'
+        ),
+        "expect": [
+            "test_csv_feed_scales_all_four_price_columns",
+            "test_csv_feed_bundle_factor_matches_the_multiplier_it_applied",
+        ],
+    },
+    {
+        # CSV 侧只乘 `close`（`A10` 的第二条实现体版本）。四列价格**可分**是本条成立的
+        # 前提：`open==high==low==close` 时「只乘一列」与「全乘了」数值上一样，变异会在
+        # **正确的实现上**保持沉默 —— 所以 `_adjust_csv_text()` 四列故意取不相等的数。
+        "tag": "A14-csv-feed-only-close-is-scaled",
+        "tests": TARGET,
+        "path": "quanauto/datafeed.py",
+        "old": '                open=_rescale_price(values["open"], factor),\n',
+        "new": '                open=values["open"],  # MUT：CSV 侧只复权 close\n',
+        "expect": ["test_csv_feed_scales_all_four_price_columns"],
     },
     {
         "tag": "CONTROL-comment-only-db-feed",

@@ -1,5 +1,5 @@
 baseline: 先跑一次干净的全绿（tests/test_backtest_slice.py + tests/test_data_center_store.py + tests/test_backtest_db_feed.py + tests/test_data_center_pit.py + tests/test_backtest_risk_gate.py + tests/test_risk_store.py + tests/test_dashboard.py）
-baseline: 全绿 OK (passed=249)
+baseline: 全绿 OK (passed=252)
 APPLIED M1-account-double-frozen @ quanauto/broker.py (newline='\r\n', tests=tests/test_backtest_slice.py)
   CAUGHT=yes exit=1 failed=2 (test_max_drawdown_is_plausible, test_pending_buy_does_not_change_total_capital)
 APPLIED M2-fill-at-close-not-open @ quanauto/broker.py (newline='\r\n', tests=tests/test_backtest_slice.py)
@@ -70,7 +70,7 @@ APPLIED A6-qfq-base-factor-ignored @ quanauto/datacenter.py (newline='\r\n', tes
   CAUGHT=yes exit=1 failed=1 (test_qfq_over_the_same_view_is_relative_to_the_last_visible_factor)
 APPLIED A7-amount-scaled-along-with-the-price @ quanauto/datacenter.py (newline='\r\n', tests=tests/test_data_center_pit.py)
   CAUGHT=yes exit=1 failed=1 (test_volume_and_amount_are_not_scaled)
-APPLIED A8-rescale-price-becomes-identity @ quanauto/datacenter.py (newline='\r\n', tests=tests/test_data_center_pit.py)
+APPLIED A8-rescale-price-becomes-identity @ quanauto/datafeed.py (newline='\r\n', tests=tests/test_data_center_pit.py)
   CAUGHT=yes exit=1 failed=5 (test_all_four_price_columns_are_scaled_not_just_close, test_get_bars_returns_adjusted_prices_too, test_hfq_bars_are_the_store_price_times_that_days_factor, test_missing_factor_row_fails_the_read_path_instead_of_returning_the_raw_price, test_qfq_over_the_same_view_is_relative_to_the_last_visible_factor)
 APPLIED A9-read-path-silently-defaults-a-missing-factor-to-one @ quanauto/datacenter.py (newline='\r\n', tests=tests/test_data_center_pit.py)
   CAUGHT=yes exit=1 failed=3 (test_hfq_reads_the_real_factor_instead_of_returning_one, test_hfq_with_a_store_that_has_no_row_for_that_day_is_refused, test_missing_factor_row_fails_the_read_path_instead_of_returning_the_raw_price)
@@ -80,6 +80,10 @@ APPLIED A11-volume-scaled-along-with-the-price @ quanauto/datacenter.py (newline
   CAUGHT=yes exit=1 failed=10 (test_a_feed_that_declares_a_blank_version_is_refused_not_faked, test_a_store_that_ignores_the_window_is_caught_through_the_engine, test_adjusted_prices_reach_the_strategy_through_the_engine, test_engine_runs_end_to_end_over_a_store_backed_feed, test_pgbarstore_plugs_into_the_engine_and_binds_the_data_version, test_report_data_version_is_the_stores_data_version, test_the_same_snapshot_twice_gives_the_same_deterministic_section, test_the_session_guard_sees_every_row_the_engine_read, test_two_snapshots_with_the_same_bar_count_do_not_collide, test_window_past_as_of_is_refused_by_the_engine_not_truncated)
 APPLIED A12-bundle-factor-not-from-the-feed @ quanauto/engine.py (newline='\r\n', tests=tests/test_backtest_db_feed.py)
   CAUGHT=yes exit=1 failed=1 (test_adjusted_prices_reach_the_strategy_through_the_engine)
+APPLIED A13-csv-feed-does-not-scale-prices @ quanauto/datafeed.py (newline='\r\n', tests=tests/test_backtest_slice.py)
+  CAUGHT=yes exit=1 failed=2 (test_csv_feed_bundle_factor_matches_the_multiplier_it_applied, test_csv_feed_scales_all_four_price_columns)
+APPLIED A14-csv-feed-only-close-is-scaled @ quanauto/datafeed.py (newline='\r\n', tests=tests/test_backtest_slice.py)
+  CAUGHT=yes exit=1 failed=1 (test_csv_feed_scales_all_four_price_columns)
 APPLIED CONTROL-comment-only-db-feed @ quanauto/datacenter.py (newline='\r\n', tests=tests/test_backtest_db_feed.py)
   control OK: 没抓到（本检查器确实会报 caught=NO）
 APPLIED M15-risk-equity-sign-regression @ quanauto/engine.py (newline='\r\n', tests=tests/test_backtest_risk_gate.py)
@@ -132,6 +136,6 @@ APPLIED D10-cli-swallows-unreadable-report @ quanauto/cli.py (newline='\r\n', te
   CAUGHT=yes exit=1 failed=1 (test_cli_dashboard_refuses_a_report_it_cannot_read)
 APPLIED CONTROL-comment-only-dashboard @ quanauto/dashboard.py (newline='\r\n', tests=tests/test_dashboard.py)
   control OK: 没抓到（本检查器确实会报 caught=NO）
-mutations=61 caught=61 control=5 env_limited=0
+mutations=63 caught=63 control=5 env_limited=0
 report=D:\project-quan\quan-auto\tools\pytest-mutation-report.txt
 verdict: PASS

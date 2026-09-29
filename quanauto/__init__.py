@@ -12,7 +12,8 @@ feed）已落地，**但 I2 未关闭** —— 订正（2026-09-29）：原先�
 只是换了名字**：现在开着的是『**复权价仍未实施**』—— `BarData` 的 OHLC 仍是不复权价、
 `quanauto/engine.py` 里没有一处算术用因子 ⇒ 回测口径**仍等于「不复权」**」，那句话**已作废**）：
 `DbDataFeed._row_to_bar` 现在按 `_price_scale()` 给的倍数对 OHLC **四列各乘一次**
-（唯一一处算术是 `datacenter._rescale_price`；`NONE` ⇒ 1.0 不查库、`HFQ` ⇒ 该日累计因子、
+（唯一一处算式是 `datafeed._rescale_price`，全仓库**两个**调用点：`DbDataFeed._row_to_bar`
+与 `CsvDataFeed._load_data`（2026-09-29 晩 Ⅲ 把第二条也接上了）；`NONE` ⇒ 1.0 不查库、`HFQ` ⇒ 该日累计因子、
 `QFQ` ⇒ 该日因子 ÷ 视图末日因子），`volume` / `amount` **刻意不乘** ⇒ 回测口径**不再是「不复权」**。
 守着这条缝的是读侧 7 条用例 + 端到端控制组 `test_adjusted_prices_reach_the_strategy_through_the_engine`
 （变异 `S11` / `A12`），逐条见数据中心契约附录 A6 / B21.3 的订正块。

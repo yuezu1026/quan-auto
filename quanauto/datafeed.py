@@ -15,6 +15,15 @@
    要求 `volume > 0`。两者口径不同是契约的原样，这里**照抄**（不自作主张统一），
    差异记在 docstring 上。
 
+另有一条**口径**（不是签名偏差，所以不在附录 E，登记在数据中心契约附录 A6）：契约示例把
+CSV 的列**原样**搬进 `BarData`，实现把四列价格各乘一次该行的 `adjust_factor` —— 与
+`DbDataFeed._row_to_bar` 同一条口径、同一份算式（模块级 `_rescale_price`）。缺列或为空
+⇒ `1.0`，走恒等快路径。**不这么做的后果是量纲分裂**：同一个 `DataFeed` 协议下两条实现体
+交出「已复权」与「未复权」两种价格而都不报错 —— 而 `engine.py` 又把
+`feed.get_adjustment_factor()` 原样写进 `ReportBundle.adjust_factor`，于是 CSV 侧那句因子
+会与它自己那根 bar 的价格**互相矛盾**。`volume` / `amount` 与 DB 侧一样**刻意不乘**
+（复权复的是价格）。
+
 另外：契约的示例把 `self._data` 声明成 `Dict[str, pd.DataFrame]`。这里改成
 `Dict[str, List[BarData]]` 并按时间排好序，`get_bar` 另配一个哈希索引 —— 逐根 K 线取数的
 内层循环是 O(1) 而不是扫全表。
@@ -138,12 +147,49 @@ def parse_float(text: str, where: str) -> float:
         raise DataValidationError("数值列无法解析: %r（位置：%s）" % (raw, where))
 
 
+def _rescale_price(value: float, factor: float) -> float:
+    """原始价 → 复权价：“全仓库唯一一处复权算术”（数据中心契约 D6 第二句「读取时现算」）。
+
+    为什么是独立函数而不是内联的 `value * factor`：两条实现体都要乘（`CsvDataFeed`
+    上面四列、`DbDataFeed._row_to_bar` 四列），内联就是八份同样的乘法；更要紧的是这条口径
+    要**一眼可见地只有一份**（附录 B21 那句「归一化只发生在 `_row_to_bar` 一处」在这里扩成
+    「归一化 + 复权都只在这一份算式」）。
+
+    为什么住在 `datafeed.py` 而不是 `datacenter.py`（2026-09-29 晚 ⅲ 下移）：本模块是
+    `DataFeed` 协议的所在地，两条实现体（`CsvDataFeed` 在这里、`DbDataFeed` 在
+    `datacenter.py`）都依赖它；反方向放会让 `datafeed` → `datacenter` 变成**循环导入**。
+    同族的先例就是上面的 `epoch_seconds()` —— 一样是模块级、一样住在 `datafeed.py`、
+    一样被 `DbDataFeed` 使用。`datacenter.py` 里 import 进来只是复用，算术本体只有这里一份。
+
+    `factor == 1.0` 时**原样返回**、不做乘法：
+
+    * 不复权路径（`AdjustType.NONE`，以及 CSV 没有 `adjust_factor` 列 / 该列为空的日子）
+      与引入复权之前的实现**逐字节一致**，不会被一次 `× 1.0` 引入本不存在的浮点尾巴；
+    * 判据是**值相等**而不是 `is`：这里只 claim「`1.0` 走恒等路径」，
+      **不** claim「不复权价与复权价一定逐位相等」—— 后者挡不住也不该假装能挡住。
+    """
+    if factor == 1.0:
+        return value
+    return value * factor
+
+
 class CsvDataFeed(DataFeed):
     """CSV 数据源。只读、全量载入内存、按 `(symbol, datetime)` 建哈希索引。
 
     列的约定：`datetime`、`symbol`、`open`、`high`、`low`、`close`、`volume` 必填；
     `amount`（缺则 `close * volume`）、`timestamp`（缺则按 UTC 纪元秒自算）、
     `adjust_factor`、`dividend` 选填。
+
+    **价格量纲**：`adjust_factor` 列被当成**累计**复权因子，四列价格各乘一次它就是
+    `BarData` 里的价格，与 `DbDataFeed._row_to_bar` 同一条口径（同一份 `_rescale_price`）。
+    缺列、或该列为空 ⇒ `1.0`，价格就是文件里的原值。这一条登记在数据中心契约附录 A6。
+
+    ⚠️ **已登记的偏差**：`get_adjustment_factor` **不接** `AdjustType`（契约 §2.2.1 的签名里
+    没有这个参数），所以本类无法区分「用户要 HFQ」与「用户要 QFQ」—— 它只回答「文件里这个
+    时点的累计因子是多少」。因此「缺该列/该列为空 ⇒ 1.0」是**恒等的**，不需要也不应该像
+    `DbDataFeed._factor_for` 那样抛 `DataNotAvailableError`；这里没有「找不到数据」这个状态，
+    只有「文件作者没提供」这一个。重要的一条：**回报的因子与乘上去的因子是同一个值**（
+    两者都来自同一个 `factor` 局部变量），所以不存在 bundle 与价格互相矛盾的情形。
     """
 
     def __init__(self, csv_path: str):
@@ -207,19 +253,24 @@ class CsvDataFeed(DataFeed):
                 )
             per_symbol_seen[stamp] = lineno
 
+            # 该行的累计复权因子。缺列/为空 ⇒ 1.0（走恒等快路径，见 `_rescale_price`）。
+            # 先解析再建 bar：解析失败要抛在**建对象之前**，免得留下半截状态。
+            factor = parse_float(row.get("adjust_factor") or "1.0", "%s 的 adjust_factor 列" % where)
             bar = BarData(
                 symbol=symbol,
-                open=values["open"],
-                high=values["high"],
-                low=values["low"],
-                close=values["close"],
+                # 四列价格各乘一次因子 —— 只乘 `close` 是最容易漏的一种（见 `_rescale_price`）。
+                # `amount` 刻意**不乘**：上面那句 `close * volume` 用的也是未复权的 close。
+                open=_rescale_price(values["open"], factor),
+                high=_rescale_price(values["high"], factor),
+                low=_rescale_price(values["low"], factor),
+                close=_rescale_price(values["close"], factor),
                 volume=int(values["volume"]),
                 amount=amount,
                 datetime=stamp,
                 timestamp=epoch_seconds(stamp),
             )
             index.setdefault(symbol, {})[stamp] = bar
-            adjust.setdefault(symbol, {})[stamp] = parse_float(row.get("adjust_factor") or "1.0", where)
+            adjust.setdefault(symbol, {})[stamp] = factor
             dividend.setdefault(symbol, {})[stamp] = parse_float(row.get("dividend") or "0.0", where)
 
         for symbol, bars in index.items():
@@ -254,6 +305,13 @@ class CsvDataFeed(DataFeed):
         return bar is not None and bar.volume > 0
 
     def get_adjustment_factor(self, symbol: str, datetime: datetime) -> float:
+        """该时点的累计复权因子；文件没提供时 `1.0`（与价格乘的是**同一个**默认值）。
+
+        这个返回值与 `_load_data` 里乘到四列价格上的因子**必然相等**：两者是同一个
+        局部变量 `factor` 的两条出口。`engine.py` 把它写进 `ReportBundle.adjust_factor`，
+        所以「策略按声明的因子把价格除回去」必须能拿到文件里的原值 —— 控制组在
+        `tests/test_backtest_slice.py`。
+        """
         return self._adjust.get(symbol, {}).get(datetime, 1.0)
 
     def get_dividend(self, symbol: str, datetime: datetime) -> float:
