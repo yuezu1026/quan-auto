@@ -806,6 +806,11 @@ def run_state(text):
     于是 `--wait` 在列表模式下永远等不到。⇒ 判据只读 JSON，不读渲染结果。
 
     取不到一律返回错误，**不静默退化**：一个默认值会让「没读到」长得像「绿」。
+
+    还带 headSha：光知道「有一次运行绿了」不够，还得知道**绿的是不是我要等的那次**
+    —— 推送后 gh 要过一会儿才登记这次的运行，而 `gh run list` 的最新一条仍是**上一个
+    提交**的 success（2026-09-29 第一次用修好的 `--wait` 就复现：退 0，而 HEAD 的运行
+    根本还不存在）。
     """
     try:
         data = json.loads(text)
@@ -817,20 +822,28 @@ def run_state(text):
         data = data[0]
     if not isinstance(data, dict) or 'status' not in data:
         return None, 'gh 的输出里没有 status 字段'
-    return (data['status'], data.get('conclusion')), None
+    return ({'status': data['status'], 'conclusion': data.get('conclusion'),
+             'headSha': data.get('headSha') or ''}, None)
 
 
-def ci_exit_code(wait, state):
-    """`state` = `(status, conclusion)` 或 None。
+def ci_exit_code(wait, state, head_short=''):
+    """`state` = `{'status','conclusion','headSha'}` 或 None；`head_short` = 本地 HEAD 前 10 位。
 
-    - `--wait>0` 是「等」：**跑完且成功**才给 0；跑完但结论是失败、或没等到
-      （None / 非 completed）都给 1。三种情况词不同，但**绝不能有一个是 0**。
-    - 不带 `--wait` 只是「查一眼」：没跑完不算失败（那就是它的用途）。
+    - `--wait>0` 是「等」：**跑完、成功、而且绿的就是 HEAD 那次**才给 0。
+      跑完但结论是失败、没等到、状态读不出来、或绿的是别的提交 —— 全部给 1。
+      四种情况词不同，但**绝不能有一个是 0**。
+    - 不带 `--wait` 只是「查一眼」：没跑完 / 不是 HEAD 那次都不算失败（那就是查一眼的用途）。
+
+    `head_short` 为空（取不到 HEAD）时跳过身份核对 —— 那是缺信息，不是绿。
     """
     if wait <= 0:
         return 0
-    status, conclusion = state if state else (None, None)
-    return 0 if (status == 'completed' and conclusion == 'success') else 1
+    if not state:
+        return 1
+    if head_short and (state.get('headSha') or '')[:len(head_short)] != head_short:
+        return 1
+    return 0 if (state['status'] == 'completed'
+                 and state.get('conclusion') == 'success') else 1
 
 
 def cmd_ci(argv):
@@ -867,6 +880,13 @@ def cmd_ci(argv):
     if not (os.environ.get('HTTPS_PROXY') or os.environ.get('HTTP_PROXY')):
         print('NOTE: 环境里没有 HTTPS_PROXY/HTTP_PROXY。本机 `gh` 不读系统代理，'
               '若卡住请传 --proxy=http://127.0.0.1:7890。')
+    head_short = ''
+    hrc, hout = run_raw(['git', 'rev-parse', 'HEAD'], timeout=30)
+    if hrc == 0 and hout.strip():
+        head_short = hout.strip().splitlines()[0][:10]
+    else:
+        print('NOTE: 取不到 HEAD（git rc=%d）⇒ 无法确认「绿的是不是这次」；'
+              '此时的 rc=0 只代表「最新一次运行绿了」。' % hrc)
     deadline = time.time() + wait
     while True:
         if run_id is None:
@@ -887,15 +907,20 @@ def cmd_ci(argv):
         if err or serr:
             print('FAIL: %s -- 提取为空必须判 FAIL，不能当通过' % (err or serr))
             return 1
-        done = state[0] == 'completed'
+        stale = bool(head_short) and (state['headSha'] or '')[:len(head_short)] != head_short
+        done = state['status'] == 'completed' and not stale
         if done or wait == 0 or time.time() >= deadline:
             for row in rows:
                 print(row)
-            if not done:
+            if stale:
+                print('NOTE: 最新一次运行是 %s，**不是 HEAD（%s）** —— 推送后 gh 还没'
+                      '登记这次的运行，所以那条绿不是你想等的结论。等 10~20s 再问。'
+                      % ((state['headSha'] or '?')[:10], head_short))
+            elif not done:
                 print('NOTE: 仍在跑（本次没等）。CI 要 1~2 分钟，隔一会儿再问一次'
                       '比一次长等更省 —— 长等会被转后台，而转后台的通知会把整段'
                       '终端缓冲重放回上下文。')
-            return ci_exit_code(wait, state)
+            return ci_exit_code(wait, state, head_short)
         time.sleep(10)
 
 
@@ -1092,20 +1117,30 @@ def selftest():
                 '"headSha":"aaaaaaaaaaaaaaaa"}]')
     state, serr = run_state(two_runs)
     check('NEG-state-picks-newest-not-oldest',
-          state == ('in_progress', None) and serr is None,
+          bool(state) and state['status'] == 'in_progress'
+          and state['conclusion'] is None and serr is None,
           'state=%s（较老那条 success 不能算数）' % (state,))
     ok, _ = fmt_run_list(two_runs)
     check('CLEAN-run-list-still-displays-both', bool(ok) and len(ok) == 2, str(ok))
+    ok_state = {'status': 'completed', 'conclusion': 'success', 'headSha': 'a' * 40}
     check('CLEAN-ci-exit-wait-success',
-          ci_exit_code(540, ('completed', 'success')) == 0)
+          ci_exit_code(540, ok_state, 'a' * 10) == 0)
     check('NEG-ci-exit-wait-conclusion-failure',
-          ci_exit_code(540, ('completed', 'failure')) == 1,
+          ci_exit_code(540, dict(ok_state, conclusion='failure'), 'a' * 10) == 1,
           '跑完但结论是失败 ⇒ 不能给 0')
-    check('NEG-ci-exit-wait-unfinished', ci_exit_code(540, state) == 1,
+    check('NEG-ci-exit-wait-unfinished', ci_exit_code(540, state, 'b' * 10) == 1,
           '--wait 超时/仍在跑必须是 1，否则「没读到」会被读成「绿」')
+    # 🔴 第二层假绿（2026-09-29，第一次用修好的 --wait 就复现）：推送后 gh 还没登记
+    #    这次的运行，`gh run list` 的最新一条仍是**上一个提交**的 success ⇒ 一次都
+    #    没等这次的，却退 0。所以 --wait 必须确认**绿的是不是 HEAD 那次**。
+    check('NEG-ci-exit-wait-stale-sha',
+          ci_exit_code(540, ok_state, 'b' * 10) == 1,
+          '上个提交的绿不是这次的绿 ⇒ 不能给 0')
     check('EMPTY-ci-exit-no-state',
-          ci_exit_code(540, None) == 1 and ci_exit_code(0, None) == 0,
-          '不带 --wait 只是查一眼，没跑完不算失败')
+          ci_exit_code(540, None, 'a' * 10) == 1
+          and ci_exit_code(0, None, 'a' * 10) == 0
+          and ci_exit_code(0, ok_state, 'b' * 10) == 0,
+          '不带 --wait 只是查一眼，没跑完/不是 HEAD 那次都不算失败')
     check('NEG-run-state-not-json', run_state('nope')[0] is None)
     check('EMPTY-run-state-no-runs', run_state('[]')[0] is None)
     check('NEG-run-state-no-status', run_state('[{"databaseId":1}]')[0] is None)
