@@ -43,6 +43,7 @@
     python tools/dev.py find REGEX         # 只读：只回命中行，不回整份文件
     python tools/dev.py brief              # 只读：每轮开工该看的那几节（机械取片，非摘要）
     python tools/dev.py ci [ID] [--wait=S] # 有界 CI 查询（取代无界的 `gh run watch`）
+    #   --wait>0 是「等」：没等到终态就退 1（否则「没读到」会被读成「绿」）
     python tools/dev.py --selftest         # 证明本 runner 真的能报 FAIL
 
 必须用 `.venv\\Scripts\\python.exe` 运行（裸 `python` 是 anaconda base，没装 pytest）。
@@ -752,6 +753,9 @@ def cmd_brief(argv):
 #
 # 所以形状是**有界**的：默认一次查询就返回（不等）；要等就显式给 --wait=N 的上限。
 # 反复短查询优于一次长阻塞 —— 长阻塞的代价不是等待，是它把已付过的字节重新付费一遍。
+#
+# `--wait=N` 的退出码必须是 0 只当「真的到了终态」：等超时退 1。不带 --wait 只是
+# 查一眼，没跑完不算失败。这条不是洁癖 —— 见 ci_run_done() 的 docstring。
 # ---------------------------------------------------------------------------------
 GH_RUN_LIST_FIELDS = 'databaseId,status,conclusion,headSha,workflowName'
 
@@ -785,6 +789,48 @@ def fmt_run_view(text):
             % (data.get('databaseId', '?'), data.get('status'),
                data.get('conclusion') or '-',
                (data.get('headSha') or '')[:10])], None
+
+
+def run_state(text):
+    """取「要观察的那一次」运行的 `(status, conclusion)`。纯函数。
+
+    `gh run list` 回的是**数组且最新在前**，所以只有 `data[0]` 算数；
+    `gh run view` 回的是对象。
+
+    这里钉的是一个**真的出现过**的假绿（2026-09-29）：原来判「等到了」用的是
+    `any('status=completed' in row for row in rows)` —— 列表里较老的那次运行
+    （上一次推送）早就是 completed ⇒ 判据恒真 ⇒ **不带 ID 的 `--wait=N` 一次都
+    没等就退 0**，而调用方会把 rc=0 读成「CI 绿」（当时那次其实还在 in_progress）。
+    同一次还发现另一个坑：拿**给人看的表格行**去做 machine check 也不行 ——
+    列表行是 `id  status  conclusion  sha`，里面根本没有 `status=` 这个子串，
+    于是 `--wait` 在列表模式下永远等不到。⇒ 判据只读 JSON，不读渲染结果。
+
+    取不到一律返回错误，**不静默退化**：一个默认值会让「没读到」长得像「绿」。
+    """
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return None, 'gh 的输出不是 JSON（%d 字节）' % len(text)
+    if isinstance(data, list):
+        if not data:
+            return None, 'gh run list 没返回任何运行记录'
+        data = data[0]
+    if not isinstance(data, dict) or 'status' not in data:
+        return None, 'gh 的输出里没有 status 字段'
+    return (data['status'], data.get('conclusion')), None
+
+
+def ci_exit_code(wait, state):
+    """`state` = `(status, conclusion)` 或 None。
+
+    - `--wait>0` 是「等」：**跑完且成功**才给 0；跑完但结论是失败、或没等到
+      （None / 非 completed）都给 1。三种情况词不同，但**绝不能有一个是 0**。
+    - 不带 `--wait` 只是「查一眼」：没跑完不算失败（那就是它的用途）。
+    """
+    if wait <= 0:
+        return 0
+    status, conclusion = state if state else (None, None)
+    return 0 if (status == 'completed' and conclusion == 'success') else 1
 
 
 def cmd_ci(argv):
@@ -837,18 +883,19 @@ def cmd_ci(argv):
             print('gh rc=%d (没装 gh / 没登录 / 代理不通都长这样)' % rc)
             print(out.strip()[:600])
             return 1
-        if err:
-            print('FAIL: %s -- 提取为空必须判 FAIL，不能当通过' % err)
+        state, serr = run_state(out)
+        if err or serr:
+            print('FAIL: %s -- 提取为空必须判 FAIL，不能当通过' % (err or serr))
             return 1
-        for row in rows:
-            print(row)
-        if run_id is None or any('status=completed' in row for row in rows):
-            return 0
-        if wait == 0 or time.time() >= deadline:
-            print('NOTE: 仍在跑（本次没等）。CI 要 1~2 分钟，隔一会儿再问一次比'
-                  '一次长等更省 —— 长等会被转后台，而转后台的通知会把整段终端'
-                  '缓冲重放回上下文。')
-            return 0
+        done = state[0] == 'completed'
+        if done or wait == 0 or time.time() >= deadline:
+            for row in rows:
+                print(row)
+            if not done:
+                print('NOTE: 仍在跑（本次没等）。CI 要 1~2 分钟，隔一会儿再问一次'
+                      '比一次长等更省 —— 长等会被转后台，而转后台的通知会把整段'
+                      '终端缓冲重放回上下文。')
+            return ci_exit_code(wait, state)
         time.sleep(10)
 
 
@@ -1034,6 +1081,34 @@ def selftest():
           ok and 'status=in_progress' in ok[0] and 'conclusion=-' in ok[0], str(ok))
     ok, err = fmt_run_view('{"foo":1}')
     check('NEG-run-view-no-status', ok is None and bool(err), str(err))
+    # 🔴 这一组钉住一个**真的出现过**的假绿（2026-09-29）：ci 原来判「等到了」用的是
+    #    `any('status=completed' in row for row in rows)` —— 列表里较老的那次运行
+    #    （上次推送）早就是 completed ⇒ 判据恒真 ⇒ **不带 ID 的 `--wait=N` 一次都
+    #    没等就退 0**，而被读成「CI 绿」（当时那次其实还在 in_progress）。
+    #    所以样本必须**至少两条运行**，且成功的必须是**较老**那条。
+    two_runs = ('[{"databaseId":2,"status":"in_progress","conclusion":null,'
+                '"headSha":"bbbbbbbbbbbbbbbb"},'
+                '{"databaseId":1,"status":"completed","conclusion":"success",'
+                '"headSha":"aaaaaaaaaaaaaaaa"}]')
+    state, serr = run_state(two_runs)
+    check('NEG-state-picks-newest-not-oldest',
+          state == ('in_progress', None) and serr is None,
+          'state=%s（较老那条 success 不能算数）' % (state,))
+    ok, _ = fmt_run_list(two_runs)
+    check('CLEAN-run-list-still-displays-both', bool(ok) and len(ok) == 2, str(ok))
+    check('CLEAN-ci-exit-wait-success',
+          ci_exit_code(540, ('completed', 'success')) == 0)
+    check('NEG-ci-exit-wait-conclusion-failure',
+          ci_exit_code(540, ('completed', 'failure')) == 1,
+          '跑完但结论是失败 ⇒ 不能给 0')
+    check('NEG-ci-exit-wait-unfinished', ci_exit_code(540, state) == 1,
+          '--wait 超时/仍在跑必须是 1，否则「没读到」会被读成「绿」')
+    check('EMPTY-ci-exit-no-state',
+          ci_exit_code(540, None) == 1 and ci_exit_code(0, None) == 0,
+          '不带 --wait 只是查一眼，没跑完不算失败')
+    check('NEG-run-state-not-json', run_state('nope')[0] is None)
+    check('EMPTY-run-state-no-runs', run_state('[]')[0] is None)
+    check('NEG-run-state-no-status', run_state('[{"databaseId":1}]')[0] is None)
 
     # ---- brief / section 在真产物上各跑一次（用 --out 落盘 ⇒ 不把 ~6.7k tok
     #      的中文正文打进自测输出里；自测该输出的是结论，不是载荷）----
