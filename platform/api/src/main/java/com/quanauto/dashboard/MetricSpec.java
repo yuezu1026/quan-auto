@@ -31,16 +31,22 @@ public record MetricSpec(String key, String group, String label, String unit, in
     /**
      * 14 条，顺序即界面顺序。
      *
-     * <p>⚠️ <b>这是一份手抄的副本，而目前没有任何门禁盯着它。</b>
-     * 权威定义在 {@code quanauto/dashboard.py} 的 {@code METRIC_SPECS}（那里的
+     * <p><b>权威定义在 {@code quanauto/dashboard.py} 的 {@code METRIC_SPECS}</b>（那里的
      * {@code tools/verify_dashboard.py} C2 与 {@code tests/test_dashboard.py} 双向对齐
      * {@code models.PerformanceMetrics}）。本列表逐字照抄，并由
      * {@code docs/智能量化交易平台.md} 附录C 的表格逐行登记。
      *
-     * <p>风险是明确的：这条清单一旦漂移，两边就会显示不同的指标名/量纲，
-     * 而<b>没有任何检查会报</b>（Java 与前端两侧目前零门禁覆盖，见附录C §C.5）。
-     * 最省事的第一条补牙办法就是写一条纯 Python 静态检查器，解析本文件与
-     * {@code dashboard.py} 做双向比对 —— 记为待办，不假装它已经存在。
+     * <p>⚠️ 抄得再像也只是一份<b>副本</b>：它一旦漂移，两边就会显示不同的指标名/量纲。
+     * 2026-09-30 起这条风险有门禁盯着 —— {@code platform-spec-parity}
+     * （{@code tools/verify_platform_specs.py}，接进 {@code tools/run_all_gates.py} 的统一入口，
+     * 因此也在 CI 上跑）把本文件与 {@code dashboard.py} <b>双向</b>比对：
+     * 量纲/分组常量取值、14 行的键-分组-标签-量纲-小数位、<b>行序</b>、
+     * 以及 {@code STRUCTURE_COUNTS} 的取值与顺序。
+     * 也就是说：<b>本文件与 Python 侧不一致时，是这里要改</b>，不是改 {@code dashboard.py}。
+     *
+     * <p>⚠️ 门禁只覆盖到「这张<b>声明表</b>两侧一致」为止。它不编译、不启动 JVM、不渲染页面
+     * ⇒ {@code mvn test}、{@code npm run build} 与页面本身依然没有门禁盯着
+     * （见附录C §C.5 与它的 C.8 订正块）。
      */
     public static final List<MetricSpec> METRIC_SPECS = List.of(
             new MetricSpec("total_return", GROUP_RETURN, "累计收益", UNIT_PERCENT, 4),

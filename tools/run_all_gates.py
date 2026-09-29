@@ -405,6 +405,29 @@ GATES = [
         'selftest': ['tools/verify_risk_table_wiring.py', '--selftest'],
     },
     {
+        'name': 'platform-spec-parity',
+        'tier': 'A',
+        # 平台层读取侧切片（`platform/`，2026-09-29 追加）把 `quanauto/dashboard.py` 的
+        # 14 条指标规格**逐字抄**进了 `MetricSpec.java`，而抄完之后没有任何东西盯着这
+        # 两份 —— 那个文件自己的 Javadoc 就写着「这是一份手抄的副本，而目前没有任何门禁
+        # 盯着它」，附录C §C.5 第 2 条也把它登记成缺口。代价跟 §C.5 第 4 条记的同一个味道：
+        # 两侧各自都绿（Python 侧由 dashboard-consistency 盯、Java 侧编译得过），**缝上
+        # 静默不一致** —— `dashboard.py` 改了小数位/标签/量纲/分组，屏幕与 I4 命令行看板
+        # 就悄悄分叉，而没有任何一条判据会红。
+        # 本门禁比三样东西（顺序敏感，顺序即界面顺序）：① 5 条量纲 + 4 条分组常量的**取值**；
+        # ② 14 行的 key/group/label/unit/digits 与**行序**；③ STRUCTURE_COUNTS 的名字与顺序。
+        # 边界：它只比这份**声明式规格表**，不做端到端 —— 「屏幕真印对了」归
+        # `platform/check_text_parity.py`，而那个脚本需要一个活着的 JVM（「环境没起来就判红」
+        # 的门禁本身就是判据缺陷）⇒ 它**不是门禁**，本门禁也不假装替代它。
+        # 它只解析文本与 AST（不 import `quanauto.dashboard`、不编译 Java）；
+        # 每一处提取都带空转守卫（提取为空/变薄 ⇒ 拒绝通过，不打印「0 issue(s) PASS」）。
+        # 修的永远是 Java 侧或被比对的判据，**`quanauto/dashboard.py` 是冻结的参照**。
+        'what': '平台层 MetricSpec.java 与 quanauto/dashboard.py 的规格表双向一致'
+                '（量纲/分组常量取值、14 行的键-分组-标签-量纲-小数位与行序、结构计数）',
+        'runner': ['tools/verify_platform_specs.py'],
+        'selftest': ['tools/verify_platform_specs.py', '--selftest'],
+    },
+    {
         'name': 'core-contract-refs',
         'tier': 'B',
         # The two supplements contribute definitions only. DataFeed/MarketStatus/

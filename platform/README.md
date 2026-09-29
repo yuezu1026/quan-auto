@@ -1,8 +1,13 @@
 # `platform/` —— 回测绩效看板（平台层 P0 切片）
 
-> **这一层不在 CI 里，也没有任何自建门禁覆盖它。**
-> 本仓库 17 个门禁全部是解析 Python 或 SQL 文本的静态检查器；`mvn test`、`npm run build`
-> 与页面本身没有任何门禁盯着。见 `docs/智能量化交易平台.md` 附录C §C.5。
+> **这一层的「规格表声明」现在有门禁了；运行侧仍然没有**（2026-09-30 订正）。
+> `platform-spec-parity`（`tools/verify_platform_specs.py`，tier-A）把 Java 侧
+> `MetricSpec.METRIC_SPECS` 与 Python 侧 `quanauto/dashboard.py` 的 `METRIC_SPECS`
+> **双向**比对（14 行的键/分组/标签/量纲/小数位 + **行序** + 量纲与分组常量 + `STRUCTURE_COUNTS`）。
+> 它接在 `tools/run_all_gates.py` 的统一入口里 ⇒ 而 `ci.yml` 最后一步就是那条命令
+> ⇒ **这部分是真的在 CI 上跑**。门禁数现取 `python tools/run_all_gates.py --list`，不要在文档里抄。
+> ⚠️ 它**不编译、不启动 JVM、不渲染页面** ⇒ `mvn test`、`npm run build` 与页面本身
+> 依然没有任何门禁盯着 —— 分工的出处是 `docs/智能量化交易平台.md` 附录C 的 §C.5 与它的 C.8 订正块。
 >
 > 本层**不改动研究层的任何文件**（`quanauto/dashboard.py` 一行未改），**不碰 `db/*.sql`**，
 > **不碰 `.github/workflows/ci.yml`**。它只是同一份回测报告的**另一个读法**。
@@ -20,7 +25,10 @@ quanauto/dashboard.py ── 研究层的另一个读法（未改动）
 **后端一个指标都不重算**：它只把报告里的 `deterministic.performance` / `equity_curve` /
 结构计数透传，并算出屏幕上要显示的 `text`（量纲换算 + 定点小数）。前端连格式化都不做，
 只把服务端给的 `text` 原样印出来。两侧的展示规则与 `quanauto/dashboard.py` 的 `format_metric`
-同款 —— 但那张 14 条规格表在 Java 侧是**手抄的副本**，没有门禁比对两者（附录C §C.5）。
+同款 —— 但那张 14 条规格表在 Java 侧是**手抄的副本**，两侧**声明**是否一致由
+`platform-spec-parity` 门禁双向比对（附录C §C.5 与它的 C.8 订正块）。
+⚠️ 门禁**不管**「服务端算出的 `text` 有没有真的印到页面上」—— 那仍然只有手动脚本
+`check_text_parity.py`（需要一个活着的 JVM ⇒ 不能当门禁）。
 
 ## 目录
 

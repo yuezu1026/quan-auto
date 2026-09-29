@@ -1,7 +1,7 @@
-SCOPE: FULL -- all 17 registered gate(s) ran.
-VERDICT: PASS -- 17 of 17 gate(s) ok.
+SCOPE: FULL -- all 18 registered gate(s) ran.
+VERDICT: PASS -- 18 of 18 gate(s) ok.
 NOTE: core-contract-refs=RATCHET 2/2 report a body verdict other than PASS and still count as ok. A tier-B ratchet prints DRIFT+/DRIFT-/DRIFT~ in its GATE header when the debt moved, and RATCHET at baseline; the line under it says verdict: DIRTY in every one of those cases (DIRTY is that script's own word for found N findings; it prints CLEAN when the count is zero). Read the GATE header, not that word.
-SIDE-EFFECT: gates wrote nothing (552 file(s) watched)
+SIDE-EFFECT: gates wrote nothing (553 file(s) watched)
 
 ==============================================================================
 GATE md-fidelity (tier A) selftest=PASS verdict=PASS 0 finding(s)
@@ -159,10 +159,10 @@ GATE appendix-refs (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 契约文档里被引用的附录标签（含条目号、点名归属）都真实存在
 argv: tools/verify_appendix_refs.py
 ------------------------------------------------------------------------------
-scan scope: git ls-files=124 file(s), read as text=121, skipped=3
+scan scope: git ls-files=125 file(s), read as text=122, skipped=3
   skipped (binary/undecodable): docs/智能量化交易平台-数据中心数据源选型与接入规范.docx, docs/智能量化交易平台-核心模块接口契约文档.docx, docs/智能量化交易平台.docx
 appendix index: core=7L/24I dc=4L/73I prd=3L/0I risk=0L/0I
-citations: 417 total, 243 with an item label, 130 naming an owner, in 51 file(s)
+citations: 425 total, 241 with an item label, 129 naming an owner, in 51 file(s)
 verdict: PASS (0 issue(s))
 
 ==============================================================================
@@ -244,6 +244,19 @@ NOTE 'risk_intercept_log' 契约写入方写作「风控引擎（异步批量）
 NOTE 'risk_breaker_state' 契约写入方写作「风控引擎」（未点名类），实测写入作用域是 ['quanauto/risk.py::DbRiskRuleStore']
 NOTE 'risk_equity_peak' 契约写入方写作「风控引擎（节流）」（未点名类），实测写入作用域是 ['quanauto/risk.py::DbRiskRuleStore']
 NOTE 'risk_decision_log' 契约写入方写作「风控引擎（异步批量）」（未点名类），实测写入作用域是 ['quanauto/risk.py::RiskDecisionLogWriter']
+verdict: PASS (0 issue(s))
+
+==============================================================================
+GATE platform-spec-parity (tier A) selftest=PASS verdict=PASS 0 finding(s)
+what: 平台层 MetricSpec.java 与 quanauto/dashboard.py 的规格表双向一致（量纲/分组常量取值、14 行的键-分组-标签-量纲-小数位与行序、结构计数）
+argv: tools/verify_platform_specs.py
+------------------------------------------------------------------------------
+root:            D:\project-quan\quan-auto
+python spec:     quanauto\dashboard.py
+  rows=14  units=5/5  groups=4/4  counts=['equity_curve', 'trades', 'orders']
+java spec:       platform\api\src\main\java\com\quanauto\dashboard\MetricSpec.java
+  rows=14 (块里 `new MetricSpec(` 处数=14)  units=5/5  groups=4/4  counts=['equity_curve', 'trades', 'orders']
+compared:        14 行按 key 两两比过（顺序敏感）+ 常量 9 条 + 结构计数 1 组
 verdict: PASS (0 issue(s))
 
 ==============================================================================

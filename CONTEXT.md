@@ -114,6 +114,7 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 | `tools/verify_enum_members.py` | ★ **新门禁**（`enum-members`，2026-09-25 注册）：三份契约文档的 python 代码块里的**枚举**与 `quanauto/*.py` 的枚举**逐成员**比 —— 成员名 / 取值 / **顺序**三样都比。两张必须显式登记的表：`PENDING`（契约有、实现无 ⇒ 实现一冒头即报 `EM-PENDING-DRIFT`，不许静默补上）、`IMPL_LOCAL`（实现侧本地枚举 ⇒ 消失报 `EM-LOCAL-STALE`、出现未登记的即报 `EM-UNREGISTERED-IMPL`）；两侧提取为空一律 FAIL（空转守卫）。**它补的是别的门禁都看不见的一层**：`contract-appendix` 只审核心契约附录 G，`contract-signature` 只看「登记过的成员还在不在」，manifest 里**一个枚举都没有** ⇒ 一个枚举可以在契约里写 5 个成员、实现里只写 4 个而全绿（2026-09-25 的 `MarketStatus` 就是这样，见 §6 与缺口清单 **B9**）。**边界**：只比成员表，不比枚举的 docstring、不比谁在用哪个成员 |
 | `tools/verify_class_coverage.py` | ★ **新门禁**（`class-coverage`，2026-09-25 注册）：`quanauto/*.py` 里**每一个类**都必须落在四个集合之一 —— ① 契约**声明**（三份契约的 ```` ```python ```` 块里由 `ast` 真解出 `class 同名`，**文本搜不算**）；② **登记表**（`manifest.classes` ∪ `impl_only` ∪ `CONTRACT_FIRST` ∪ `T1_REQUIRED`，**并集算出来**，实测 38）；③ `DEBT`（契约点了名却没类块 = 明账欠款，7 个）；④ `LOCAL`（契约不定义，22 个）。它补的正是最大的那块盲区：`contract-signature` 只查「登记过的成员还在不在」、`contract-appendix` 只审附录 G、`enum-members` 只管枚举成员 ⇒ 此前一个新写的类可以既不在契约、也不在任何清单里而全部门禁全绿（2026-09-25 实测 29 个）。**提及不算覆盖**：报告单印一行 `mention split`（待裁 29 个：散文提到过 13 / 连名字都没有 16），因为「把名字写进任何一句话」不该算合规。③④ 两张表**双向自查**（已能被声明/登记覆盖 ⇒ `CC-DEBT-DRIFT`/`CC-LOCAL-DRIFT`；类消失 ⇒ `*‑STALE`），`DAMAGED` 表给 `.docx` 压坏的两个块（`Account`/`ResultSerializer`）豁免但同样双向查。证伪两条通道：`--selftest` 29 个合成样本（逐条断言**预期检查码**），`--falsify` 在**真实产物的逐字节副本**上改坏（不写仓库）。**边界**：只证明「每个类都有人认领过」，**不证明实现对**，也不比成员/字段/方法 |
 | `tools/verify_error_codes.py` | ★ **新门禁**（`error-codes`，2026-09-25 注册）：三份契约的**错误码表**与 `quanauto/errors.py` 在**码 / 拼写 / 级别 / 类名**四样上对拍（16 个检查码族）。它关的是一个**登记过三次**的洞：数据中心契约的附录 A8 / B10 / C6 都写着「无机器判据，已知缺口」，风控契约 §3.7 那句「两处定义必须保持一致，不得冲突」本身就是一条没有判据的要求。**首跑就报出真冲突**：`RISK_001` 在主契约附录 D 是 `CRITICAL`、在风控契约 §3.7 是 `ERROR`，而那一行还标着「（主契约原有）」。两张登记表（`PENDING` 契约定义而刻意不实现、`IMPL_ONLY` 实现自有）**反向也查**（落地或消失即 `EC-STALE-PENDING` / `EC-IMPL-ONLY-STALE`），拼写分歧（看板码少一个下划线）登记为**显式例外**，一旦不再分歧就报 `EC-SPELLING-STALE`。**边界**：不查描述与建议措施（人写的话不是标识）、不比继承关系（一处已登记的刻意偏差会让 `issubclass` 判据误报）；方向**有意单向**（契约可以定义实现里还没有的码，反向才报 `EC-CODE-INVENTED`）；扫描面 = 三份契约 + `quanauto/*.py`，**不含** `docs/迭代计划.md` 与 `docs/开工前缺口清单.md`（它们是记录，不是契约 —— 拿记录去当判据，等于把过去的自己变成法条）。证伪两条通道：`--selftest` 19 个样本、`--falsify` 在真实产物的逐字节副本上打 7 组变异（含一个不变异的控制组） |
+| `tools/verify_platform_specs.py` | ★ **新门禁**（`platform-spec-parity`，2026-09-30 注册，tier-A）：把 **Java 侧** `platform/api/src/main/java/com/quanauto/dashboard/MetricSpec.java` 的 `METRIC_SPECS` 与 **Python 侧** `quanauto/dashboard.py` 的同一个表**双向**比对 —— 量纲 / 分组两组常量的**取值**、14 行的「键 / 分组 / 标签 / 量纲 / 小数位」**逐行**比、**行序**（只在键集合与条数都相同的前提下才比，否则不乱报漂移）、以及 `STRUCTURE_COUNTS` 的三段名。它关的是 `docs/智能量化交易平台.md` 附录C 里 C.5 第 2 条那条**登记**：「14 条规格表是**手抄副本**、没有任何门禁比对两者」⇒ 两端一旦不一致**当场红**（这正是手动脚本 `platform/check_text_parity.py` 做不到的：那个要一个活着的 JVM）。两侧提取为空、或任一侧行数低于门槛一律 FAIL（空转守卫）。**只解析文本 + Python AST**：不 import 被测代码、不编译、不启动 JVM、不渲染页面。**修复方向永远是改 Java 侧** —— `quanauto/dashboard.py` 是冻结的参照物。**边界**：只证明两侧**声明**一致，证明不了 Java 真的按这张表渲染（见 §3.G） |
 | `tools/verify_data_center.py` | 数据中心契约 §3.6.1 与 DDL 约束清单双向一致（C1~C7）+ 对 `db/data_center.smoke.sql` 的触发测试覆盖核对（C7） |
 | `tools/verify_data_center_pit.py` | ★ **I2 S1 新门禁**：`DataFeed` 取数路径的 `as_of` **两层防线**（显式日期参数越界必须抛 / 经 guard 逐行登记 —— **2026-09-29 晚 Ⅱ 起第二层要求逐条写入口记它自己那个字段**，同一条写入口拿另一条的字段顶包不算接线完成，见 DC 契约 A4）+ 回测会话下 `QFQ`/`BFILL` 必须被拒 + 只有 `DataCenter.as_of()` 能产出 `DataFeed`。「越界＝抛而非裁剪」这条语义的机器判据就在这里。**只解析 AST，从不执行被检代码、不跑 pytest** |
 | `tools/verify_data_center_adapter.py` | ★ **I2 S2 新门禁**（`data-center-adapter`）：采集侧适配器把源列名/取值翻成标准 schema（A1/A2/A4/A8）、采集层不含数据库驱动（A5）、源 SDK 只能惰性 import（A6）、行对象不暴露源字段名（A7）、新映射表/列名元组未登记即报错（A3/A9）、两个空转守卫（A0/A10）。**只解析源码文本**：不执行适配器、不联网、不 import pandas |
@@ -154,6 +155,19 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 > 因此**任何数字都现取**（§6 与 `docs/迭代计划.md`），skill 里不许复制计数 —— 那正是
 > `GATE-COUNT` 抓的写法。**边界**：skill 是规程，没有牙；它说得再对也不构成证据，
 > 判据只有门禁与测试。
+
+### G. 平台层读取侧切片（2026-09-29 追加；守门门禁 = `platform-spec-parity`）
+
+| 文件 | 作用 |
+|---|---|
+| `platform/` | 平台层**读取侧**切片（Spring Boot 3.5.16 / Java 21 只读 REST + React 19 / Vite 8 单页），读的与 I4 命令行看板是**同一份**回测报告。**不改 `quanauto/dashboard.py` 一行、不碰 `db/`、不改 `ci.yml`** ⇒ 它**不等于平台层开工**（裁决 Q3 仍有效），也**不解除**任何缺口。契约、字段清单与代价登记在 `docs/智能量化交易平台.md` 附录C，操作细节见 `platform/README.md` |
+| `platform/api/src/main/java/com/quanauto/dashboard/MetricSpec.java` | Java 侧的**规格表手抄副本**（14 行）。它与 Python 侧的一致性由 `platform-spec-parity`（见 §3.E）双向核对 ⇒ 「两边各写一套」这件事从此有牙；**不一致时要改的是这里**（Python 侧是冻结的参照物） |
+| `platform/check_text_parity.py` | 两侧**展示文本**（服务端算好的串有没有真的印到页面上）的核对 —— **手动脚本，不是门禁**（需要一个活着的 JVM ⇒ 不能当门禁，也就不构成常驻证据）。它与 `platform-spec-parity` 查的是**两件事**：声明是否一致 vs 真实输出是否一致 |
+
+> **这一层的覆盖边界（别读多）**：门禁只盯「两侧**声明**一致」。`mvn test`、`npm run build`、
+> 页面本身**没有任何门禁盯着** —— 这一层是**真的零覆盖**，不是「已覆盖但没登记」。
+> 三个已知的操作坑（构建顺序、`JAVA_HOME` 与 PATH 里不是同一个 Java、展示串只许在服务端算）
+> 写在 `platform/README.md` 与附录C 里，不在这里复制。
 
 ## 4. 怎么跑门禁
 
@@ -200,6 +214,7 @@ python tools/run_all_gates.py --selftest      # 证明这个 harness 自己会�
 | contract-signature | `python tools/verify_contract_signature.py` | 无参数。契约侧签名必须能在契约文档里**逐字**找到 ⇒ 它管的是「有人单边改了签名」，不是「三方都对」；**不比返回类型**（契约引用了大量本项目不存在的类型），只比参数列表与数据类字段名 |
 | dashboard-consistency | `python tools/verify_dashboard.py` | 无参数。**只解析源码 + 跑真的 `PerformanceAnalyzer`**，不起浏览器、不联网。C10 的参照物是写出这些数的同一个分析器 ⇒ 「公式本身错了」它看不见（核心契约 §F5 记了这个边界） |
 | appendix-refs | `python tools/verify_appendix_refs.py` | 无参数。**只读文本**：不执行被检代码、不联网；文件清单取自 `git ls-files`，**拿不到就拒判**（不在 git 仓库里跑会红）。边界：只证明标签存在，**证明不了标签背后的裁决仍然成立** |
+| platform-spec-parity | `python tools/verify_platform_specs.py` | 无参数。**只解析文本 + Python AST**：不 import 被测代码、不编译、不启动 JVM、不渲染页面。它比的是两侧**声明**是否一致 ⇒ 红了先看 Java 侧那张手抄副本是不是旧了（方向是**改 Java**，Python 侧是冻结的参照物）；**别**把它读成「页面印对了」 |
 
 每个门禁都支持 `--selftest`。
 
@@ -313,7 +328,7 @@ tier-A 全绿；`core-contract-refs` 是仅剩的 tier-B 欠账，基线 **2**�
 **剩下那 2 条是结构性的**：它们就在 .docx 派生的正文里，就地修会被下一次重新转换抹掉 ⇒
 附录 G5 给了两份**可复制副本**，副本被删会被判 FAIL（`AX-T1-COPY`）⇒ 这份基线仍是个跳闸器
 （新出现的未定义类型/异常会把总数抬到 2 以上 ⇒ `DRIFT+`）。
-另有四条**补盲区**的门禁，各自负责一层此前没人管的对应关系：
+另有几条**补盲区**的门禁，各自负责一层此前没人管的对应关系（**数量不在这里写死**）：
 - `enum-members` —— 三份契约 python 块里的**枚举成员表** vs `quanauto/*.py`（成员名 / 取值 / **顺序**）。
   两张必须显式登记的表：`PENDING = DataQualityFlag, ReportType`、`IMPL_LOCAL = SessionMode, SeverityEnum`。
 - `class-coverage` —— `quanauto/*.py` 里**每一个类**都得落进「契约声明 / 登记表 / `DEBT` 明账 / `LOCAL` 实现细节」之一。
@@ -326,6 +341,8 @@ tier-A 全绿；`core-contract-refs` 是仅剩的 tier-B 欠账，基线 **2**�
   （「两处定义必须保持一致，不得冲突」）。两张登记表（`PENDING` / `IMPL_ONLY`）**反向也查**；
   证伪两条通道：`--selftest` 19 样本 + `--falsify` 在真实产物的逐字节副本上打 7 组变异（含一个不变异的控制组）。
 - `contract-appendix` / `appendix-refs` 见 §3.E。
+- `platform-spec-parity` —— 平台层读取侧切片（`platform/`，见 §3.G）的**Java 侧手抄规格表**与 `quanauto/dashboard.py` 的双向核对。
+  **只覆盖「声明一致」**：`mvn test`、`npm run build`、页面本身仍然没有任何门禁盯着。
 其他能力缺口（复权因子、未确认清单等）与编号一律以 `docs/开工前缺口清单.md` 为准，不要在本文件里复制它。
 
 **数据库侧已不再是「运行时未证实」**：两份触发测试 2026-09-23 先在容器 `postgres:17`（17.11）上

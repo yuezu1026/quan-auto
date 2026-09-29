@@ -72,6 +72,12 @@
   一行**、**不碰 `db/`**、**不改 `ci.yml`** ⇒ 它**不等于平台层开工**（裁决 Q3 仍有效），也**不解除**任何缺口。
   ⚠️ **它没有任何自建门禁覆盖**（现有门禁全是解析 Python / SQL 文本的静态检查器）；两侧展示文本是否一致
   只有手动脚本 `platform/check_text_parity.py`（需要一个活着的 JVM ⇒ 不能当门禁），**不构成常驻证据**。
+  ✅ **规格表那一层例外**（2026-09-30 追加）：`platform-spec-parity`（`tools/verify_platform_specs.py`，tier-A）
+  把 Java 侧 `MetricSpec.METRIC_SPECS` 与 Python 侧 `quanauto/dashboard.py` 的 `METRIC_SPECS` **双向**比对
+  —— 14 行的键/分组/标签/量纲/小数位 + **行序** + 量纲与分组常量取值 + `STRUCTURE_COUNTS`。
+  门禁数现取 `python tools/run_all_gates.py --list`，**不在这里抄**。
+  ⚠️ 它**只**覆盖「两侧**声明**是否一致」，**运行侧依然零覆盖**：`mvn test`、`npm run build`、
+  页面本身都没有门禁盯着（`docs/智能量化交易平台.md` 附录C 的 C.8 订正块写着这两句的分工）。
   契约、字段清单与代价登记在 `docs/智能量化交易平台.md` 附录C；操作细节见 `platform/README.md`。
   三个坑先记住：① **构建顺序**是先 `npm run build` 再起后端（前端产物写进
   `api/src/main/resources/static/`，而 Spring 从 `target/classes/static/` 托管，反了就 served 旧包）；
