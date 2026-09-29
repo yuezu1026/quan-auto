@@ -42,20 +42,27 @@ bug），没有越界时返回**最后一次访问**的报告；全部越界点�
 
 ## 已知缺口（写在这里，而不是散在实现里）
 
-* **复权价仍未实施**（2026-09-29 收口一半）：`get_adjustment_factor` 现在真的从
-  `dc_adjust_factor` 读**累计因子**（`FactorStore` 这条缝；写入口 = `quanauto/pgstore.py` 的
-  `PgFactorIngestor`，但它与 `PgBarIngestor` 一样**没有任何产品调用点**——
-  `quanauto/` 内零调用者，"接口存在"不等于"已经有人在写库"），
-  但它只把因子交给策略（`MarketDataBundle.adjust_factor`，见 `quanauto/engine.py`）——
-  `quanauto/engine.py` 里 `adjust_factor` 只出现在 `build_bundle` 那一行，
-  **没有任何算术用它**；`BarData` 的 OHLC 仍是**不复权价** ⇒ D6 那条
-  "复权是**读取时的视图行为**"（按 `as_of_date` 现算后复权价）**还没实现**。
-  这条缺口登记在 DC 契约附录 A6 / B7，别把它读成"复权已经做完了"。
-  订正（历史）：本段曾写"复权因子恒为 1.0"，那在 2026-09-29 之前是事实；
-  现在的事实是**因子真了、价还没复**——两句话必须一起说，否则读者会得出相反的结论。
-  因子"真"到什么程度也要一起说：`HFQ`/`QFQ` 下取不到因子**会抛**出去
-  （`DataNotAvailableError` = DATA_001），只有 `AdjustType.NONE` 才返回 1.0。
-* `get_dividend` 仍恒 0.0（没有分红数据源）。
+* **复权价已实施**（2026-09-29 晚 **Ⅱ**，即 `docs/迭代计划.md` §四 的「A6 收口 Ⅱ」那一轮；
+  **不是**「I2 收口」—— I2 还开着另外几条）：`BarData` 的 OHLC 现在**真的乘了累计因子**
+  —— 唯一的复权算术在模块级 `_rescale_price`，唯一的调用点是 `DbDataFeed._row_to_bar`
+  ⇒ D6 第二条"复权是**读取时的视图行为**"（按 `as_of_date` 现算）**已兑现**：
+
+  | `AdjustType` | 价格倍数 | 查库？ |
+  | --- | --- | --- |
+  | `NONE` | `1.0`（原样返回，连乘法都不做） | 否 |
+  | `HFQ` | 该交易日**累计因子** | 是，缺行 ⇒ DATA_001 |
+  | `QFQ` | 该日累计因子 ÷ **视图末日的累计因子** | 是，两边缺行都 ⇒ DATA_001 |
+
+  `volume` / `amount` **刻意不乘因子**（这不是漏改，理由写在 `_row_to_bar` 的 docstring 里）。
+  订正（历史）：本段先后写过"复权因子恒为 1.0"（2026-09-29 之前为真）、"复权价仍未实施 /
+  `BarData` 的 OHLC 仍是不复权价"（2026-09-29 晚 **Ⅱ** 之前为真）—— 三句话各自的**有效期**不同，
+  读旧记录时按日期取最近的那一句，别把旧的那句当现状引用。
+* **因子读取是逐根 K 线一次查询**（`_row_to_bar` 每根都要问一次因子；S1 的存储是内存实现）。
+  接 PG 时要改成按 `(symbol, 窗口)` 一次取回再映射；`get_available_symbols` 与
+  `get_trading_calendar` 是同一族的 N 次查询，S1 起就记着这个 TODO。
+* `get_dividend` 仍恒 0.0（没有分红数据源）—— **与复权是两件事**：分红缺口**没有**被本轮
+  顺手"修好"，`tests/test_data_center_pit.py::test_known_gap_dividend_is_still_zero` 仍守着它。
+* 因子帧的 schema 校验判据仍未实现（DC 契约附录 B21.6，`quanauto/datasources.py` 里显式报）。
 * `live()` / `trading_calendar()` 未实现（`NotImplementedError`）。
 * 财务 / 指数成分股 / 数据质量 / 采集幂等不在本切片。
 """
@@ -369,6 +376,29 @@ def _as_float(value) -> float:
     return float(value)
 
 
+def _rescale_price(value: float, factor: float) -> float:
+    """不复权价 → 复权价：**全仓库唯一一处复权算术**（D6 第二句「读取时现算」）。
+
+    为什么单独一个模块级函数而不是内联的 `value * factor`：`_row_to_bar` 里要乘四列
+    （open/high/low/close），内联就是四份同样的乘法；更要紧的是这条口径要**一眼可见地
+    只有一份** —— 附录 B21 那句「归一化只发生在 `_row_to_bar` 一处」在这里扩成
+    「归一化 + 复权都只在这一处、这一份算式」。
+
+    `factor == 1.0` 时**原样返回**（不做乘法）：
+
+    * 不复权路径（`AdjustType.NONE`）与 I2 A6 之前的实现**逐字节一致**，不会被一次
+      `× 1.0` 引入本不存在的浮点尾巴 —— 附录 B18.3 那条 "842270400 vs 842270399.9999999"
+      就是同一个家族的老祖宗（能不一样的地方就一定会不一样）；
+    * 判据是**值相等**而不是 `is`，因为 `1.0` 与 `1.25 / 1.25` 都是「没有净缩放」，
+      而后者在浮点下并不总是逐位等于 `1.0` —— 用 `factor == 1.0` 只挡最干净的那一种，
+      不假装能挡住所有。这条**不**claim「不复权价与复权价一定逐位相等」，只 claim
+      「`NONE` 走的是恒等路径」。
+    """
+    if factor == 1.0:
+        return value
+    return value * factor
+
+
 class DbDataFeed(DataFeed):
     """库（PostgreSQL `dc_daily_bar`）支撑的 `DataFeed`，**绑定**一个 `as_of_date`。
 
@@ -401,18 +431,103 @@ class DbDataFeed(DataFeed):
 
     # ── 内部：把存储行变成 `BarData` ──────────────────────────────────────
     def _row_to_bar(self, row: DailyBar) -> BarData:
+        """存储行 → `BarData`。**归一化与复权都只发生在这一处**（附录 B21 第 2518 行）。
+
+        D6 第二句「复权在**读取时**现算」就落在这里：四列价格各乘一次 `_price_scale()`
+        给出的倍数。这份模块里没有第二个地方做复权算术 —— 判据是"`_rescale_price` 的
+        调用点只有本方法"。之所以要这么死：只要有一条读路径复了权、另一条没复，
+        同一根 K 线在 `get_bar` 与 `get_available_dates` 里就是两个价，而**报告里看不见**
+        （曲线照样画得出来）。
+
+        **`volume` / `amount` 刻意不乘因子**（这是一条决定，不是漏改）：
+
+        * D6 说的是"复权"，说的就是价格；`volume` 是**股数**、`amount` 是**成交额**
+          （真金白银），两者都不是"价格"，乘一个无量纲因子没有任何金融含义；
+        * 更硬的一条：`volume` 是 `int`，`int(1e6 / 1.25)` 会**截断**，而
+          `is_symbol_available` 的判据正是 `bar.volume > 0` ⇒ 一个小成交量的正常交易日
+          会被截成 0、**变成"不可交易"**（策略凭空少掉一天数据，且不报任何错）；
+        * 附带好处：`tests/test_data_center_store.py` 里那些"库内标度 / 整数性"的断言
+          不必因为复权而换口径。
+        """
         stamp = _as_datetime(row.trade_date)
+        factor = self._price_scale(row.symbol, row.trade_date)
         return BarData(
             symbol=row.symbol,
-            open=_as_float(row.open),
-            high=_as_float(row.high),
-            low=_as_float(row.low),
-            close=_as_float(row.close),
+            open=_rescale_price(_as_float(row.open), factor),
+            high=_rescale_price(_as_float(row.high), factor),
+            low=_rescale_price(_as_float(row.low), factor),
+            close=_rescale_price(_as_float(row.close), factor),
             volume=int(row.volume),
             amount=_as_float(row.amount),
             datetime=stamp,
             timestamp=epoch_seconds(stamp),
         )
+
+    # ── 内部：复权口径（"乘哪个因子"只写在这里） ──────────────────────────
+    def _factor_for(self, symbol: str, when: date) -> float:
+        """该 (标的, 交易日) 的**累计**复权因子 —— **唯一的实现**。
+
+        `get_adjustment_factor()`（给调用方的那个）与复权价都走这里，所以"因子是多少"
+        全仓库只有一份答案。三条分支的顺序：`NONE` ⇒ 1.0 且**不查库**；`HFQ`/`QFQ` ⇒
+        严格查、没有行就抛 DATA_001；本 feed 没接因子源 ⇒ 也是 DATA_001，但消息点明是
+        **配置**没接上。逐条理由写在 `get_adjustment_factor` 的 docstring 里
+        （那是给调用方看的契约口径，这里只管"怎么算"）。
+
+        ⚠️ 把 `NONE` 的早退去掉、换成"查不到就退回 1.0"就是原样把缺口放回去
+        （变异 `A5-hfq-factor-silently-defaults-to-one` 钉着这一条）。
+
+        `when` 必须是**已经过 `_require_visible` 的 `date`**：本方法自己不判越界
+        （越界的唯一判据是第一层，重复判会让"哪一层拒的"变模糊）。`_row_to_bar` 的调用
+        天然满足这条 —— 那些行来自 `_select`，已经在第二层逐行过过守卫。
+        """
+        if self.adjust_type is AdjustType.NONE:
+            return 1.0
+        if self.factor_store is None:
+            raise DataNotAvailableError(
+                "本 feed 没有接复权因子存储（factor_store=None）⇒ 给不出 %s 在 %s 的复权因子。"
+                "这是**配置**没接上，不是这一天没有数据（DATA_001）—— "
+                "D6 下 HFQ/QFQ 必须有因子，不能退化成 1.0" % (symbol, when)
+            )
+        rows = self._select_factors(symbol, when, when)
+        if not rows:
+            raise DataNotAvailableError(
+                "%s 在 %s 没有复权因子行（dc_adjust_factor，data_version=%s）⇒ DATA_001。"
+                "D6/§2.4：找不到数据必须显式失败 —— 静默返回 1.0 会让这个标的的回测"
+                "整体变成不复权，而报告里看不出任何异常" % (symbol, when, self.data_version)
+            )
+        return _as_float(rows[0].adjust_factor)
+
+    def _qfq_base_factor(self, symbol: str) -> float:
+        """前复权的**基准因子** = 本视图内该标的最后一个可见交易日的累计因子。
+
+        前复权的定义就是"把历史价折算到最新那一天"，所以它**必然**依赖视图的右端：
+        同一根历史 K 线在两个 `as_of_date` 下会得到两个不同的 QFQ 价。这不是实现缺陷，
+        正是 D6 禁止回测用 `QFQ` 的理由（回测要可复现，而"最新那一天"每天都在动）。
+
+        "最新那一天" = 因子表里该标的 `trade_date <= as_of_date` 的**最后一行**
+        （`FactorStore.select_factors` 的契约是升序）。一行都没有 ⇒ DATA_001：
+        基准不可知就不猜 —— 猜一个 1.0 会让整段前复权价**静默等于后复权价**。
+        """
+        rows = self._select_factors(symbol, MIN_DATE, self.as_of_date)
+        if not rows:
+            raise DataNotAvailableError(
+                "%s 在 as_of_date=%s 之前没有任何复权因子行 ⇒ 前复权的基准不可知（DATA_001）。"
+                "D6 下 QFQ 是视图行为，基准 = 视图末日的累计因子；拿 1.0 当基准会让"
+                "前复权价静默等于不复权价" % (symbol, self.as_of_date)
+            )
+        return _as_float(rows[-1].adjust_factor)
+
+    def _price_scale(self, symbol: str, when: date) -> float:
+        """K 线价要乘的**总倍数**：`NONE` ⇒ `1.0`；`HFQ` ⇒ 该日累计因子；
+        `QFQ` ⇒ 该日累计因子 ÷ `_qfq_base_factor()`。
+
+        刻意把"乘什么"（本方法）与"怎么乘"（`_rescale_price`）分开：加第三种复权口径时
+        只改这里，价格路径一个字都不用碰。
+        """
+        factor = self._factor_for(symbol, when)
+        if self.adjust_type is AdjustType.QFQ:
+            return factor / self._qfq_base_factor(symbol)
+        return factor
 
     # ── 两道防线 ─────────────────────────────────────────────────────────
     def _require_visible(self, when, where: str) -> date:
@@ -518,27 +633,24 @@ class DbDataFeed(DataFeed):
         `_require_visible` 必须在最前面：**问**"1 月 6 日的复权因子是多少"这件事本身
         就是一次对未来数据的访问。它也是 `tools/verify_data_center_pit.py` 的 P4
         钉住的不变量（带日期参数的公开方法必须过第一层）。
+
+        **本方法只是 `_factor_for` 的公开薄壳**（2026-09-29 晚抽出来的）：复权价走同一份
+        实现（`_row_to_bar` → `_price_scale` → `_factor_for`）⇒ "策略问到的因子"与
+        "价格实际乘的因子"**不可能分歧**。这比"两份实现各自全绿"强：各自绿只说明各自
+        自洽，说明不了两个答案相等。
         """
         when = self._require_visible(datetime, "DbDataFeed.get_adjustment_factor")
-        if self.adjust_type is AdjustType.NONE:
-            return 1.0
-        if self.factor_store is None:
-            raise DataNotAvailableError(
-                "本 feed 没有接复权因子存储（factor_store=None）⇒ 给不出 %s 在 %s 的复权因子。"
-                "这是**配置**没接上，不是这一天没有数据（DATA_001）—— "
-                "D6 下 HFQ/QFQ 必须有因子，不能退化成 1.0" % (symbol, when)
-            )
-        rows = self._select_factors(symbol, when, when)
-        if not rows:
-            raise DataNotAvailableError(
-                "%s 在 %s 没有复权因子行（dc_adjust_factor，data_version=%s）⇒ DATA_001。"
-                "D6/§2.4：找不到数据必须显式失败 —— 静默返回 1.0 会让这个标的的回测"
-                "整体变成不复权，而报告里看不出任何异常" % (symbol, when, self.data_version)
-            )
-        return _as_float(rows[0].adjust_factor)
+        return self._factor_for(symbol, when)
 
     def get_dividend(self, symbol: str, datetime: datetime) -> float:
-        """已知缺口：本切片没有分红数据，恒返回 0.0（理由同 `get_adjustment_factor`）。"""
+        """**仍然开着的**已知缺口：本切片没有分红数据，恒返回 0.0。
+
+        与复权**刻意分开**：复权已经在 `_row_to_bar` 里实施了（模块文档的"已知缺口"节），
+        而分红这一半**一个字都没动** —— 复权价是从 `dc_adjust_factor` 现算的，不依赖也不
+        消费分红。守住它的用例是 `tests/test_data_center_pit.py` 里那条
+        `test_known_gap_dividend_is_still_zero`（它的删改条件是**缺口真的关闭**，不是
+        "某个迭代交付了"—— 2026-09-29 收口时正是按这个条件把它**留**下来的）。
+        """
         self._require_visible(datetime, "DbDataFeed.get_dividend")
         return 0.0
 

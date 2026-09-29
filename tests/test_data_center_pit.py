@@ -51,13 +51,27 @@ FUTURE = date(2026, 1, 6)  # 晚于 as_of，一次都不许露出来
 AS_OF = ON_AS_OF
 
 
-def _row(symbol: str, trade_date: date, close: float = 10.0, volume: float = 1000.0) -> DailyBar:
+def _row(
+    symbol: str,
+    trade_date: date,
+    close: float = 10.0,
+    volume: float = 1000.0,
+    open_: float = None,
+    high: float = None,
+    low: float = None,
+) -> DailyBar:
+    """一行存储形状的日线。`open_` / `high` / `low` 不给就取 `close`。
+
+    另有三个参数是为了让**四列价格**能被分开观察（`open_` 叫这个名字是因为 `open`
+    是内建函数）—— 夹具里四列全相等时，"四列都乘了"与"只乘了 close"这两种实现
+    给出的是同一组数，那类变异就抓不到了。
+    """
     return DailyBar(
         symbol=symbol,
         trade_date=trade_date,
-        open=close,
-        high=close,
-        low=close,
+        open=close if open_ is None else open_,
+        high=close if high is None else high,
+        low=close if low is None else low,
         close=close,
         volume=volume,
         amount=close * volume,
@@ -80,9 +94,35 @@ def _rows() -> List[DailyBar]:
     ]
 
 
-def _center(store=None, **kwargs) -> InMemoryDataCenter:
+def _unit_factor_rows() -> List[AdjustFactorPoint]:
+    """全 1.0 的因子行 —— 默认夹具的那一份（理由见 `_center` 的 docstring）。"""
+    return [
+        AdjustFactorPoint(SYMBOL, VISIBLE, 1.0, source="fixture", data_version=VERSION),
+        AdjustFactorPoint(SYMBOL, ON_AS_OF, 1.0, source="fixture", data_version=VERSION),
+    ]
+
+
+_NOT_GIVEN = object()  # 区分"没传 factor_store"与"显式传 None"（后者是**一个真实形态**）
+
+
+def _center(store=None, factor_store=_NOT_GIVEN, **kwargs) -> InMemoryDataCenter:
+    """默认夹具是**接线完整**的 feed：`factor_store` 给一份全 1.0 的因子行。
+
+    为什么默认要给（2026-09-29 晚 · 复权价实施之后）：D6 的默认口径是 `HFQ`，而
+    **读取时现算复权价**意味着每一次 `get_bar`/`get_bars` 都要问得出这一天的因子。
+    一份 `factor_store=None` 的 HFQ feed 是**接线不完整**的 feed —— 拿它当"PIT 行为"
+    的样本，失败信息会指向复权（DATA_001），而用例想说的是越界（DATA_002）。
+
+    因子取 **1.0**：本文件这一组的判据是"看得见 / 看不见"，不是"乘了多少"。全 1.0 ⇒
+    复权对价格是**恒等**变换，`close == 9.0 / 10.0` 这些断言仍然在说它们本来要说的事。
+    "乘了多少"的判据在下面 `_feed_with_factors()` 那一组里，那里用的是非 1.0 的因子。
+    """
+    if factor_store is _NOT_GIVEN:
+        factor_store = InMemoryFactorStore(_unit_factor_rows())
     return InMemoryDataCenter(
-        store if store is not None else InMemoryBarStore(_rows()), **kwargs
+        store if store is not None else InMemoryBarStore(_rows()),
+        factor_store=factor_store,
+        **kwargs
     )
 
 
@@ -284,7 +324,12 @@ def test_default_data_version_is_the_active_one():
 # docstring 里：触发条件只认**产物**，而产物变了 —— 读侧不再恒返回 1.0。
 # 那条测试的收尾命令是「删掉这条测试」，所以这里是**删除**，不是改期望值。
 #
-# 但**缺口只关了一半**：复权价仍未实施（见 `quanauto/datacenter.py` 模块头）。
+# **订正（2026-09-29 晚 Ⅱ，复权价实施）**：上面这句「缺口只关了一半：复权价仍未实施」**已作废** ——
+# 复权已在**读取时现算**（`DbDataFeed._row_to_bar` 调 `_rescale_price`，见 `quanauto/datacenter.py`
+# 模块头与 `tests/test_backtest_db_feed.py` 里那一组读侧用例）。「缺口没关」本身仍然成立，
+# 只是开着的换成了另外三半：**分红**（就是下面 `get_dividend` 那条）、两个 ingestor 在 `quanauto/`
+# 内**零产品调用点**、`validate_frame` 对**复权帧**零判据。
+#
 # 另一半（`get_dividend` 仍恒 0.0）改由文件末尾那条单独的用例钉住 —— 同一条测试里
 # 钉着两件事，其中一件关闭时只能拆开，不能整条留着也不能整条删掉。
 
@@ -333,8 +378,11 @@ def test_hfq_without_a_factor_store_is_refused_not_defaulted():
     这条是「复权因子缺口」真正关闭的判据：在那之前这里返回 1.0，而报告里一个字都不提
     ⇒ 整段回测静默变成不复权。DC 契约 §2.4：「所有『找不到数据』的分支都必须
     **显式失败**，不允许返回空集或默认值」。
+    **显式**传 `factor_store=None`（2026-09-29 晚起，本文件的默认夹具是接线完整的）：
+    这条用例要的恰恰是"接线不完整"那个形态，所以它必须自己指名，不能再靠默认值 ——
+    否则 `_center()` 哪天换成别的默认，这条会**静默地**变成在测别的东西。
     """
-    feed = _feed()  # `_center()` 默认 factor_store=None
+    feed = _feed(factor_store=None)
     assert feed.adjust_type is AdjustType.HFQ, "默认口径是 HFQ（DC 契约 §2.3 行 265）"
     with pytest.raises(DataNotAvailableError) as excinfo:
         feed.get_adjustment_factor(SYMBOL, datetime(2026, 1, 5))
@@ -416,3 +464,129 @@ def test_known_gap_dividend_is_still_zero():
     """
     feed = _feed()
     assert feed.get_dividend(SYMBOL, datetime(2026, 1, 5)) == 0.0
+
+
+# ── 复权价读数：D6 第二句「读取时按 as_of_date 现算」（2026-09-29 晚 · I2 收口）──
+#
+# 上面那组钉的是"因子能被问出来"，这一组钉的是"这个因子真的乘到了价格上"。
+# 两件事必须分开测：`get_adjustment_factor()` 答对、而 `get_bar()` 不乘，就是"策略问到的
+# 因子"与"价格实际乘的因子"分歧 —— 报告里一个字都看不出来（曲线照样画得出来）。
+# 所以下面一律读 `get_bar` / `get_bars`，不去读因子接口。
+
+
+def test_hfq_bars_are_the_store_price_times_that_days_factor():
+    """`HFQ` ⇒ 每根 K 线的价格乘**那一天**的累计因子。
+
+    两个可见日的因子不同（1.10 / 1.25）⇒ 顺带证明它是**逐日**查的，不是拿第一个值
+    套满全程（那种实现只会错在第二根上）。
+    """
+    feed = _feed_with_factors()
+    first = feed.get_bar(SYMBOL, datetime(2026, 1, 2)).close
+    # 9.0 × 1.10：1.10 在二进制里不精确，所以只声称"到 1e-12 相对误差"；
+    # 下面那个 1.25 是 5/4（二进制精确）⇒ 可以直接判相等，不需要 approx。
+    assert first == pytest.approx(9.9, rel=1e-12)
+    assert feed.get_bar(SYMBOL, datetime(2026, 1, 5)).close == 12.5
+    assert first != 9.0, "乘了个 1.0 ⇒ 因子一行都没生效"
+
+
+def test_get_bars_returns_adjusted_prices_too():
+    """`get_bars` 走的是同一个 `_select` ⇒ 窗口读出来的**每一根**都复权。
+
+    只改 `get_bar` 的实现会让这条红：那时同一根 K 线在两个入口上是两个价。
+    """
+    feed = _feed_with_factors()
+    bars = feed.get_bars(SYMBOL, datetime(2026, 1, 1), datetime(2026, 1, 5))
+    assert [b.datetime.date() for b in bars] == [VISIBLE, ON_AS_OF]
+    assert bars[0].close == pytest.approx(9.9, rel=1e-12)
+    assert bars[1].close == 12.5
+
+
+def test_all_four_price_columns_are_scaled_not_just_close():
+    """开 / 高 / 低 / 收**四列**都乘 —— 夹具里四列相等时，"只乘了 close"抓不出来。"""
+    rows = [_row(SYMBOL, ON_AS_OF, close=10.0, open_=11.0, high=12.0, low=9.0)]
+    feed = _feed(
+        store=InMemoryBarStore(rows),
+        factor_store=InMemoryFactorStore(
+            [AdjustFactorPoint(SYMBOL, ON_AS_OF, 1.25, source="fixture", data_version=VERSION)]
+        ),
+    )
+    bar = feed.get_bar(SYMBOL, datetime(2026, 1, 5))
+    assert (bar.open, bar.high, bar.low, bar.close) == (13.75, 15.0, 11.25, 12.5)
+
+
+def test_volume_and_amount_are_not_scaled():
+    """`volume` / `amount` **刻意不乘因子** —— 这是一条决定，不是漏改（下面钉住它）。
+
+    乘上去有两个具体后果：① `volume` 是 `int`，`int(1000 / 1.25)` 虽然还是 800，
+    但任意小成交量（如 1 手）会被截成 0 ⇒ `is_symbol_available` 判它不可交易，
+    策略凭空少掉一天数据且不报错；② `amount` 是成交额（真金白银），乘一个无量纲因子
+    没有金融含义。
+    """
+    bar = _feed_with_factors().get_bar(SYMBOL, datetime(2026, 1, 5))
+    assert bar.volume == 1000
+    assert bar.amount == 10.0 * 1000, "`_row` 的 amount = close × volume，不该被 1.25 碰过"
+
+
+def test_none_bars_are_identity_and_never_touch_the_factor_store():
+    """`NONE` ⇒ 价格**原样**（逐位相同）、且一次都不问因子库。
+
+    "一次都不问"只能靠探针断言（`ExplodingFactorStore` 被调用就抛）—— "没查"没有返回
+    值可断言。而且这条必须在**价格路径**上测：因子接口不查、`_row_to_bar` 偷偷查，
+    是两种实现，报告里长得一模一样。
+    """
+    probe = ExplodingFactorStore()
+    feed = _center(factor_store=probe).as_of(AS_OF, adjust_type=AdjustType.NONE)
+    bar = feed.get_bar(SYMBOL, datetime(2026, 1, 5))
+    assert bar.close == 10.0, "不复权价必须逐位等于库里的值（不做一次 × 1.0，不留浮点尾巴）"
+    assert probe.queries == 0, "NONE 口径下价格路径还去查库 ⇒ 这条分支的存在意义就没了"
+
+
+def test_missing_factor_row_fails_the_read_path_instead_of_returning_the_raw_price():
+    """**有行情、没因子**的那一天 ⇒ 读它就抛 DATA_001，不是静默按不复权给价。
+
+    静默退化是最坏的形态：整段回测变成一个不复权的策略，而报告里没有任何异常 ——
+    所以这里刻意让 1/2 那根 K 线成为"行情在、因子不在"的一天（因子只给 1/5）。
+
+    同一条里带控制样本：有因子的那一天必须照常给价。只测"该炸的炸"会把一个
+    "任何一天都炸"的实现判成 PASS。
+    """
+    only_on_as_of = [
+        AdjustFactorPoint(SYMBOL, ON_AS_OF, 1.25, source="fixture", data_version=VERSION)
+    ]
+    feed = _feed(factor_store=InMemoryFactorStore(only_on_as_of))
+    with pytest.raises(DataNotAvailableError) as excinfo:
+        feed.get_bar(SYMBOL, datetime(2026, 1, 2))
+    assert excinfo.value.code == "DATA_001"
+    assert "factor_store" not in str(excinfo.value), (
+        "这是「库里没有这一行」，不能拿配置没接上那句话说事：%s" % excinfo.value
+    )
+    assert feed.get_bar(SYMBOL, datetime(2026, 1, 5)).close == 12.5
+
+
+def test_qfq_over_the_same_view_is_relative_to_the_last_visible_factor():
+    """`QFQ` ⇒ 该日因子 ÷ **视图末日**的因子（前复权的定义）。
+
+    钉四件事：① 基准日（= 视图末日）上 QFQ **逐位等于不复权价** —— "折算到最新那一天"
+    意味着最新那一天不动；② 更早的那天被折到不复权价**以下**（该日因子 < 基准因子）；
+    ③ 两个口径的数**不相等** —— `_qfq_base_factor` 返回 1.0 的实现等于把 QFQ 静默变成
+    HFQ，在这里必红；④ QFQ / HFQ 在任意两天的比值**相同** ⇒ 前复权是整条曲线的一次
+    整体缩放，不是逐点各自为政。
+    """
+    center = _center(
+        factor_store=InMemoryFactorStore(_factor_rows()), session_mode=SessionMode.LIVE
+    )
+    qfq = center.as_of(AS_OF, adjust_type=AdjustType.QFQ)
+    hfq = _feed_with_factors()
+    assert qfq.adjust_type is AdjustType.QFQ
+
+    qfq_last = qfq.get_bar(SYMBOL, datetime(2026, 1, 5)).close
+    assert qfq_last == 10.0, "基准日：库里的 close 就是 10.0，前复权不该动它"
+    hfq_last = hfq.get_bar(SYMBOL, datetime(2026, 1, 5)).close
+    assert hfq_last == 12.5, "同一天的后复权价"
+
+    qfq_first = qfq.get_bar(SYMBOL, datetime(2026, 1, 2)).close
+    hfq_first = hfq.get_bar(SYMBOL, datetime(2026, 1, 2)).close
+    assert qfq_first < 9.0, "更早的那天要折到不复权价以下（该日因子 < 基准因子）"
+    assert qfq_first == pytest.approx(9.9 / 1.25, rel=1e-12)
+    assert qfq_first != hfq_first, "QFQ 与 HFQ 在这个视图里不是同一个数"
+    assert qfq_first / qfq_last == pytest.approx(hfq_first / hfq_last, rel=1e-12)

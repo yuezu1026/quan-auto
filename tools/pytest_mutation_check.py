@@ -20,10 +20,12 @@
   * `MUTATION` 触发出来的失败必须是**断言/异常**，不能是 `ImportError`/语法错
     （收集阶段就炸掉，等于测试根本没跑）。
 
-**它不进 `run_all_gates.py` 的注册表**：每条样本要跑一次 pytest（2026-09-29 A6 收口后实测 **59 条样本：
-54 条变异 + 5 条 CONTROL + 0 条 ENV-LIMIT**（基线七套件 `passed=241`）；上一轮 I4 是 54 条 = 49 + 5 + 0
-（基线六套件 `passed=181`），I3 那轮是 43 条 = 39 + 4 + 0（基线五套件 `passed=145`），再往前 B20 后是
-32 条 = 29 + 3 + 0），慢，且它验证的对象是测试而不是产物契约。
+**它不进 `run_all_gates.py` 的注册表**：每条样本要跑一次 pytest（2026-09-29 复权价实施后实测 **66 条样本：
+61 条变异 + 5 条 CONTROL + 0 条 ENV-LIMIT**（基线七套件 `passed=249`；报告里那行 `mutations=61 caught=61
+control=5 env_limited=0` 的 `mutations` **只数变异、不含 CONTROL**，所以总数是 66 而不是 61 —— 别把两处
+加混了）；同一日的 A6 收口那轮是 59 条 = 54 + 5 + 0
+（基线七套件 `passed=241`），I4 是 54 条 = 49 + 5 + 0（基线六套件 `passed=181`），I3 那轮是 43 条 = 39 + 4 + 0
+（基线五套件 `passed=145`），再往前 B20 后是 32 条 = 29 + 3 + 0），慢，且它验证的对象是测试而不是产物契约。
 
 ⚠️ **2026-09-29 A6 那一批同时干了三件事，别只看新增的 5 条**：
   ① 新增 `A1`~`A5`（因子读语句的版本过滤与窗口 / 因子 upsert 退化成裸 INSERT / 标度 8 塌成日线那个 4 /
@@ -35,6 +37,23 @@
      教训与铁律 ⑤ 同族：**新加的产物会让原本有效的变异悄悄变成 no-op**；
   ③ 基线从六个套件加到七个（补 `tests/test_data_center_pit.py`）—— 一条变异期望落在哪个套件，
      那个套件就必须在基线里，否则「红」没有全绿垫底，什么都证明不了。
+
+⚠️ **2026-09-29 晚「复权价实施」那一批：新增 7 条 + 重锚 1 条，是同一批**：
+  ① **重锚 1 条**（`S11`）：`_row_to_bar` 的四个价格参数从裸 `_as_float(row.x)` 变成
+     `_rescale_price(_as_float(row.x), factor)` ⇒ 旧针**命中 0 次**（工具拦成 `HARNESS-FAIL`）。
+     一次真发生的"新产物把有效变异变成 no-op"（铁律⑤）。新针改成拿掉 `_as_float`：
+     因子 1.0 时 `_rescale_price` 走恒等快路径原样返回那个 `Decimal` ⇒ `float * Decimal` 当场撞。
+     顺带把本轮新的端到端控制组加进它的 `expect`（它走同一条读路径）。
+  ② **新增 `A6`~`A12`**，每题都对着一类真实漏法：`A6` 前复权基准被忽略（`QFQ` 退化成 `HFQ`）、
+     `A7` 连 `amount` 一起缩、`A8` `_rescale_price` 变恒等（整个复权功能不存在）、
+     `A9` **读路径**把缺因子静默退回 1.0（注意 `A5` 只管因子接口那一层，这条管价格路径）、
+     `A10` 只乘 `close`、`A11` 把 `volume` 也缩、`A12` bundle 里的因子钉成 1.0。
+  ③ **`A12` 全仓库只由一条用例抓住**（`test_adjusted_prices_reach_the_strategy_through_the_engine`）
+     —— 它改的是 bundle 的**声明**，价格仍然是对的，所以只有"策略拿它自己除一遍"的断言看得见。
+     这是「端到端控制组必须有牙」的具体含义：跨层缝上的错，单层断言天然看不见。
+  ④ `A10`/`A11` 这两条能成立，前提是夹具的四列价格**可分**（本轮给 `test_data_center_pit.py` 的
+     `_row()` 加了 `open_/high/low` 参数）—— 夹具里 `open==high==low==close` 时，
+     "只乘一列"与"全乘了"在数值上完全一样，变异会在**正确的实现上**保持沉默。
 手动跑，或改完测试后跑一次。
 
 **`env_limit`（一条变异的出口）**：有的缺陷在**当前环境里根本不可能被断言抓住**
@@ -404,22 +423,32 @@ MUTATIONS = [
     },
     # ── I2 S3 后半：引擎接 `as_of()` 产出的 feed（↔ tests/test_backtest_db_feed.py） ──
     {
+        # 2026-09-29 A6 收口**重新锚定**：`_row_to_bar` 现在写成
+        # `_rescale_price(_as_float(row.open), factor)` —— 原来那四行裸 `_as_float` 已经不在了，
+        # 旧针「命中 0 次」（工具的自 assert 会把它拦成 `HARNESS-FAIL`，不是 CAUGHT）。
+        # 语义一字未改：还是「`Decimal` 从存储层漏进引擎」。现在把 `_as_float` 拿掉，
+        # 因子为 1.0 时 `_rescale_price` 原样返回那个 `Decimal`（正是它那条恒等快路径）
+        # ⇒ 下游 `float * Decimal` 当场撞。
+        # 顺带把本轮新加的那条端到端控制组也算进来：它走的是同一条读路径。
         "tag": "S11-store-decimals-leak-into-the-engine",
         "tests": TESTS_DB_FEED,
         "path": "quanauto/datacenter.py",
         "old": (
-            "            open=_as_float(row.open),\n"
-            "            high=_as_float(row.high),\n"
-            "            low=_as_float(row.low),\n"
-            "            close=_as_float(row.close),\n"
+            "            open=_rescale_price(_as_float(row.open), factor),\n"
+            "            high=_rescale_price(_as_float(row.high), factor),\n"
+            "            low=_rescale_price(_as_float(row.low), factor),\n"
+            "            close=_rescale_price(_as_float(row.close), factor),\n"
         ),
         "new": (
-            "            open=row.open,\n"
-            "            high=row.high,\n"
-            "            low=row.low,\n"
-            "            close=row.close,\n"
+            "            open=_rescale_price(row.open, factor),\n"
+            "            high=_rescale_price(row.high, factor),\n"
+            "            low=_rescale_price(row.low, factor),\n"
+            "            close=_rescale_price(row.close, factor),\n"
         ),
-        "expect": ["test_engine_runs_end_to_end_over_a_store_backed_feed"],
+        "expect": [
+            "test_engine_runs_end_to_end_over_a_store_backed_feed",
+            "test_adjusted_prices_reach_the_strategy_through_the_engine",
+        ],
     },
     {
         "tag": "S12-data-version-ignores-the-declared-version",
@@ -468,6 +497,107 @@ MUTATIONS = [
             "test_hfq_without_a_factor_store_is_refused_not_defaulted",
             "test_hfq_with_a_store_that_has_no_row_for_that_day_is_refused",
         ],
+    },
+    {
+        "tag": "A6-qfq-base-factor-ignored",
+        "tests": TESTS_PIT,
+        "path": "quanauto/datacenter.py",
+        "old": (
+            "        factor = self._factor_for(symbol, when)\n"
+            "        if self.adjust_type is AdjustType.QFQ:\n"
+            "            return factor / self._qfq_base_factor(symbol)\n"
+            "        return factor"
+        ),
+        "new": (
+            "        factor = self._factor_for(symbol, when)\n"
+            "        if False:  # MUT：前复权退化成后复权\n"
+            "            return factor / self._qfq_base_factor(symbol)\n"
+            "        return factor"
+        ),
+        "expect": ["test_qfq_over_the_same_view_is_relative_to_the_last_visible_factor"],
+    },
+    {
+        # 「不缩放 volume/amount」是一条**决定**，不是漏改 —— 决定必须被钉住，
+        # 否则下次有人"顺手补全"就把它改掉了（乘上去会让小成交量被 int 截成 0）。
+        "tag": "A7-amount-scaled-along-with-the-price",
+        "tests": TESTS_PIT,
+        "path": "quanauto/datacenter.py",
+        "old": "            amount=_as_float(row.amount),\n",
+        "new": "            amount=_as_float(row.amount) * factor,  # MUT：连成交额一起缩放\n",
+        "expect": ["test_volume_and_amount_are_not_scaled"],
+    },
+    {
+        # `_rescale_price` 恒等 = 「复权价」这个功能整个不存在，而四列价格、报告、曲线
+        # 全都照常出得来 ⇒ 只能靠数值断言抓（`A5` 管的是**因子**，这条管的是**乘法**）。
+        "tag": "A8-rescale-price-becomes-identity",
+        "tests": TESTS_PIT,
+        "path": "quanauto/datacenter.py",
+        "old": (
+            "    if factor == 1.0:\n"
+            "        return value\n"
+            "    return value * factor"
+        ),
+        "new": "    return value  # MUT：复权价恒等于不复权价",
+        "expect": [
+            "test_hfq_bars_are_the_store_price_times_that_days_factor",
+            "test_get_bars_returns_adjusted_prices_too",
+        ],
+    },
+    {
+        # 「因子接口会拒」不等于「价格路径会拒」：这条把**读路径**那一支改成静默退回 1.0。
+        # 它是最容易留下的形态 —— A6 已经证明 `get_adjustment_factor()` 会抛，
+        # 于是很容易以为整条链都守住了，而真正被策略消费的是价格。
+        "tag": "A9-read-path-silently-defaults-a-missing-factor-to-one",
+        "tests": TESTS_PIT,
+        "path": "quanauto/datacenter.py",
+        "old": (
+            "        if not rows:\n"
+            "            raise DataNotAvailableError(\n"
+            '                "%s 在 %s 没有复权因子行（dc_adjust_factor，data_version=%s）⇒ DATA_001。"\n'
+            '                "D6/§2.4：找不到数据必须显式失败 —— 静默返回 1.0 会让这个标的的回测"\n'
+            '                "整体变成不复权，而报告里看不出任何异常" % (symbol, when, self.data_version)\n'
+            "            )\n"
+            "        return _as_float(rows[0].adjust_factor)"
+        ),
+        "new": (
+            "        if not rows:\n"
+            "            return 1.0  # MUT：读路径静默退回 1.0\n"
+            "        return _as_float(rows[0].adjust_factor)"
+        ),
+        "expect": ["test_missing_factor_row_fails_the_read_path_instead_of_returning_the_raw_price"],
+    },
+    {
+        # 只乘 `close`：夹具里四列相等时这条**抓不出来**（所以本轮先给 `_row()` 加了
+        # `open_/high/low` 参数，让四列可分）。“策略只看 close”并不能让它无罪 ——
+        # 引擎的 `previous_close` 退化成 `bar.open`、涨跌幅、以开盘撮合都会带错。
+        "tag": "A10-only-close-is-scaled",
+        "tests": TESTS_PIT,
+        "path": "quanauto/datacenter.py",
+        "old": "            open=_rescale_price(_as_float(row.open), factor),\n",
+        "new": "            open=_as_float(row.open),  # MUT：只复权 close\n",
+        "expect": ["test_all_four_price_columns_are_scaled_not_just_close"],
+    },
+    {
+        # 端到端那一侧的「股数被缩放」：`int()` 截断在于此只是数值不等，但在真实场景里
+        # 会把小成交量的一天变成 `volume == 0` ⇒ `is_symbol_available` 判它不可交易。
+        # 期望落在端到端文件，是为了让那条新控制组**自己有牙**（不靠 PIT 那边代它挨打）。
+        "tag": "A11-volume-scaled-along-with-the-price",
+        "tests": TESTS_DB_FEED,
+        "path": "quanauto/datacenter.py",
+        "old": "            volume=int(row.volume),\n",
+        "new": "            volume=int(row.volume / factor),  # MUT：把股数也缩放\n",
+        "expect": ["test_adjusted_prices_reach_the_strategy_through_the_engine"],
+    },
+    {
+        # bundle 里那句 `adjust_factor` 与实际乘上去的倍数必须是同一个数。
+        # 钉成 1.0 时**价格是对的**（乘法在 `_row_to_bar`），只有策略自己换算会出第二个答案
+        # —— 所以只有端到端那条"拿它除一遍"的断言看得见。
+        "tag": "A12-bundle-factor-not-from-the-feed",
+        "tests": TESTS_DB_FEED,
+        "path": "quanauto/engine.py",
+        "old": "        adjust_factor=feed.get_adjustment_factor(bar.symbol, bar.datetime),\n",
+        "new": "        adjust_factor=1.0,  # MUT：bundle 声明的因子与实际乘上去的不是同一个\n",
+        "expect": ["test_adjusted_prices_reach_the_strategy_through_the_engine"],
     },
     {
         "tag": "CONTROL-comment-only-db-feed",

@@ -75,6 +75,7 @@ FIRST_DAY = date(2026, 1, 5)
 VISIBLE = 35      # 落在 as_of 当天及之前：回测能看见的
 FUTURE = 10       # 只存在于库里：一次都不许进回测
 FLAT = 25         # 前 25 根横盘，之后直线拉起 ⇒ MA5 必然上穿 MA20，必然有成交
+FACTOR = 2.0      # 端到端控制组用的累计因子：故意非 1.0，否则"乘过没有"看不出来
 
 
 def _days():
@@ -130,21 +131,22 @@ def _bar_rows(version: str = VERSION):
     ]
 
 
-def _factors(version: str = VERSION, symbol: str = SYMBOL):
+def _factors(version: str = VERSION, symbol: str = SYMBOL, factor: float = 1.0):
     """`AdjustFactorPoint` 是**存储形状**，与 `DailyBar` 一样由存储层交出来。
 
-    因子恒 1.0 是**诚实**的：本夹具的 OHLC 本来就是不复权价（复权价仍未实现，
-    见 `quanauto/datacenter.py` 模块头的「已知缺口」）。这里必须给因子，不是因为
-    断言依赖它 —— `quanauto/engine.py` 里 `adjust_factor` 只出现在 `build_bundle`
-    那一行，**没有任何算术用它** —— 而是因为 A6 收口后，默认口径（`HFQ`）下
-    **没有因子存储就要抛** `DataNotAvailableError`（DATA_001）。
-    换句话说：这份夹具在满足 A6 的前置条件，不是在钉某个数值。
+    默认给 **1.0**（2026-09-29 晚起口径变了）：`DbDataFeed._row_to_bar` 现在**真的**会用
+    这个数去乘四列价格（D6 第二句「读取时现算」），所以 1.0 意味着"这次没有复权事件"，
+    读出来的 bar 与库里的值**逐位相同** —— 本文件那些"看根数、看版本、看有没有越界"的
+    断言就仍然在说它们本来要说的事。
+
+    要验"因子真的乘上去了"的用例把 `factor` 传成非 1.0（见
+    `test_adjusted_prices_reach_the_strategy_through_the_engine`）。
     """
     return [
         AdjustFactorPoint(
             symbol=symbol,
             trade_date=day,
-            adjust_factor=1.0,
+            adjust_factor=factor,
             source="fixture",
             data_version=version,
         )
@@ -192,19 +194,39 @@ class LyingBarStore(InMemoryBarStore):
         return sorted((row for row in self.rows if row.symbol == symbol), key=lambda row: row.trade_date)
 
 
+class RecordingMA_Cross(MA_Cross_Strategy):
+    """双均线 + 把**真正送到策略手上的** bundle 记下来。
+
+    观察点选在策略这一侧（不是 feed、不是引擎的内部字段）：从存储到策略之间的每一步
+    ——`Decimal → float`、乘因子、`build_bundle` 组装、事件派发——任何一步失效，都会在
+    这里表现为一个**数值不对**，而不是一句"内部字段看着还行"。
+
+    行为与父类完全一致（`on_data` 记一笔就交回去），所以它跑出来的成交与信号跟真跑
+    双均线一样。
+    """
+
+    def __init__(self, strategy_id, config):
+        super().__init__(strategy_id, config)
+        self.bundles = []
+
+    def on_data(self, data):
+        self.bundles.append(data)
+        return super().on_data(data)
+
+
 # ── 组装 ──────────────────────────────────────────────────────────────────
-def _center(store=None, version: str = VERSION) -> InMemoryDataCenter:
+def _center(store=None, version: str = VERSION, factor: float = 1.0) -> InMemoryDataCenter:
     if store is None:
         store = InMemoryBarStore(_bars(version))
     # `as_of()` 默认口径是 `HFQ`（DC 契约 §2.3 行 265：后复权 = 回测默认）⇒ 因子存储
-    # 是**必需的前置条件**，不是可选装饰：不给它，`get_adjustment_factor` 就会按
-    # §2.4「找不到数据必须显式失败」抛 DATA_001。一次性接在这里，`as_of()` 那条
-    # 链上的每个调用点就都满足了。
+    # 是**必需的前置条件**，不是可选装饰：不给它，读**任何一根** K 线都会按
+    # §2.4「找不到数据必须显式失败」抛 DATA_001（复权价在读取时现算，见下）。
+    # 一次性接在这里，`as_of()` 那条链上的每个调用点就都满足了。
     return InMemoryDataCenter(
         store,
         versions=(version,),
         active_version=version,
-        factor_store=InMemoryFactorStore(_factors(version)),
+        factor_store=InMemoryFactorStore(_factors(version, factor=factor)),
     )
 
 
@@ -224,7 +246,25 @@ def _config(symbol: str, start: datetime, end: datetime):
     return build_config(args, symbol, start, end)
 
 
-def _build_engine(feed, symbol: str = SYMBOL, start: datetime = None, end: datetime = None, seed: int = 7):
+def _strategy_config(symbol: str, capital: float) -> dict:
+    return {"short_window": 5, "long_window": 20, "capital": capital, "symbol": symbol}
+
+
+def _build_engine(
+    feed,
+    symbol: str = SYMBOL,
+    start: datetime = None,
+    end: datetime = None,
+    seed: int = 7,
+    strategy_factory=MA_Cross_Strategy,
+):
+    """`strategy_factory(strategy_id, config) -> Strategy`：默认双均线。
+
+    留这个口子是为了让"策略**真正收到**的 `MarketDataBundle`"可被观察
+    （`test_adjusted_prices_reach_the_strategy_through_the_engine` 用一只记录版
+    双均线）。口径一致：工厂拿到的 `config` 与默认实现**同一个**，所以记录版策略
+    收到的 bundle 就是真实策略会收到的那个。
+    """
     start = start if start is not None else datetime.combine(FIRST_DAY, time())
     end = end if end is not None else datetime.combine(AS_OF, time())
     config = _config(symbol, start, end)
@@ -239,10 +279,7 @@ def _build_engine(feed, symbol: str = SYMBOL, start: datetime = None, end: datet
         )
     )
     capital = config.initial_capital * 0.9
-    strategy = MA_Cross_Strategy(
-        STRATEGY_ID,
-        {"short_window": 5, "long_window": 20, "capital": capital, "symbol": symbol},
-    )
+    strategy = strategy_factory(STRATEGY_ID, _strategy_config(symbol, capital))
     engine.add_strategy(strategy, capital, dict(strategy.get_strategy_params()))
     return engine
 
@@ -321,6 +358,82 @@ def test_engine_runs_end_to_end_over_a_store_backed_feed():
     report = result.validation_report
     assert report is not None and report.is_valid
     assert report.row_count > 0, "0 笔样本的「没有未来函数」是空判据"
+
+
+def test_adjusted_prices_reach_the_strategy_through_the_engine():
+    """库里的不复权价 × 因子 ⇒ 策略收到的是复权价。这是本轮的**端到端控制组**。
+
+    为什么必须端到端：`tests/test_data_center_pit.py` 的读侧用例证明 `get_bar` 会乘
+    因子，本文件上面那条证明引擎能跑 —— **两边各自绿只说明各自自洽**，说明不了
+    "乘过之后的价格真的到了策略手上"。中间任何一步把 bar 换回未复权（或只把
+    `adjust_factor` 写进 bundle 而忘了乘价），都只会在这里露出来。
+
+    因子取 2.0（不是 1.0），这样"乘过"与"没乘"一眼可分 —— 1.0 的夹具会让这条用例
+    对"乘法没接上"完全免疫。
+
+    钉五件事：
+    ① 逐根：`close` = 库里那根 × 因子，且**不等于**库里的原值（未复权值不许漏出来）；
+    ② `open/high/low` 也乘了 —— 只乘 `close` 是最容易漏的一种；
+    ③ 策略真的被喂了 `VISIBLE` 根（防止"一条断言都在描述一个没跑起来的策略"）；
+    ④ `previous_close` 是**前一根复权后**的 close，第一根退到**复权后**的 open；
+    ⑤ bundle 里那句 `adjust_factor` 等于**实际乘上去**的那个数 —— 策略照它自己算一遍
+       不该算出第二个答案；`volume`/`amount` **故意没乘**（B21 只谈价格口径）。
+
+    变异归属（`tools/pytest_mutation_check.py`，2026-09-29 晚按实测报告回填）：本文件侧的
+    五条是 `S11-store-decimals-leak-into-the-engine`（拿掉 `_as_float`，`Decimal` 漏进引擎）、
+    `A11-volume-scaled-along-with-the-price`（把股数也乘了）、
+    `A12-bundle-factor-not-from-the-feed`（bundle 里的因子钉成 1.0）—— **`A12` 全仓库只由
+    这一条用例抓住**，所以"这里红"与"复权真的断了"是同一件事；
+    数据层那侧的 `A6-qfq-base-factor-ignored` / `A8-rescale-price-becomes-identity` 也打红本条
+    （它们改的是价格本身，端到端自然跟着红）。只顾 `close` 的那条（`A10`）由
+    `tests/test_data_center_pit.py` 的 `test_all_four_price_columns_are_scaled_not_just_close` 负责。
+    """
+    feed = _feed(_center(factor=FACTOR))
+    holder = []
+
+    def factory(strategy_id, config):
+        strategy = RecordingMA_Cross(strategy_id, config)
+        holder.append(strategy)
+        return strategy
+
+    result = _build_engine(feed, strategy_factory=factory).run()
+    assert result.status is BacktestStatus.SUCCESS
+    assert len(holder) == 1, "策略工厂没被调用 ⇒ 下面每一条都在描述一个没跑起来的策略"
+    bundles = holder[0].bundles
+    assert len(bundles) == VISIBLE, (
+        "as_of 之内共 %d 根，策略收到 %d 根" % (VISIBLE, len(bundles))
+    )
+
+    for index, (bundle, day) in enumerate(zip(bundles, _days())):
+        raw = _close(index)
+        assert bundle.symbol == SYMBOL and bundle.datetime.date() == day, (
+            "第 %d 根的顺序/标的不对：%s" % (index, bundle.datetime)
+        )
+        assert bundle.close == pytest.approx(raw * FACTOR), (
+            "第 %d 根没有乘上因子：库里 %.4f ⇒ 策略该看到 %.4f，实际 %.4f"
+            % (index, raw, raw * FACTOR, bundle.close)
+        )
+        assert bundle.close != raw, "第 %d 根还是库里那个未复权价 ⇒ 复权没生效" % index
+
+    for name in ("open", "high", "low", "close"):
+        assert getattr(bundles[-1], name) == pytest.approx(_close(VISIBLE - 1) * FACTOR), (
+            "四列价格都要乘因子，%s 没乘" % name
+        )
+
+    assert bundles[0].previous_close == pytest.approx(_close(0) * FACTOR), (
+        "第一根没有前收盘 ⇒ 契约口径退到 bar.open，而且必须是**复权后**的 open"
+    )
+    assert bundles[1].previous_close == bundles[0].close, (
+        "第二根的 previous_close 就该是第一根复权后的 close（引擎递的是它自己的上一根）"
+    )
+
+    last = bundles[-1]
+    assert last.adjust_factor == pytest.approx(FACTOR)
+    assert last.close / last.adjust_factor == pytest.approx(_close(VISIBLE - 1)), (
+        "bundle 声明的因子与实际乘上去的数必须是同一个，否则策略自己算一遍会有第二个答案"
+    )
+    assert last.volume == 1000000, "成交量不该被乘"
+    assert last.amount == pytest.approx(_close(VISIBLE - 1) * 1000000), "成交额不该被乘"
 
 
 def test_the_same_snapshot_twice_gives_the_same_deterministic_section():

@@ -3,8 +3,11 @@
 """data-center-pit -- PIT / `as_of` boundary gate (tier A).
 
 This gate **never runs the code and never runs pytest**. `tests/test_data_center_pit.py`
-proves "today's 18 cases pass". This gate proves a different thing: that the structure
-cannot *silently lose* the two PIT layers when somebody adds a method next month.
+proves "the PIT cases it contains pass". (The count of those cases is deliberately NOT
+written here: it went 18 -> 30 in one round, and nothing in the repository would have
+caught a stale 18 -- the same family of rot as GATE-COUNT. Take the number from a run.)
+This gate proves a different thing: that the structure cannot *silently lose* the two PIT
+layers when somebody adds a method next month.
 
 Why a second, structural check is needed at all:
 
@@ -15,9 +18,9 @@ Why a second, structural check is needed at all:
   `record_access` call. Existing pytest cases cannot see either degeneration. Only an
   AST check can.
 
-Detectors (each fires independently; `--selftest` has one MUT sample per detector, a second
-P3 sample for the factor seam, one "extraction is empty" sample, and one clean synthetic
-sample):
+Detectors (each fires independently; `--selftest` has one MUT sample per detector, **three**
+P3 samples -- one per store seam plus one that keeps a `record_access` alive for the wrong
+field -- one "extraction is empty" sample, and one clean synthetic sample):
 
   P1  STRUCT-NO-AS-OF-ON-FEED
       No *query* method of `DataFeed` or a subclass may declare a parameter named
@@ -28,9 +31,17 @@ sample):
   P2  SOLE-PRODUCER
       Only a class deriving from `DataCenter` may instantiate a `DataFeed` subclass.
   P3  GUARD-WIRED
-      Every method that transitively reads `store.select_*` must also transitively reach
-      `record_access` (layer 2 really is wired). The store seams are enumerated in
-      `STORE_READERS`, not matched by prefix -- see that constant.
+      Every method that transitively reads a store seam must also transitively reach a
+      `record_access` call **recording that seam's field** (layer 2 really is wired for
+      the rows the read actually returns). Seams and their fields are enumerated in
+      `STORE_READERS` / `SEAM_FIELDS`, never matched by prefix -- see those constants.
+      Phase one asked the weaker question "can it reach *some* `record_access`", and the
+      复权因子 read path removed that detector's teeth the moment `_row_to_bar` began
+      reading the factor store: the bar read path then still reached a guard -- the
+      *factor* seam's -- so deleting the bar seam's own guard made a real regression
+      (K-line rows skipping layer 2) print "0 issue(s) PASS", and the sample that was
+      supposed to catch it reported MISSED. A detector that answers the weaker question
+      is not a detector for the stronger claim.
   P4  EXPLICIT-WINDOW-GUARDED
       Every *public* method that declares `datetime`/`start`/`end` must transitively call
       `self._require_visible` (layer 1 really is wired). Private helpers are out of scope
@@ -104,7 +115,8 @@ DATE_PARAMS = ('datetime', 'start', 'end')
 # An **explicit enumeration**, deliberately not a prefix match on `select_*`: a prefix rule
 # would silently enlist every future `select_something` (including ones that do not read a
 # store at all) and P3 would start reporting them as "layer 2 unwired". Listing them means
-# adding a store seam is a two-line change with a sample attached (see NEG3b).
+# adding a store seam is a three-line change with a sample attached (see `SEAM_FIELDS` and
+# NEG3b / NEG3c).
 #
 # `select_factors` was added 2026-09-29 together with the 复权因子 read path. Missing it was
 # not harmless: `DbDataFeed._select_factors` reads `factor_store.select_factors` and, with the
@@ -113,9 +125,34 @@ DATE_PARAMS = ('datetime', 'start', 'end')
 # seam reports "nothing to guard".
 STORE_READERS = ('select_bars', 'select_symbols', 'select_factors')
 
+# Every store seam => the `field` values that count as "this seam's guard". Two spellings
+# per seam on purpose: the real modules pass a **constant** (`BAR_FIELD`), while the
+# synthetic CLEAN_FEED below passes the **literal** it expands to (`"bar"`) -- both are the
+# same guard, and a rule that accepted only one spelling would report the other as missing.
+#
+# Why this table has to exist at all (2026-09-29 晚 Ⅱ, and it is the interesting part):
+# P3 used to ask "is *a* `record_access` reachable from this read path?". That was enough
+# while the bar path and the factor path were disjoint. Wiring 复权价 made `_row_to_bar`
+# read the factor store (`_row_to_bar` -> `_price_scale` -> `_factor_for` ->
+# `_select_factors`), so now **one** surviving guard satisfies the question for **both**
+# seams -- and `NEG3-guard-unwired` (delete the bar seam's `record_access`) silently turned
+# from "caught" into "MISSED" while the detector kept printing `0 issue(s)`. The repair is
+# to ask the question the detector actually means: reach a guard **for this seam's rows**.
+#
+# Adding a seam here is a three-line change (STORE_READERS + SEAM_FIELDS + a sample).
+# `select_symbols` maps to the bar field because a symbol list is only ever a prelude to
+# reading those symbols' bars (`get_available_symbols` / `get_trading_calendar` /
+# `get_market_status` all pipe it into `_select`): the rows that must be guarded are the bar
+# rows, and that is exactly what those three methods reach.
+SEAM_FIELDS = {
+    'select_bars': ('BAR_FIELD', 'bar'),
+    'select_symbols': ('BAR_FIELD', 'bar'),
+    'select_factors': ('FACTOR_FIELD', 'adjust_factor'),
+}
+
 STAT_KEYS = ('scanned_modules', 'feed_classes', 'pit_feeds', 'unbounded_feeds',
              'feed_methods', 'feed_instantiations', 'store_touchers', 'date_takers',
-             'as_of_impls', 'guard_raises')
+             'as_of_impls', 'guard_raises', 'seam_pairs', 'guard_field_unknown')
 
 
 def read_text(path):
@@ -201,6 +238,36 @@ def _self_calls(fn):
         if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
                 and isinstance(n.func.value, ast.Name) and n.func.value.id == 'self'):
             out.add(n.func.attr)
+    return out
+
+
+def _field_name(node):
+    """The name of a `record_access(..., field)` third argument, as written.
+
+    `BAR_FIELD` -> 'BAR_FIELD' (the constant, matched by spelling), `"bar"` -> 'bar' (the
+    literal). Anything else -- a variable, a call, an f-string -- returns None, and the
+    caller treats None as "satisfies every field". That direction is deliberate: guessing
+    "not guarded" from an argument we merely could not read would report a **correct**
+    guard as missing, and a detector that cries wolf is a detector somebody switches off.
+    The count of such calls is printed (`guard_field_unknown=`), so the blind spot is
+    visible rather than silent.
+    """
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return _dotted_name(node)
+
+
+def _guard_fields(fn):
+    """The set of fields named by every `record_access(...)` call inside the function.
+
+    `None` is the "argument present but not statically nameable" sentinel (see
+    `_field_name`); a call with fewer than three arguments is treated the same way.
+    """
+    out = set()
+    for n in ast.walk(fn):
+        if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                and n.func.attr == 'record_access'):
+            out.add(_field_name(n.args[2]) if len(n.args) > 2 else None)
     return out
 
 
@@ -390,22 +457,36 @@ def run_checks(feed_text, center_text, extra_texts):
     # ── P3 / P4: both layers must be reachable from every read path ───────────
     store_touchers = 0
     date_takers = 0
+    seam_pairs = 0
+    guard_field_unknown = 0
     for cls in pit_feeds:
         methods = model[cls]['methods']
         calls = {m: _attr_calls(fn) for m, fn in methods.items()}
         edges = {m: _self_calls(fn) for m, fn in methods.items()}
-        guarded = _closure({m for m, c in calls.items() if 'record_access' in c}, edges)
         visible = _closure({m for m, c in calls.items() if '_require_visible' in c}, edges)
         readers_direct = {m for m, c in calls.items() if c & set(STORE_READERS)}
-        readers = _closure(readers_direct, edges)
         store_touchers += len(readers_direct)
 
-        for mname in sorted(readers - guarded):
-            issues.append(('P3', '%s.%s reads the store (%s) yet cannot reach '
-                                 'record_access -- layer 2 is not wired: whatever the store '
-                                 'over-returns goes straight into the backtest'
-                                 % (cls, mname,
-                                    ', '.join(sorted(calls[mname] & set(STORE_READERS))))))
+        # Per-FIELD reachability, never "reaches any record_access": see SEAM_FIELDS.
+        fields = {m: _guard_fields(fn) for m, fn in methods.items()}
+        guard_field_unknown += sum(1 for fs in fields.values() if None in fs)
+        guarded = {}
+        for wanted in set(SEAM_FIELDS.values()):
+            seeds = {m for m, fs in fields.items() if fs & (set(wanted) | {None})}
+            guarded[wanted] = _closure(seeds, edges)
+
+        for seam in sorted(SEAM_FIELDS):
+            want = SEAM_FIELDS[seam]
+            readers = _closure({m for m, c in calls.items() if seam in c}, edges)
+            for mname in sorted(readers):
+                seam_pairs += 1
+                if mname in guarded[want]:
+                    continue
+                issues.append(('P3', '%s.%s reaches %s yet cannot reach a record_access '
+                                     'recording %s -- layer 2 is not wired for that seam, '
+                                     'so whatever the store over-returns on it goes '
+                                     'straight into the backtest'
+                                     % (cls, mname, seam, '/'.join(want))))
 
         for mname, fn in sorted(methods.items()):
             if mname.startswith('_') or _is_abstract(fn):
@@ -421,6 +502,8 @@ def run_checks(feed_text, center_text, extra_texts):
                                      % (cls, mname)))
     stats['store_touchers'] = store_touchers
     stats['date_takers'] = date_takers
+    stats['seam_pairs'] = seam_pairs
+    stats['guard_field_unknown'] = guard_field_unknown
 
     # ── P5 / P6 / P7: D6 and D7 live behind the backtest branch ───────────────
     as_of_impls = 0
@@ -482,6 +565,7 @@ def run_checks(feed_text, center_text, extra_texts):
         ('date_takers', 'public methods taking a date'),
         ('as_of_impls', 'as_of implementations'),
         ('guard_raises', 'raises inside record_access'),
+        ('seam_pairs', 'P3 (method, store seam) pairs inspected'),
     )
     for key, what in required:
         if not stats.get(key):
@@ -667,6 +751,41 @@ def selftest():
     else:
         scenario('NEG3b-factor-guard-unwired', feed, bad, 'P3', extras)
 
+    # P3, wrong field: this sample is why P3 asks "records WHICH field" instead of
+    # "records something". `_select_factors` keeps its `record_access` call -- only the
+    # field argument changes, FACTOR_FIELD -> BAR_FIELD -- so the *older*, weaker question
+    # ("does this path reach **a** record_access?") is answered YES for the factor path by
+    # the bar seam's own guard, and the gate prints `0 issue(s)` while a store that
+    # over-returns factor rows sails straight into the backtest. A live `record_access`
+    # naming the wrong field is not a guard for this field. Seen live on 2026-09-29:
+    # implementing 复权价 ("compute the adjustment while reading") added exactly this second
+    # call on the factor seam, and NEG3-guard-unwired -- which had been caught -- went to
+    # MISSED. The detector's question was the thing that was too weak, so the question got
+    # tightened and this sample was added to keep it tightened.
+    bad = _mutate(center,
+                  '            self.pit_guard.record_access(row.symbol, row.trade_date, '
+                  'FACTOR_FIELD)\n',
+                  '            self.pit_guard.record_access(row.symbol, row.trade_date, '
+                  'BAR_FIELD)  # MUT: right call, wrong field\n',
+                  'NEG3c-factor-guard-wrong-field')
+    if bad is None:
+        ok = False
+    else:
+        # The sample's whole point is that the guard CALL survives -- only the field it
+        # names changed. If a future edit turns this into "delete the call", the sample
+        # becomes a duplicate of NEG3b and stops proving anything about field pairing,
+        # while still printing OK. So the property is asserted, not assumed.
+        live = bad.count('record_access')
+        if live != center.count('record_access'):
+            print('  [NEG3c-factor-guard-wrong-field] HARNESS-FAIL: record_access calls %d -> '
+                  '%d -- this sample must keep every guard call and change only the field '
+                  'one of them records' % (center.count('record_access'), live))
+            ok = False
+        else:
+            print('  [NEG3c-factor-guard-wrong-field] keeps all %d record_access call(s); '
+                  'only the field changed' % live)
+        scenario('NEG3c-factor-guard-wrong-field', feed, bad, 'P3', extras)
+
     # P4: layer 1 unwired on one public method.
     bad = _mutate(center,
                   'when = self._require_visible(datetime, "DbDataFeed.get_market_status")',
@@ -775,9 +894,10 @@ def main():
     print('verdict: %s (%d issue(s))' % ('PASS' if not issues else 'FAIL', len(issues)))
     print('NOTE: this gate parses the source, it never executes it. Passing it does NOT '
           'mean the PIT guard rejects at runtime -- that is what tests/test_data_center_pit.py '
-          'shows (18 cases, including the I2 trigger test where a store ignores the window '
-          'and record_access must refuse). This gate proves the opposite direction: that '
-          'the two layers cannot be dropped silently when a method is added later.')
+          'shows (it includes the I2 trigger test where a store ignores the window and '
+          'record_access must refuse; take the number of cases from a run, not from here). '
+          'This gate proves the opposite direction: that the two layers cannot be dropped '
+          'silently when a method is added later.')
     return 0 if not issues else 1
 
 
