@@ -4,23 +4,23 @@
 CI 自 2026-09-24 起在 GitHub 上真跑（`origin` 公开；首次真跑判红、修复后第二次 success）；
 下面这份是**本地等价**：它给的是本机解释器的口径，和 GitHub 上那次真跑不能互相替代。
 
-generated: 2026-09-29 13:55:13
+generated: 2026-09-29 18:24:52
 python:    D:\project-quan\quan-auto\.venv\Scripts\python.exe  (.venv/Scripts/python.exe)
 version:   Python 3.13.9
-commit:    5c58bad6f4cff0af2b737be5409199854afa3a61
+commit:    6a612ee610823b642f95b36354581594da602b75
 dirty:     0 项未提交改动
-pycache:   启动时清掉 0 个 __pycache__（陈旧字节码会让结论与磁盘源码无关）
+pycache:   启动时清掉 3 个 __pycache__（陈旧字节码会让结论与磁盘源码无关）
 
 ## 1. python -m pytest -q
 exit: 0
-  | ........................................................................ [ 16%]
-  | ........................................................................ [ 33%]
-  | ........................................................................ [ 49%]
-  | ........................................................................ [ 66%]
-  | ........................................................................ [ 82%]
-  | ........................................................................ [ 99%]
-  | ....                                                                     [100%]
-  | 436 passed in 23.70s
+  | ........................................................................ [ 15%]
+  | ........................................................................ [ 31%]
+  | ........................................................................ [ 47%]
+  | ........................................................................ [ 63%]
+  | ........................................................................ [ 78%]
+  | ........................................................................ [ 94%]
+  | ........................                                                 [100%]
+  | 456 passed in 26.08s
 
 ## 2. 红→绿往返（I0 触发测试的证据：两个关键的东西各红一次）
 
@@ -31,13 +31,13 @@ exit: 0
   红: pytest exit=1
     | =========================== short test summary info ===========================
     | FAILED tests/test_skeleton.py::test_version_matches_pyproject - AssertionErro...
-    | 1 failed, 435 passed in 23.89s
+    | 1 failed, 455 passed in 26.40s
   还原: 与原始字节逐字节一致
   解释器读回: 还原后 0.1.0
   绿: pytest exit=0
-    | ........................................................................ [ 99%]
-    | ....                                                                     [100%]
-    | 436 passed in 23.66s
+    | ........................................................................ [ 94%]
+    | ........................                                                 [100%]
+    | 456 passed in 25.37s
 
 ### ci-drops-gates -- 把 CI 里那一行门禁命令换成单跑一个子门禁
   靶子: .github/workflows/ci.yml  'python tools/run_all_gates.py' -> 'python tools/verify_risk_config.py'
@@ -54,7 +54,7 @@ exit: 0
 
 ## 3. python tools/run_all_gates.py
 exit: 0
-  | report: tools\gates-report.txt (260 lines) -- read this instead of re-running the gates
+  | report: tools\gates-report.txt (262 lines) -- read this instead of re-running the gates
   | verdict: PASS (17/17 gate(s) green)
   | NOTE: these 17 gates execute no SQL -- they prove the constraints are still WRITTEN, not that they REJECT.
   | NOTE: the runtime evidence lives in tools\sql-smoke-report.txt (produced by tools\run_sql_smoke.py).
