@@ -1766,8 +1766,9 @@ def test_every_concrete_adapter_can_be_constructed(adapter) -> None:
 
 # ── `normalize_adjust_factor`：源帧 → 标准帧（列对、类型对）────────────────────
 # 这一层只保证「列对、类型对」。**值域（因子必须 > 0）不在这里** —— 那是
-# `dc_adjust_factor` 的 `ck_dc_factor_positive`（附录 B21.5），而 `validate_frame`
-# 目前对复权因子**还没有判据**（附录 B21.6）。三句话是三件事，别混着说。
+# `dc_adjust_factor` 的 `ck_dc_factor_positive`（附录 B21.5），执行点是
+# `validate_frame` 的 `factor-positive` 判据（附录 B21.6，2026-09-29 晩 Ⅳ 接上）。
+# 三句话是三件事，别混着说。
 
 
 def _adj_factor_frame(*factors, ts_code: str = '600000.SH') -> pd.DataFrame:
@@ -1868,30 +1869,79 @@ def test_normalize_adjust_factor_passes_positivity_through_to_the_next_layer() -
     assert frame['adjust_factor'].tolist() == [0.0, -1.0]
 
 
-def test_validate_frame_refuses_the_adjust_factor_schema_loudly() -> None:
-    """`validate_frame` 对复权因子帧**必须拒**、而且要说**真原因**。
+def test_validate_frame_judges_the_adjust_factor_schema() -> None:
+    """复权因子帧现在**真的被判过**：认得出 schema，干净帧通过。
 
-    2026-09-29 实测（接 tushare 通道时发现）：这一帧原先掉进通用分支，报出来的是
-    「非标准列 `adjust_factor`：源字段名不得泄漏到输出列」+「列集合不匹配任何标准
-    schema」——**两句都是误诊**。`adjust_factor` 是契约 §3.2 里写明的标准列，而
-    「不匹配任何 schema」的原因是**第四张 schema 的判据还没写**。误诊会让人去查源
-    接口，而不是来看这张未收口清单。
+    本条原名 `test_validate_frame_refuses_the_adjust_factor_schema_loudly`
+    （2026-09-29 晩 Ⅳ 判据接上前，它钉的是「必须响亮地拒绝」）。判据接上后那个名字
+    陈述的事已经不存在了 —— 但**它盯的两个方向一点没变**，改到这里继续盯：
+    ① 不许悄悄把坏数据判成 `is_valid=True`（见下面两条负样本）；
+    ② 不许退回那两句误诊。第二句的背景：2026-09-29 实测（接 tushare 通道时发现）
+    这一帧原先掉进通用分支，报出来的是「非标准列 `adjust_factor`：源字段名不得泄漏
+    到输出列」+「列集合不匹配任何标准 schema」——**两句都是误诊**，读的人会跑去查
+    源接口，而不是来看那张未收口清单。
 
-    这一条同时钉住两个方向：① 别悄悄变成 `is_valid=True`（那才是真的假绿）；
-    ② 也别再退回那两句误诊。
+    改名而不是删掉：它盯的那件事（别把这一帧判错）**还在**，只是判定方式从
+    「响亮地拒绝」变成了「真的判过」。
     """
     report = validate_frame(normalize_adjust_factor(_adj_factor_frame(1.0),
                                                     TUSHARE_ADJ_FACTOR))
 
-    assert report.is_valid is False, '判据没接上就不构成通过'
+    assert report.is_valid is True, report.errors
+    assert report.errors == [], report.errors
+
+    stray = normalize_adjust_factor(_adj_factor_frame(1.0), TUSHARE_ADJ_FACTOR)
+    stray['symbol_typo'] = '600000.SH'
+    stray_report = validate_frame(stray)
+    joined = ' '.join(stray_report.errors)
+    assert '非标准列 symbol_typo' in joined, stray_report.errors
+    assert 'adjust_factor' not in joined, (
+        '误诊：`adjust_factor` 是契约 §3.2 的标准列 —— 它不该出现在「非标准列」里')
+    assert '不匹配任何标准 schema' not in joined, (
+        '误诊：复权因子是第四张 schema —— 判据接上后它必须被认出来')
+
+
+def test_validate_rejects_a_non_positive_adjust_factor() -> None:
+    """`adjust_factor <= 0`（含 NaN）⇒ 拒，且证据点出对应的是哪条库约束。
+
+    **一个值一个样本**：判据只报**第一条**违规，把 0 / 负数 / NaN 塞进同一帧里
+    等于只在测第一个。三种值各调一次 `validate_frame`。
+
+    断言里必须出现 `ck_dc_factor_positive`：这条判据的全部意义就是「适配器拦下的」
+    与「库会拒掉的」是**同一条规则**（契约 §3.9）。只断言「有个错误」的话，
+    判据可以换成任何别的东西而用例照样绿。
+    """
+    for value in (0.0, -1.0, float('nan')):
+        frame = normalize_adjust_factor(_adj_factor_frame(value), TUSHARE_ADJ_FACTOR)
+        report = validate_frame(frame)
+
+        joined = ' '.join(report.errors)
+        assert report.is_valid is False, (value, report.errors)
+        assert 'ck_dc_factor_positive' in joined, (value, report.errors)
+        assert 'adjust_factor' in joined, (value, report.errors)
+
+
+def test_validate_rejects_duplicate_adjust_factor_primary_key() -> None:
+    """同一 `(symbol, trade_date)` 出现两次 ⇒ 拒（帧级自然键重复）。
+
+    DDL 的主键是**三元组** `(symbol, trade_date, data_version)`，而 `data_version`
+    由写入侧盖戳、源帧里根本没有这一列 ⇒ 帧级能判的只有前两列；这与 `_PRIMARY_KEYS`
+    对 `pk_dc_daily_bar` / `pk_dc_financial_report` 的处理是同一个约定。
+    两行同自然键落进**同一批**是重复（后一行会覆盖前一行，且覆盖哪行取决于插入
+    顺序），不是历史。
+    """
+    frame = normalize_adjust_factor(_adj_factor_frame(1.0, 1.0), TUSHARE_ADJ_FACTOR)
+    frame.loc[1, 'trade_date'] = frame.loc[0, 'trade_date']
+
+    report = validate_frame(frame)
+
     joined = ' '.join(report.errors)
-    assert 'B21.6' in joined, '要指到那张未收口清单，读者才知道下一步是什么'
-    assert '尚未实现' in joined
-    assert '泄漏' not in joined, '这是误诊：`adjust_factor` 是契约标准列'
+    assert report.is_valid is False, report.errors
+    assert 'factor' in joined and '重复' in joined, report.errors
 
 
 def test_validate_frame_still_reports_a_stray_column_on_an_adjust_factor_frame() -> None:
-    """复权因子帧上多一列 ⇒ 仍然报出来（专支不是「一律只报未实现」的挡箭牌）。"""
+    """复权因子帧上多一列 ⇒ 仍然报出来（新判据不是「一律只报值域」的挡箭牌）。"""
     frame = normalize_adjust_factor(_adj_factor_frame(1.0), TUSHARE_ADJ_FACTOR)
     frame['adj_factor'] = 1.0  # 源字段名，模拟一次泄漏
 
@@ -1902,24 +1952,27 @@ def test_validate_frame_still_reports_a_stray_column_on_an_adjust_factor_frame()
 
 
 def test_the_adapter_validate_delegates_to_validate_frame_for_this_schema() -> None:
-    """类上的 `validate()` 真的走到那一支（不只是「函数对了」）。
+    """类上的 `validate()` 真的走到 `validate_frame`（不只是「函数对了」）。
 
     契约 §3.2 的 `validate` 是适配器的**能力**之一：`DataCenter` 按它的结论决定写不写。
     只测裸函数、不测类，就可能出现「函数修好了、类还走老路」。
+
+    样本用**违规**帧而不是干净帧：干净帧在「委托丢了、返回一个默认全绿的
+    `ValidationReport`」那种假绿下也会通过 —— 那正是这条用例要拦的东西。
     """
-    frame = normalize_adjust_factor(_adj_factor_frame(1.0), TUSHARE_ADJ_FACTOR)
+    frame = normalize_adjust_factor(_adj_factor_frame(0.0), TUSHARE_ADJ_FACTOR)
 
     report = TushareAdapter().validate(frame)
 
     assert report.is_valid is False
-    assert any('B21.6' in error for error in report.errors), report.errors
+    assert any('ck_dc_factor_positive' in error for error in report.errors), report.errors
 
 
-def test_validate_frame_still_wins_the_empty_check_over_the_adjust_factor_branch() -> None:
-    """空帧仍然走「帧为空」那条（更具体），不被复权因子专支盖住。
+def test_validate_frame_still_wins_the_empty_check_over_the_schema_branch() -> None:
+    """空帧仍然走「帧为空」那条（更具体），不被任何 schema 分支盖住。
 
-    顺序是有意的：空帧的判据对**所有** schema 都成立，而「判据未实现」只对复权因子
-    成立；先报后者会让人以为「有数据就能过」。
+    顺序是有意的：空帧的判据对**所有** schema 都成立，而值域 / 主键只在有行时才
+    谈得上；先报后者会让人以为「有数据就能过」，或者反过来以为空帧只是「值域违规」。
     """
     empty = TushareAdapter().fetch_adjust_factor([], date(2024, 1, 2), date(2024, 1, 10))
 

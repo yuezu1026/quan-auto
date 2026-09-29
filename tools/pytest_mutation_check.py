@@ -1,7 +1,8 @@
 """变异检查：把 quanauto 的实现逐处改坏，确认对应套件真的会红。
 
-基线跑七个套件（即下面那些常量）：
+基线跑八个套件（即下面那些常量）：
   * `tests/test_backtest_slice.py`（I1 回测切片）
+  * `tests/test_data_center_adapter.py`（I2 S2 适配器，含复权帧的 `validate_frame` 判据）
   * `tests/test_data_center_store.py`（I2 S3 落库侧，含 A6 的因子读写）
   * `tests/test_backtest_db_feed.py`（I2 库喂数据的回测侧）
   * `tests/test_data_center_pit.py`（I2 A6：复权因子的读数侧与 PIT 守卫）
@@ -20,10 +21,11 @@
   * `MUTATION` 触发出来的失败必须是**断言/异常**，不能是 `ImportError`/语法错
     （收集阶段就炸掉，等于测试根本没跑）。
 
-**它不进 `run_all_gates.py` 的注册表**：每条样本要跑一次 pytest（2026-09-29 晚 Ⅲ「CSV 侧复权口径」后实测 **68 条样本：
-63 条变异 + 5 条 CONTROL + 0 条 ENV-LIMIT**（基线七套件 `passed=252`；报告里那行 `mutations=63 caught=63
-control=5 env_limited=0` 的 `mutations` **只数变异、不含 CONTROL**，所以总数是 68 而不是 63 —— 别把两处
-加混了）；同日晚 Ⅱ「复权价实施」那轮是 66 条 = 61 + 5 + 0
+**它不进 `run_all_gates.py` 的注册表**：每条样本要跑一次 pytest（2026-09-29 晚 Ⅳ「复权帧的 `validate_frame`
+判据」后实测 **73 条样本：67 条变异 + 6 条 CONTROL + 0 条 ENV-LIMIT**（基线八套件 `passed=388`；报告里那行
+`mutations=67 caught=67 control=6 env_limited=0` 的 `mutations` **只数变异、不含 CONTROL**，所以总数是 73
+而不是 67 —— 别把两处加混了）；同日晚 Ⅲ「CSV 侧复权口径」那轮是 68 条 = 63 + 5 + 0
+（基线七套件 `passed=252`）；同日晚 Ⅱ「复权价实施」那轮是 66 条 = 61 + 5 + 0
 （基线七套件 `passed=249`）；同一日的 A6 收口那轮是 59 条 = 54 + 5 + 0
 （基线七套件 `passed=241`），I4 是 54 条 = 49 + 5 + 0（基线六套件 `passed=181`），I3 那轮是 43 条 = 39 + 4 + 0
 （基线五套件 `passed=145`），再往前 B20 后是 32 条 = 29 + 3 + 0），慢，且它验证的对象是测试而不是产物契约。
@@ -38,6 +40,16 @@ control=5 env_limited=0` 的 `mutations` **只数变异、不含 CONTROL**，所
      教训与铁律 ⑤ 同族：**新加的产物会让原本有效的变异悄悄变成 no-op**；
   ③ 基线从六个套件加到七个（补 `tests/test_data_center_pit.py`）—— 一条变异期望落在哪个套件，
      那个套件就必须在基线里，否则「红」没有全绿垫底，什么都证明不了。
+
+⚠️ **2026-09-29 晚 Ⅳ（复权帧的 `validate_frame` 判据）又动了一次，两件事**：
+  ① 新增 `A15`~`A18` 并按「变异要有对照」的惯例补一条 `CONTROL-comment-only-datasources`：
+     `A15` 值域放成 `value <= -1e9`（等于复权因子不再拒非正）、`A16` 从 `_match_schema` 的元组表里
+     抽掉 `('factor', ADJUST_FACTOR_COLUMNS)`（等于不再认这张 schema）、`A17` 给主键重复检查加
+     `and kind != 'factor'`（等于复权帧的重复不报）、`A18` 把 `ADJUST_FACTOR_COLUMNS` 从
+     `STANDARD_COLUMNS` 里拿掉（等于 `adjust_factor` 又被当成「多出来的列」）。
+     **这是本仓库第一次有变异打在 `quanauto/datasources.py` 上**（此前那个文件零变异覆盖）。
+  ② 基线从七个套件加到八个（补 `tests/test_data_center_adapter.py`）—— `A15`~`A18` 期望的失败
+     全落在它里面，不在基线里的话「红」没有全绿垫底。
 
 ⚠️ **2026-09-29 晚「复权价实施」那一批：新增 7 条 + 重锚 1 条，是同一批**：
   ① **重锚 1 条**（`S11`）：`_row_to_bar` 的四个价格参数从裸 `_as_float(row.x)` 变成
@@ -93,6 +105,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PYTHON = os.path.join(ROOT, ".venv", "Scripts", "python.exe")
 TARGET = "tests/test_backtest_slice.py"
+TESTS_ADAPTER = "tests/test_data_center_adapter.py"
 TESTS_STORE = "tests/test_data_center_store.py"
 TESTS_DB_FEED = "tests/test_backtest_db_feed.py"
 TESTS_PIT = "tests/test_data_center_pit.py"
@@ -655,6 +668,69 @@ MUTATIONS = [
         "new": '                open=values["open"],  # MUT：CSV 侧只复权 close\n',
         "expect": ["test_csv_feed_scales_all_four_price_columns"],
     },
+    # ---- 复权因子帧的 `validate_frame` 判据（2026-09-29 晩 Ⅳ）----------------
+    {
+        # 值域判据被放宽：`<= 0` 变成 `<= -1e9` ⇒ `0.0` 静默通过。
+        # 故意「放宽」而不是删掉整条判据：删掉会让「schema 认得出来」一起变红，
+        # 就分不清是「判据有牙」还是「文件被改坏了」。
+        "tag": "A15-factor-positivity-loosened",
+        "tests": TESTS_ADAPTER,
+        "path": "quanauto/datasources.py",
+        "old": ("        for position, value in enumerate(frame['adjust_factor']):\n"
+                "            if pd.isna(value) or value <= 0:\n"
+                "                return '第 %d 行 adjust_factor=%r' % (position, value)\n"),
+        "new": ("        for position, value in enumerate(frame['adjust_factor']):\n"
+                "            if pd.isna(value) or value <= -1e9:\n"
+                "                return '第 %d 行 adjust_factor=%r' % (position, value)\n"),
+        "expect": ["test_validate_rejects_a_non_positive_adjust_factor"],
+    },
+    {
+        # 复权因子从「认得出的四张 schema」里被拿掉 ⇒ 帧重新落进
+        # 「列集合不匹配任何标准 schema」。这正是 B21.6 描述过的那个误诊的回潮，
+        # 而且是最隐蔽的一种：判据表**还在**，只是没人再走到它。
+        "tag": "A16-factor-schema-no-longer-recognised",
+        "tests": TESTS_ADAPTER,
+        "path": "quanauto/datasources.py",
+        "old": ("                           ('index', INDEX_MEMBER_COLUMNS),\n"
+                "                           ('factor', ADJUST_FACTOR_COLUMNS)):\n"),
+        "new": "                           ('index', INDEX_MEMBER_COLUMNS)):\n",
+        "expect": ["test_validate_frame_judges_the_adjust_factor_schema",
+                   "test_validate_rejects_a_non_positive_adjust_factor"],
+    },
+    {
+        # 主键重复检查对复权帧失效（`kind != 'factor'` 这个旁路）。
+        # 只关掉复权因子这一支：如果连重复检查一起关，日线那条重复用例也会红，
+        # 就分不清「复权帧的自然键没被判」与「重复检查整个没了」。
+        "tag": "A17-factor-primary-key-duplicates-not-reported",
+        "tests": TESTS_ADAPTER,
+        "path": "quanauto/datasources.py",
+        "old": "    if bool(duplicates.any()):\n",
+        "new": "    if bool(duplicates.any()) and kind != 'factor':\n",
+        "expect": ["test_validate_rejects_duplicate_adjust_factor_primary_key"],
+    },
+    {
+        # `ADJUST_FACTOR_COLUMNS` 又被排除出 `STANDARD_COLUMNS` ⇒ 契约标准列
+        # `adjust_factor` 被报成「源字段名泄漏到输出列」（B21.6 里第一句误诊）。
+        # 与 `A16` 是**两句不同误诊**的两个方向：`A16` 打「认不出 schema」，
+        # 这条打「认出了，但把契约标准列当成泄漏」。
+        "tag": "A18-factor-column-listed-as-leaked",
+        "tests": TESTS_ADAPTER,
+        "path": "quanauto/datasources.py",
+        "old": ("STANDARD_COLUMNS = (DAILY_BAR_COLUMNS + FINANCIAL_COLUMNS + INDEX_MEMBER_COLUMNS\n"
+                "                    + ADJUST_FACTOR_COLUMNS)\n"),
+        "new": "STANDARD_COLUMNS = (DAILY_BAR_COLUMNS + FINANCIAL_COLUMNS + INDEX_MEMBER_COLUMNS)\n",
+        "expect": ["test_validate_frame_judges_the_adjust_factor_schema"],
+    },
+    {
+        # 对照组：只改注释，适配器套件必须**不**红 —— 证明上面四条抓到的是行为，
+        # 不是「改了 `datasources.py` 就报错」。
+        "tag": "CONTROL-comment-only-datasources",
+        "tests": TESTS_ADAPTER,
+        "path": "quanauto/datasources.py",
+        "old": "#: 复权因子的**帧级自然键**。注意它**不等于** DDL 主键：",
+        "new": "#: 复权因子的**帧级自然键**。注意它**不等于** DDL 主键（MUT：只改注释）：",
+        "expect": CONTROL,
+    },
     {
         "tag": "CONTROL-comment-only-db-feed",
         "tests": TESTS_DB_FEED,
@@ -1039,13 +1115,12 @@ def main() -> int:
         say("verdict: FAIL")
         return 2
 
-    # 基线七套件一起跑：基线只要有一处不是全绿，后面的「红」就什么都证明不了。
-    say("baseline: 先跑一次干净的全绿（%s + %s + %s + %s + %s + %s + %s）"
-        % (TARGET, TESTS_STORE, TESTS_DB_FEED, TESTS_PIT, TESTS_RISK_GATE,
-           TESTS_RISK_STORE, TESTS_DASHBOARD))
-    code, names, counts, output = run_pytest(
-        [TARGET, TESTS_STORE, TESTS_DB_FEED, TESTS_PIT, TESTS_RISK_GATE,
-         TESTS_RISK_STORE, TESTS_DASHBOARD])
+    # 基线一起跑：基线只要有一处不是全绿，后面的「红」就什么都证明不了。
+    # 一条变异期望落在哪个套件，那个套件就必须在基线里 —— 否则「红」没有全绿垫底。
+    suites = [TARGET, TESTS_ADAPTER, TESTS_STORE, TESTS_DB_FEED, TESTS_PIT,
+              TESTS_RISK_GATE, TESTS_RISK_STORE, TESTS_DASHBOARD]
+    say("baseline: 先跑一次干净的全绿（%s）" % " + ".join(suites))
+    code, names, counts, output = run_pytest(suites)
     if code != 0 or names:
         say("FINDING [BASELINE] 基线不是全绿（exit=%d, failed=%d）—— 后面的红说明不了任何事"
             % (code, len(names)))

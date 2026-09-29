@@ -64,7 +64,10 @@ bug），没有越界时返回**最后一次访问**的报告；全部越界点�
   `get_trading_calendar` 是同一族的 N 次查询，S1 起就记着这个 TODO。
 * `get_dividend` 仍恒 0.0（没有分红数据源）—— **与复权是两件事**：分红缺口**没有**被本轮
   顺手"修好"，`tests/test_data_center_pit.py::test_known_gap_dividend_is_still_zero` 仍守着它。
-* 因子帧的 schema 校验判据仍未实现（DC 契约附录 B21.6，`quanauto/datasources.py` 里显式报）。
+* 因子帧的 schema 校验判据**已实现**（2026-09-29 晩 Ⅳ）：`validate_frame` 认四张 schema（含复权因子），
+  对复权帧判值域（`adjust_factor > 0`，对齐 `ck_dc_factor_positive`，**NaN 也算违规**）、
+  帧级自然键 `('symbol','trade_date')` 不重复、以及列集合与类型。**仍未判的是覆盖率**
+  （只给「缺失率 > 5%」的 warning，不判失败）—— DC 契约附录 B21.5 的 Ⅳ 块与 B21.6 表里那一行。
 * `live()` / `trading_calendar()` 未实现（`NotImplementedError`）。
 * 财务 / 指数成分股 / 数据质量 / 采集幂等不在本切片。
 """

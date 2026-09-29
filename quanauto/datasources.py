@@ -132,12 +132,14 @@ INDEX_MEMBER_COLUMNS = (
 ADJUST_FACTOR_COLUMNS = ('symbol', 'trade_date', 'adjust_factor')
 
 # 全量标准列：用来判「泄漏」——任何不在此集合里的列都是源字段名。
-# ⚠️ `ADJUST_FACTOR_COLUMNS` **刻意不在这里**：`STANDARD_COLUMNS` 是
-# `validate_frame` 的判据集合，而 `validate_frame` 还没有复权因子那一套判据
-# （主键、值域），把一条没有判据的 schema 混进去，只会让「校验通过」看起来比
-# 实际覆盖的多。复权因子帧在 `validate_frame` 里有**专支**（它显式报「未实现判据」
-# 而不是被当成源字段泄漏），登记为未收口项，见 DC 契约附录 B21.6。
-STANDARD_COLUMNS = DAILY_BAR_COLUMNS + FINANCIAL_COLUMNS + INDEX_MEMBER_COLUMNS
+#
+# `ADJUST_FACTOR_COLUMNS` 曾是**刻意排除**在外的（2026-09-29 随附录 B21 落地时）：
+# 那时 `validate_frame` 对复权帧一条判据都没有，把一条没判据的 schema 混进来只会
+# 让「校验通过」看起来比实际覆盖的多。**2026-09-29 晩 Ⅳ 判据接上后，排除它的理由
+# 就没了** —— 而继续排除会**把那个误诊重新造出来**：`adjust_factor` 是契约 §3.2
+# 写明的标准列，不在集合里就会被报成「源字段名泄漏到输出列」。
+STANDARD_COLUMNS = (DAILY_BAR_COLUMNS + FINANCIAL_COLUMNS + INDEX_MEMBER_COLUMNS
+                    + ADJUST_FACTOR_COLUMNS)
 
 # 契约 §3.6.1 的 `ck_dc_fin_report_type`。适配器必须在**写库前**就把源的口径
 # 映射到这个枚举，否则那条第 5 个取值出现时，报错地点会跑到数据库那一层。
@@ -678,6 +680,11 @@ def validate_frame(frame: Any) -> ValidationReport:
     **具名 CHECK 约束**（`ck_dc_bar_price_positive` 等），这样「适配器拦下了什么」
     和「数据库会拒掉什么」是同一份规则的两个执行点，而不是两套口径。
 
+    认**四张** schema（日线 / 财务 / 指数成分 / **复权因子**），每一张的判据都写在
+    `_CHECK_SPECS` 里 —— 判据是**数据**，所以「哪些规则真的被检查过」可以被打印出来、
+    被触发测试逐一打中。复权因子这一张是 2026-09-29 晩 Ⅳ 补上的（DC 契约附录 B21.6）：
+    在那之前它走一支显式拒绝的专支（报「判据尚未实现」），**从没被任何判据判过**。
+
     **空帧不是通过**：0 行意味着没有可校验的东西，`is_valid=False` 并带一条硬错误。
     契约 §2.4 总原则写明「所有『找不到数据』的分支都必须显式失败，不允许返回空集」，
     而「提取为空却打印 PASS」正是本项目反复踩过的那类假绿。
@@ -697,23 +704,6 @@ def validate_frame(frame: Any) -> ValidationReport:
 
     errors: List[str] = []
     warnings: List[str] = []
-    # 复权因子是**第四张 schema**，而它的校验判据还没接上（DC 契约附录 B21.6）。
-    # 这一支必须显式挡在通用分支之前：让它掉进下面那两条会说
-    # 「`adjust_factor` 是源字段名泄漏」+「列集合不匹配任何标准 schema」——
-    # 两句都是**误诊**，读的人会跑去查源接口，而不是来看这张未收口清单。
-    # 在判据接上之前，这一帧没有经过任何值域 / 主键检查 ⇒ 不构成校验通过。
-    have = set(map(str, frame.columns))
-    if set(ADJUST_FACTOR_COLUMNS) <= have:
-        extra = sorted(have - set(ADJUST_FACTOR_COLUMNS))
-        errors.append('复权因子 schema 的校验判据**尚未实现**（DC 契约附录 B21.6）：'
-                      '本帧没有经过值域（`ck_dc_factor_positive`）与主键'
-                      '（%s）检查，因此**不构成校验通过**。'
-                      % (list(_ADJUST_FACTOR_PRIMARY_KEY),))
-        if extra:
-            errors.append('非标准列 %s：复权因子 schema 只有 %s（契约 §3.2）'
-                          % (', '.join(extra), list(ADJUST_FACTOR_COLUMNS)))
-        return ValidationReport(is_valid=False, row_count=frame.shape[0], errors=errors)
-
     present = [name for name in frame.columns if name in STANDARD_COLUMNS]
     leaked = sorted(set(name for name in frame.columns if name not in STANDARD_COLUMNS))
     if leaked:
@@ -726,9 +716,11 @@ def validate_frame(frame: Any) -> ValidationReport:
 
     kind, required, checks = _match_schema(frame.columns)
     if kind is None:
-        errors.append('列集合不匹配任何标准 schema（日线 %s / 财务 %s / 成分股 %s）：实际 %s'
+        errors.append('列集合不匹配任何标准 schema（日线 %s / 财务 %s / 成分股 %s / '
+                      '复权因子 %s）：实际 %s'
                       % (list(DAILY_BAR_COLUMNS), list(FINANCIAL_REQUIRED_COLUMNS),
-                         list(INDEX_MEMBER_COLUMNS), [str(name) for name in frame.columns]))
+                         list(INDEX_MEMBER_COLUMNS), list(ADJUST_FACTOR_COLUMNS),
+                         [str(name) for name in frame.columns]))
         return ValidationReport(is_valid=False, row_count=frame.shape[0], errors=errors,
                                 warnings=warnings, missing_ratio=missing_ratio)
 
@@ -752,16 +744,26 @@ def validate_frame(frame: Any) -> ValidationReport:
                             warnings=warnings, missing_ratio=missing_ratio)
 
 
+#: 复权因子的**帧级自然键**。注意它**不等于** DDL 主键：`db/data_center.sql` 里是
+#: `pk_dc_adjust_factor PRIMARY KEY (symbol, trade_date, data_version)`，多出来的
+#: `data_version` 由**写入侧**盖戳，源帧里根本没有这一列 ⇒ 帧里能判的只有前两列。
+#: 这与 `_PRIMARY_KEYS['daily']` 对 `pk_dc_daily_bar` 的处理是同一个约定。
+#:
+#: 2026-09-29 晩 Ⅳ 之前它**只被登记、不参与任何判断**（那时复权帧走的是
+#: 「判据尚未实现」那一支）；现在它是 `_PRIMARY_KEYS['factor']` 的取值，同一
+#: `(symbol, trade_date)` 的重复行真的会被报出来。
+_ADJUST_FACTOR_PRIMARY_KEY = ('symbol', 'trade_date')
+
+#: 各 schema 的**帧级自然键** = DDL 主键去掉写入侧盖戳的那一列（见上面那条注释）。
+#: 这张表同时是「`validate_frame` **真的判过**哪几类帧」的登记处 —— 每加一项，
+#: `_CHECK_SPECS` 与 `_match_schema` 必须同步加，否则新 schema 会以「无判据」
+#: 的样子通过（这正是复权因子在 B21.6 里挂了两天的原因）。
 _PRIMARY_KEYS = {
     'daily': ('symbol', 'trade_date'),
     'financial': ('symbol', 'report_type', 'period_end'),
     'index': ('index_code', 'symbol', 'effective_from'),
+    'factor': _ADJUST_FACTOR_PRIMARY_KEY,
 }
-
-#: 复权因子的主键（`dc_adjust_factor` 的 PK）。**刻意不进 `_PRIMARY_KEYS`**：
-#: 那张表登记的是 `validate_frame` **真的判过**的三类帧，而它目前对复权因子
-#: 只做「承认自己还没有判据」这一件事（见 `validate_frame` 里那一支的注释）。
-_ADJUST_FACTOR_PRIMARY_KEY = ('symbol', 'trade_date')
 
 #: 校验项写成一列 `(标签, 判据)` 而不是一串 if：判据是**数据**，于是「哪些规则被检查过」
 #: 可以被打印出来、被触发测试逐一打中。`tools/verify_data_center_adapter.py` 的
@@ -785,18 +787,23 @@ _CHECK_SPECS = {
          'effective_to 必须为 NULL 或 > effective_from（`ck_dc_member_effective_range`）'),
         ('index-weight-range', 'weight 必须为 NULL 或落在 [0, 1]（`ck_dc_member_weight_range`）'),
     ),
+    'factor': (
+        ('factor-positive', 'adjust_factor 必须 > 0（`ck_dc_factor_positive`）'),
+    ),
 }
 
 
 def _match_schema(columns: Any):
     """按列集合认出这是哪一类帧。返回 (kind, 必需列, 判据表)。
 
-    顺序有意如此：日线的 8 列最具体，先判它不会被财务帧误命中。
+    顺序有意如此：日线的 8 列最具体，先判它不会被财务帧误命中。复权因子放最后 ——
+    它的 3 列里有 `adjust_factor`，与前三类的必需列**互不包含**，所以位置不改变结论。
     """
     have = set(map(str, columns))
     for kind, required in (('daily', DAILY_BAR_COLUMNS),
                            ('financial', FINANCIAL_REQUIRED_COLUMNS),
-                           ('index', INDEX_MEMBER_COLUMNS)):
+                           ('index', INDEX_MEMBER_COLUMNS),
+                           ('factor', ADJUST_FACTOR_COLUMNS)):
         if set(required) <= have:
             return kind, required, _CHECK_SPECS[kind]
     return None, (), ()
@@ -887,6 +894,16 @@ def _violation(frame: pd.DataFrame, tag: str) -> Optional[str]:
             if pd.isna(value) or 0 <= value <= 1:
                 continue
             return '第 %d 行 weight=%r' % (position, value)
+        return None
+    if tag == 'factor-positive':
+        # 与 `daily-price-positive` / `daily-nonneg` 同一种写法：**NaN 也算违规**，不是
+        # 「跳过」—— `dc_adjust_factor.adjust_factor` 是 NOT NULL，帧里的 NaN 落库就是
+        # NULL，一样会被库拒掉。对照组：`financial-roe-range` / `index-weight-range`
+        # 写的是「NaN 就 continue」，因为那两列 DDL 允许 NULL。
+        # 两处写法的差别是契约的差别，不是笔误；抄判据时别把它们抄成一种。
+        for position, value in enumerate(frame['adjust_factor']):
+            if pd.isna(value) or value <= 0:
+                return '第 %d 行 adjust_factor=%r' % (position, value)
         return None
     raise AssertionError('未知的校验标签 %r：判据表与实现脱节，沉默的 None 会伪造出绿'
                          % tag)

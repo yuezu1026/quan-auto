@@ -120,9 +120,13 @@ VALUE_MAPS = ('EASTMONEY_REPORT_TYPE',)
 # 定义标准 schema 的五个元组。A1 的「标准列名集合」由它们拼出来（不读
 # `STANDARD_COLUMNS` —— 那是个 BinOp，`ast.literal_eval` 拿不到，而且拼法本身就是
 # `STANDARD_COLUMNS` 的定义）。
-# `ADJUST_FACTOR_COLUMNS` 是 2026-09-29 加的第 5 个（契约附录 B21）：复权因子
-# **故意不出现在** `STANDARD_COLUMNS` 里 —— 它不是日线行的列，而是另一张表的 schema。
-# 两张清单分开登记，正是为了让 A8 能用两段契约锚分别核对。
+# `ADJUST_FACTOR_COLUMNS` 是 2026-09-29 加的第 5 个（契约附录 B21）：它不是日线行的列，
+# 而是另一张表的 schema —— 所以它**单独登记在这里**，A8 才能用两段契约锚分别核对。
+# ⚠️ 2026-09-29 晩 Ⅳ 订正：此前的注释写它「**故意不出现在** `STANDARD_COLUMNS` 里」，
+# 那句话在**产品文件**里**已作废**（`quanauto/datasources.py` 的 `STANDARD_COLUMNS` 现在
+# 把四个元组都拼进去、含 `ADJUST_FACTOR_COLUMNS`；不拼的话 `validate_frame` 的通用分支
+# 会把 `adjust_factor` 当成「多出来的列」）。本门禁**不读** `STANDARD_COLUMNS`（A1 的
+# 标准列名集合由 `SCHEMA_TUPLES` 拼出）⇒ 这条订正只动文字与下面的合成样本，不动任何判据。
 SCHEMA_TUPLES = ('DAILY_BAR_COLUMNS', 'FINANCIAL_REQUIRED_COLUMNS',
                  'FINANCIAL_SUBJECT_COLUMNS', 'INDEX_MEMBER_COLUMNS',
                  'ADJUST_FACTOR_COLUMNS')
@@ -688,10 +692,12 @@ FINANCIAL_SUBJECT_COLUMNS = ('revenue', 'total_assets')
 INDEX_MEMBER_COLUMNS = ('index_code', 'symbol', 'effective_from', 'effective_to',
                         'weight')
 ADJUST_FACTOR_COLUMNS = ('symbol', 'trade_date', 'adjust_factor')
-# 与真货一致：复权因子**故意不进** `STANDARD_COLUMNS`（它不是日线行的列，是另一张表的
-# schema），门禁靠 `SCHEMA_TUPLES` 而不是靠这行拼接去认识它。
+# 与真货一致（2026-09-29 晩 Ⅳ 起）：复权因子也拼进 `STANDARD_COLUMNS`
+# —— 不拼的话通用分支会把 `adjust_factor` 判成「多出来的列」；
+# 门禁自身靠 `SCHEMA_TUPLES` 而不是靠这行拼接去认识它。
 STANDARD_COLUMNS = (DAILY_BAR_COLUMNS + FINANCIAL_REQUIRED_COLUMNS
-                    + FINANCIAL_SUBJECT_COLUMNS + INDEX_MEMBER_COLUMNS)
+                    + FINANCIAL_SUBJECT_COLUMNS + INDEX_MEMBER_COLUMNS
+                    + ADJUST_FACTOR_COLUMNS)
 REPORT_TYPES = ('BALANCE', 'INCOME')
 
 AKSHARE_DAILY_BAR = {
