@@ -302,7 +302,8 @@ _TENCENT_MIN_WIDTH = max(int(key) for key in TENCENT_DAILY_BAR) + 1
 TUSHARE_API = 'https://api.tushare.pro'
 TUSHARE_ADJ_FACTOR_API = 'adj_factor'
 #: tushare 用 **body.code** 报告失败（HTTP 状态永远 200）—— 实测到的两个非 0 码
-#: 都是 `40101`（空令牌 / 错令牌），见 DC 契约附录 B21.2。所以只认这一个：
+#: 都是 `40101`（空令牌 / 错令牌），见 DC 契约附录 B21.4（「失败形状」表）。
+#: 所以只认这一个：
 #: 其余非 0 码一律 `UNKNOWN` 并原样带上 code/msg，**不猜** —— 「积分不足 / 无权限」
 #: 这类码本机观察不到（真令牌下两个接口都是 `code=0`），猜一个映射等于造规则。
 TUSHARE_AUTH_CODE = '40101'
