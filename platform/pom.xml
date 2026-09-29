@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  平台层切片（P0）：回测绩效看板的 Java 侧。
+
+  为什么是 Maven 而不是 Gradle：本机装了 Maven 3.9.16、没装 gradle（2026-09-29 实测）。
+  「工具不存在 ≠ 不该用」，但一层新产物不该顺带引入一条没人验过的构建链。
+
+  为什么 parent 直接用 spring-boot-starter-parent：
+  `docs/智能量化交易平台.md` §2.2 登记的平台层就是 Spring Boot；用官方 parent 才能让
+  「登记的口径」与「实际的构建」是同一件事（自己攒 BOM 就等于偷偷换一套口径）。
+
+  注意：本 pom **不**包含前端模块 —— `platform/web` 是 npm 工程，不是 Maven 模块。
+  两边的接缝只有一条：`npm run build` 把产物写进 `api/src/main/resources/static/`。
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>3.5.16</version>
+    <relativePath/>
+  </parent>
+
+  <groupId>com.quanauto</groupId>
+  <artifactId>quanauto-platform</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <packaging>pom</packaging>
+  <name>quanauto-platform</name>
+  <description>智能量化交易平台 · 平台层切片（回测绩效看板的读取侧）</description>
+
+  <modules>
+    <module>api</module>
+  </modules>
+
+  <properties>
+    <!--
+      ⚠️ 这里钉的是 **21**，而 `java -version` 在 PATH 上是 25.0.4（2026-09-29 实测）。
+      两者不是一回事：**Maven 用的是 JAVA_HOME**（本机 = C:\Program Files\Zulu\zulu-21，
+      `mvn -version` 打印 `Java version: 21.0.12`），PATH 上的 java 只影响你在终端敲的 `java`。
+      差异一旦被忽略就会出现「我机器上编得过」：同一份 pom 在不同 `JAVA_HOME` 下编出不同产物。
+      所以：钉 21（= Maven 真正用的那个 LTS），别钉 25。
+      与此配套，parent 必须是 **3.5.x**：Boot 3.5 的 Jackson 还是 2.x（`com.fasterxml.jackson`），
+      而 Boot 4.x 已切到 Jackson 3（`tools.jackson`，且异常不再受检）—— 换大版本是换一套 API，
+      不该在「今天就想要一个能点的看板」这一轮里顺手做掉。
+    -->
+    <java.version>21</java.version>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+  </properties>
+</project>

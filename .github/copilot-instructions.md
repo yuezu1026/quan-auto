@@ -67,3 +67,13 @@
   ⇒ **判据依赖环境就是判据的缺陷**，已修；修复后第二次运行已 **success**（2026-09-24）。本机口径的等价证据仍是 `tools/ci-dryrun-report.txt`
   （快照，改完代码要 `python tools/ci_dryrun.py` 重跑），两份证据不能互相替代。
   改文件前仍要想清楚。
+- **`platform/` 下有一个平台层读取侧切片**（2026-09-29 追加）：Spring Boot 3.5.16（Java 21）只读 REST +
+  React 19 / Vite 8 单页，读的是 `.rounds/i1/*.json` 这**同一份**回测报告。它**不改 `quanauto/dashboard.py`
+  一行**、**不碰 `db/`**、**不改 `ci.yml`** ⇒ 它**不等于平台层开工**（裁决 Q3 仍有效），也**不解除**任何缺口。
+  ⚠️ **它没有任何自建门禁覆盖**（现有门禁全是解析 Python / SQL 文本的静态检查器）；两侧展示文本是否一致
+  只有手动脚本 `platform/check_text_parity.py`（需要一个活着的 JVM ⇒ 不能当门禁），**不构成常驻证据**。
+  契约、字段清单与代价登记在 `docs/智能量化交易平台.md` 附录C；操作细节见 `platform/README.md`。
+  三个坑先记住：① **构建顺序**是先 `npm run build` 再起后端（前端产物写进
+  `api/src/main/resources/static/`，而 Spring 从 `target/classes/static/` 托管，反了就 served 旧包）；
+  ② Maven 用的是 `JAVA_HOME`（本机 21）**不是** PATH 里的 `java`（本机 25）⇒ POM 里钉 `java.version=21`；
+  ③ 后端**不做任何统计**，展示串由服务端算好下发，前端**不许**再格式化绩效数字（否则就是「两边各算一套」）。

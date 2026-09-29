@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  看板 API：把一份**已经落盘的回测报告 JSON** 投影成「视图」，再交给 React 渲染。
+
+  只有一条业务约束，写在 ReportProjection 的类注释里：**零统计**。
+  因此本模块刻意**不引入**任何计算/统计/时序库（没有 commons-math、没有 tablesaw、
+  没有 ND4J，也没有 any 量化框架）。依赖越少，「不小心算了一下」越难发生。
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>com.quanauto</groupId>
+    <artifactId>quanauto-platform</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>quanauto-dashboard-api</artifactId>
+  <name>quanauto-dashboard-api</name>
+  <description>回测绩效看板 · 读取侧（只读数，不算数）</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+      </plugin>
+    </plugins>
+  </build>
+</project>

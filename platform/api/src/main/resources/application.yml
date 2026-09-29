@@ -1,0 +1,29 @@
+# 回测绩效看板 —— 平台层读取侧（P0 切片）的最小配置。
+#
+# 这个文件只有三件事：报告目录在哪、监听哪个端口、日志别太吵。
+# 没有 datasource / 没有 jpa / 没有 kafka —— 本轮刻意不接任何外部依赖，
+# 因为本层读的是文件（见 ReportCatalog 的类注释与附录C §C.2）。
+
+server:
+  port: 8080
+
+quanauto:
+  reports:
+    # 相对路径按「仓库根」解析（ReportCatalog.resolve 往上找 .git），
+    # 所以无论从仓库根还是从 platform/api 启动，指的都是同一处。
+    # 改这个值：-Dquanauto.reports.dir=... 或环境变量 QUANAUTO_REPORTS_DIR。
+    dir: .rounds/i1
+
+spring:
+  application:
+    name: quanauto-dashboard-api
+  # 关闭白标签错误页：本层所有错误都走 ApiExceptionHandler 的 JSON 形状，
+  # 留一个 HTML 错误页会让「前端拿到 JSON、浏览器拿到 HTML」这种不一致没人发现。
+  web:
+    error:
+      whitelabel:
+        enabled: false
+
+logging:
+  level:
+    com.quanauto.dashboard: INFO

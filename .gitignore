@@ -30,6 +30,18 @@ Desktop.ini
 # 注意：这几份冒烟快照由 `--report=` 另存；`falsify_smoke.py` 目前仍写固定路径，
 # 跨版本跑之前得先给它加同样的开关，否则会把 postgres:17 那轮证据覆盖掉。
 
+# ── 平台层切片（`platform/`，2026-09-29 追加）──────────────────────
+# 这一层是本仓库第一次出现非 Python 产物。它**没有 CI 覆盖、没有自建门禁**
+# （见 docs/智能量化交易平台.md 附录C 与 docs/开工前缺口清单.md），所以忽略规则
+# 必须自己写准：漏一条就会让构建产物混进工作树，而没有任何检查会提醒。
+#
+# 忽略：Maven 构建产物 / Node 依赖 / Vite 构建产物（后者会被拷进 api 的 static）。
+platform/**/target/
+platform/**/node_modules/
+platform/api/src/main/resources/static/
+# 注意 `platform/api/pom.xml`、`platform/web/package.json`、`platform/web/package-lock.json`
+# **刻意不忽略** —— 它们是这一层的源码（没有 lock 文件，构建就不是可复现的）。
+
 # ── 一次性探针（`.rounds/_*`，按 `_` 前缀约定）──────────────────────
 # 某一次调试落盘的**过程回显**：红/绿那一次的输出、行尾形态探针、重录日志。
 # 它们随每次重跑变化，不是判据本身，也不被任何文档引用为证据，因此不进仓库。
