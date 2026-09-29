@@ -1,9 +1,10 @@
 """变异检查：把 quanauto 的实现逐处改坏，确认对应套件真的会红。
 
-基线跑五个套件（即下面五个常量）：
+基线跑七个套件（即下面那些常量）：
   * `tests/test_backtest_slice.py`（I1 回测切片）
-  * `tests/test_data_center_store.py`（I2 S3 落库侧）
+  * `tests/test_data_center_store.py`（I2 S3 落库侧，含 A6 的因子读写）
   * `tests/test_backtest_db_feed.py`（I2 库喂数据的回测侧）
+  * `tests/test_data_center_pit.py`（I2 A6：复权因子的读数侧与 PIT 守卫）
   * `tests/test_backtest_risk_gate.py`（I3 风控闸门）
   * `tests/test_risk_store.py`（I3b 规则存储 + 拦截留痕）
   * `tests/test_dashboard.py`（I4 绩效看板：只读数不算数 + CLI 接线）
@@ -19,8 +20,21 @@
   * `MUTATION` 触发出来的失败必须是**断言/异常**，不能是 `ImportError`/语法错
     （收集阶段就炸掉，等于测试根本没跑）。
 
-**它不进 `run_all_gates.py` 的注册表**：每条样本要跑一次 pytest（2026-09-25 I4 后实测 **54 条样本：
-49 条变异 + 5 条 CONTROL + 0 条 ENV-LIMIT**；I3b 那轮是 43 条 = 39 + 4 + 0，再上一轮 B20 后是 32 条 = 29 + 3 + 0），慢，且它验证的对象是测试而不是产物契约。
+**它不进 `run_all_gates.py` 的注册表**：每条样本要跑一次 pytest（2026-09-29 A6 收口后实测 **59 条样本：
+54 条变异 + 5 条 CONTROL + 0 条 ENV-LIMIT**（基线七套件 `passed=241`）；上一轮 I4 是 54 条 = 49 + 5 + 0
+（基线六套件 `passed=181`），I3 那轮是 43 条 = 39 + 4 + 0（基线五套件 `passed=145`），再往前 B20 后是
+32 条 = 29 + 3 + 0），慢，且它验证的对象是测试而不是产物契约。
+
+⚠️ **2026-09-29 A6 那一批同时干了三件事，别只看新增的 5 条**：
+  ① 新增 `A1`~`A5`（因子读语句的版本过滤与窗口 / 因子 upsert 退化成裸 INSERT / 标度 8 塌成日线那个 4 /
+     「HFQ 缺因子行静默补 1.0」——最后这条正是本轮修掉的那个缺口）；
+  ② **重新锚定 5 条**（`S1`/`S2`/`S4`/`S9`/`S12b`）：新加的因子 SQL 让前三条的针从「命中 1 次」
+     变成**命中 2 次**，导入行被改写让 `S9` 变成**命中 0 次**，`_as_decimal` 抽出 `_to_decimal`
+     让 `S12b` 的针**命中 0 次**。工具的「恰好 1 次」自 assert 把它们全拦下了 ——
+     **这批变异当时一条都没跑**，报告里 5 条 `[MUTATION-HARNESS]`。
+     教训与铁律 ⑤ 同族：**新加的产物会让原本有效的变异悄悄变成 no-op**；
+  ③ 基线从六个套件加到七个（补 `tests/test_data_center_pit.py`）—— 一条变异期望落在哪个套件，
+     那个套件就必须在基线里，否则「红」没有全绿垫底，什么都证明不了。
 手动跑，或改完测试后跑一次。
 
 **`env_limit`（一条变异的出口）**：有的缺陷在**当前环境里根本不可能被断言抓住**
@@ -48,6 +62,7 @@ PYTHON = os.path.join(ROOT, ".venv", "Scripts", "python.exe")
 TARGET = "tests/test_backtest_slice.py"
 TESTS_STORE = "tests/test_data_center_store.py"
 TESTS_DB_FEED = "tests/test_backtest_db_feed.py"
+TESTS_PIT = "tests/test_data_center_pit.py"
 TESTS_RISK_GATE = "tests/test_backtest_risk_gate.py"
 TESTS_RISK_STORE = "tests/test_risk_store.py"
 TESTS_DASHBOARD = "tests/test_dashboard.py"
@@ -136,19 +151,24 @@ MUTATIONS = [
     },
     # ── I2 S3：落库侧（quanauto/pgstore.py ↔ tests/test_data_center_store.py） ──
     {
+        # 2026-09-29 A6 重新锚定：这两行现在也是 `SQL_SELECT_FACTORS` 的同一行（因子读侧接上来了）
+        # ⇒ 裸针从「命中 1 次」变成**命中 2 次**，被工具自己的自 assert 拦下（报告里 5 条 HARNESS 故障之一）。
+        # 往前带一行 `FROM dc_daily_bar` 把它钉回**日线那一条**语句；因子那一条另有 A1 管。
         "tag": "S1-read-drops-version-filter",
         "tests": TESTS_STORE,
         "path": "quanauto/pgstore.py",
-        "old": '"WHERE symbol = %s AND data_version = %s "',
-        "new": '"WHERE symbol = %s "',
+        "old": '"FROM dc_daily_bar "\n    "WHERE symbol = %s AND data_version = %s "',
+        "new": '"FROM dc_daily_bar "\n    "WHERE symbol = %s "',
         "expect": ["test_select_bars_binds_the_data_version"],
     },
     {
+        # 同一次重新锚定：窗口那两行在日线与因子两条语句里各出现一次 ⇒ 连带 `FROM` 行一起钉。
         "tag": "S2-read-window-becomes-open",
         "tests": TESTS_STORE,
         "path": "quanauto/pgstore.py",
-        "old": '"AND trade_date >= %s AND trade_date <= %s "',
-        "new": '"AND trade_date >= %s "',
+        "old": ('"FROM dc_daily_bar "\n    "WHERE symbol = %s AND data_version = %s "\n'
+                '    "AND trade_date >= %s AND trade_date <= %s "'),
+        "new": '"FROM dc_daily_bar "\n    "WHERE symbol = %s AND data_version = %s "',
         "expect": ["test_select_bars_window_is_closed_and_ordered_in_sql"],
     },
     {
@@ -160,12 +180,52 @@ MUTATIONS = [
         "expect": ["test_select_symbols_is_distinct_and_versioned"],
     },
     {
+        # 2026-09-29 A6 重新锚定：`ON CONFLICT (...) DO UPDATE ` 这一句在日线与因子两条 INSERT 里各一次。
+        # 带上日线那条 `VALUES`（10 个占位符）就唯一了；因子那条另有 A2 管。
         "tag": "S4-write-becomes-plain-insert",
         "tests": TESTS_STORE,
         "path": "quanauto/pgstore.py",
-        "old": '"ON CONFLICT (symbol, trade_date, data_version) DO UPDATE "',
-        "new": '""',
+        "old": ('"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "\n'
+                '    "ON CONFLICT (symbol, trade_date, data_version) DO UPDATE "'),
+        "new": '"VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "',
         "expect": ["test_upsert_sql_follows_contract_rule_6"],
+    },
+    {
+        # 2026-09-29 A6：因子读语句是这一轮新增的 SQL ⇒ 它自己的版本过滤没有探测器（S1 重新锚定后只管日线）。
+        "tag": "A1-select-factors-drops-version-filter",
+        "tests": TESTS_STORE,
+        "path": "quanauto/pgstore.py",
+        "old": '"FROM dc_adjust_factor "\n    "WHERE symbol = %s AND data_version = %s "',
+        "new": '"FROM dc_adjust_factor "\n    "WHERE symbol = %s "',
+        "expect": ["test_select_factors_sql_is_parameterized_and_versioned"],
+    },
+    {
+        # 同一条语句的窗口（与 S2 成对：日线那条管不到因子这条）。
+        "tag": "A2-select-factors-window-becomes-open",
+        "tests": TESTS_STORE,
+        "path": "quanauto/pgstore.py",
+        "old": ('"FROM dc_adjust_factor "\n    "WHERE symbol = %s AND data_version = %s "\n'
+                '    "AND trade_date >= %s AND trade_date <= %s "'),
+        "new": '"FROM dc_adjust_factor "\n    "WHERE symbol = %s AND data_version = %s "',
+        "expect": ["test_select_factors_sql_is_parameterized_and_versioned"],
+    },
+    {
+        "tag": "A3-factor-upsert-becomes-plain-insert",
+        "tests": TESTS_STORE,
+        "path": "quanauto/pgstore.py",
+        "old": '"VALUES (%s, %s, %s, %s, %s) "\n    "ON CONFLICT (symbol, trade_date, data_version) DO UPDATE "',
+        "new": '"VALUES (%s, %s, %s, %s, %s) "',
+        "expect": ["test_factor_upsert_sql_follows_contract_rule_6"],
+    },
+    {
+        # 标度 8 是 D6 对 `dc_adjust_factor` 的约定（`numeric(18,8)`），与日线六列的 4 不是一回事。
+        # 把两个标度混起来是这一层最容易犯的错（附录 B18.3 那条浮点尾巴就是这个家族的老祖宗）。
+        "tag": "A4-factor-scale-collapses-to-the-bar-scale",
+        "tests": TESTS_STORE,
+        "path": "quanauto/pgstore.py",
+        "old": "_FACTOR_SCALE = 8",
+        "new": "_FACTOR_SCALE = 4",
+        "expect": ["test_factor_scale_is_eight_not_the_bar_scale"],
     },
     {
         "tag": "S5-identical-row-writes-anyway",
@@ -218,11 +278,14 @@ MUTATIONS = [
         "expect": ["test_already_classified_error_from_a_lower_layer_passes_through"],
     },
     {
+        # 2026-09-29 A6 重新锚定：A6 往这一行加了两个因子侧的名字
+        # （`AdjustFactorPoint` / `FactorStore`）⇒ 旧针「命中 0 次」。
         "tag": "S9-driver-imported-eagerly",
         "tests": TESTS_STORE,
         "path": "quanauto/pgstore.py",
-        "old": "from .datacenter import BarStore, DailyBar",
-        "new": "from .datacenter import BarStore, DailyBar\n\nimport psycopg  # MUT",
+        "old": "from .datacenter import AdjustFactorPoint, BarStore, DailyBar, FactorStore",
+        "new": ("from .datacenter import AdjustFactorPoint, BarStore, DailyBar, FactorStore"
+                "\n\nimport psycopg  # MUT"),
         "expect": ["test_import_pgstore_does_not_import_the_driver"],
         "env_limit": (
             "**只有在这个环境没装驱动时**才走这条退路：顶层拉驱动会是收集期 ImportError，"
@@ -326,10 +389,13 @@ MUTATIONS = [
         # 尾巴来自源侧「万元」× 10000 走 float64；库按 numeric(20,4) 存的就是
         # 842270400.0000。不量化到同一标度 ⇒ D10「重跑 == 跑一次」当场破裂。
         # 修法是 `_as_decimal` 末尾 quantize，这条变异把 quantize 拿掉。
+        # 2026-09-29 A6 重新锚定：这一行被抽进 `_to_decimal(value, quantum, scale, what)`
+        # （因子要按 8 位量化、日线按 4 位，同一个函数吃两个标度）⇒ 旧针「命中 0 次」。
+        # 语义没变：还是「拿浮点尾巴去比」。
         "tag": "S12b-quantize-dropped-before-compare-and-bind",
         "tests": TESTS_STORE,
         "path": "quanauto/pgstore.py",
-        "old": "        return number.quantize(_VALUE_QUANTUM, rounding=ROUND_HALF_UP)",
+        "old": "        return number.quantize(quantum, rounding=ROUND_HALF_UP)",
         "new": "        return number  # MUT：不量化，拿浮点尾巴去比",
         "expect": [
             "test_upsert_ignores_a_float_tail_below_the_table_scale",
@@ -386,6 +452,22 @@ MUTATIONS = [
             "            return result\n"
         ),
         "expect": ["test_engine_runs_end_to_end_over_a_store_backed_feed"],
+    },
+    {
+        # 2026-09-29 A6：本轮修掉的那个缺口本身 = 「`get_adjustment_factor()` 恒 1.0」。
+        # 把「只有 `NONE` 才返回 1.0」改成**无条件**返回 1.0，就是把缺口原样放回去。
+        # 它必须被 PIT 那三条钉住（两条拒绝类 + 一条真读到 1.25/1.10 的控制样本）——
+        # 只写拒绝类的那两条，一个「恒 1.0」的实现同样能通过，控制样本才是这里的主角。
+        "tag": "A5-hfq-factor-silently-defaults-to-one",
+        "tests": TESTS_PIT,
+        "path": "quanauto/datacenter.py",
+        "old": "        if self.adjust_type is AdjustType.NONE:\n            return 1.0",
+        "new": "        if True:  # MUT：NONE 快路径变成无条件，缺口原样放回\n            return 1.0",
+        "expect": [
+            "test_hfq_reads_the_real_factor_instead_of_returning_one",
+            "test_hfq_without_a_factor_store_is_refused_not_defaulted",
+            "test_hfq_with_a_store_that_has_no_row_for_that_day_is_refused",
+        ],
     },
     {
         "tag": "CONTROL-comment-only-db-feed",
@@ -771,13 +853,13 @@ def main() -> int:
         say("verdict: FAIL")
         return 2
 
-    # 基线六套件一起跑：基线只要有一处不是全绿，后面的「红」就什么都证明不了。
-    say("baseline: 先跑一次干净的全绿（%s + %s + %s + %s + %s + %s）"
-        % (TARGET, TESTS_STORE, TESTS_DB_FEED, TESTS_RISK_GATE, TESTS_RISK_STORE,
-           TESTS_DASHBOARD))
+    # 基线七套件一起跑：基线只要有一处不是全绿，后面的「红」就什么都证明不了。
+    say("baseline: 先跑一次干净的全绿（%s + %s + %s + %s + %s + %s + %s）"
+        % (TARGET, TESTS_STORE, TESTS_DB_FEED, TESTS_PIT, TESTS_RISK_GATE,
+           TESTS_RISK_STORE, TESTS_DASHBOARD))
     code, names, counts, output = run_pytest(
-        [TARGET, TESTS_STORE, TESTS_DB_FEED, TESTS_RISK_GATE, TESTS_RISK_STORE,
-         TESTS_DASHBOARD])
+        [TARGET, TESTS_STORE, TESTS_DB_FEED, TESTS_PIT, TESTS_RISK_GATE,
+         TESTS_RISK_STORE, TESTS_DASHBOARD])
     if code != 0 or names:
         say("FINDING [BASELINE] 基线不是全绿（exit=%d, failed=%d）—— 后面的红说明不了任何事"
             % (code, len(names)))

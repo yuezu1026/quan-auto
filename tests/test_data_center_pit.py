@@ -28,15 +28,17 @@ from typing import List
 import pytest
 
 from quanauto.datacenter import (
+    AdjustFactorPoint,
     DailyBar,
     DbDataFeed,
     InMemoryBarStore,
     InMemoryDataCenter,
+    InMemoryFactorStore,
     LeakagePoint,
     SessionMode,
 )
 from quanauto.enums import AdjustType, FillPolicy, MarketStatus
-from quanauto.errors import DataVersionError, FutureDataAccessError
+from quanauto.errors import DataNotAvailableError, DataVersionError, FutureDataAccessError
 
 SYMBOL = "600000.SH"
 OTHER = "000001.SZ"
@@ -275,23 +277,142 @@ def test_default_data_version_is_the_active_one():
     assert dc.as_of(AS_OF, data_version="v2026.09.23").data_version == "v2026.09.23"
 
 
-# ── 已知缺口：钉住，不让它悄悄变成"看起来对" ──────────────────────────────
+# ── D6 读侧：复权因子真的从存储里读出来（I2 A6 收口）──────────────────────
+#
+# 这一组替换掉了原先那条 `test_known_gap_hfq_factor_is_identity_in_s1`
+# （它**故意**断言 `get_adjustment_factor(...) == 1.0`）。删它的理由就写在它自己的
+# docstring 里：触发条件只认**产物**，而产物变了 —— 读侧不再恒返回 1.0。
+# 那条测试的收尾命令是「删掉这条测试」，所以这里是**删除**，不是改期望值。
+#
+# 但**缺口只关了一半**：复权价仍未实施（见 `quanauto/datacenter.py` 模块头）。
+# 另一半（`get_dividend` 仍恒 0.0）改由文件末尾那条单独的用例钉住 —— 同一条测试里
+# 钉着两件事，其中一件关闭时只能拆开，不能整条留着也不能整条删掉。
 
 
-def test_known_gap_hfq_factor_is_identity_in_s1():
-    """⚠️ 这条**故意**断言一个错的结果：I2 S1 没接复权数据，HFQ 因子恒 1.0（= 不复权）。
+def _factor_rows():
+    """因子夹具：`SYMBOL` 两个可见日，外加一个未来日（守卫那条用例要用）。"""
+    return [
+        AdjustFactorPoint(SYMBOL, VISIBLE, 1.10, source="fixture", data_version=VERSION),
+        AdjustFactorPoint(SYMBOL, ON_AS_OF, 1.25, source="fixture", data_version=VERSION),
+        AdjustFactorPoint(SYMBOL, FUTURE, 9.99, source="fixture", data_version=VERSION),
+    ]
 
-    等**复权因子真的读到真因子**（`DataCenter.get_adjustment_factor()` 不再恒返回 1.0）之后它会变红。
-    （原先写的是「等 S3 接上」，但 S3 已交付而因子仍未接上 ⇒ 拿「哪一步交付」当触发条件会误删。
-    **订正第二版（2026-09-29）**：括号里原先写的是「`dc_adjust_factor` 有了采集路径」——
-    I2c 真的把**采集路径**接上了，于是这个条件旬在**字面上已经成立**，读起来像一道命令，
-    而**读侧仍是 1.0**、缺口一步没往前 ⇒ 触发条件只认**产物**（读侧不再返回 1.0），
-    不认「哪一层接了」。订正记录见 DC 契约附录 A6 / B21.3。）
-    那一刻要做的**不是**把期望值改成新数，
-    而是删掉这条测试并在文档里销掉"已知缺口"那一项。留一条能红的测试，
-    好过在 docstring 里写一句"暂未实现" —— 后者没有任何机制会在实现之后提醒你。
+
+def _feed_with_factors(rows=None, **kwargs) -> DbDataFeed:
+    return _feed(
+        factor_store=InMemoryFactorStore(_factor_rows() if rows is None else rows), **kwargs
+    )
+
+
+class ExplodingFactorStore(InMemoryFactorStore):
+    """探针：**一旦被查询就炸**，用来把「没查库」变成可断言的事实。
+
+    「没查库」本身没有返回值可供断言 —— 一个偷偷查了库的实现与一个真的没查的实现，
+    对这条路径给出的是同一个 1.0。所以证人必须是「被查就抛」的对象。
+    """
+
+    def __init__(self):
+        super().__init__([])
+        self.queries = 0
+
+    def select_factors(self, symbol, start, end):
+        self.queries += 1
+        raise AssertionError("NONE 口径下不该去问复权因子，却问了 %s" % (symbol,))
+
+
+class LyingFactorStore(InMemoryFactorStore):
+    """`select_factors` 忽略窗口的因子存储 —— 与 `LyingBarStore` 同一个故障模型。"""
+
+    def select_factors(self, symbol, start, end):
+        return sorted((r for r in self.rows if r.symbol == symbol), key=lambda r: r.trade_date)
+
+
+def test_hfq_without_a_factor_store_is_refused_not_defaulted():
+    """🔴 默认口径（`HFQ`）下没有因子存储 ⇒ 抛 DATA_001，**不许**静默给 1.0。
+
+    这条是「复权因子缺口」真正关闭的判据：在那之前这里返回 1.0，而报告里一个字都不提
+    ⇒ 整段回测静默变成不复权。DC 契约 §2.4：「所有『找不到数据』的分支都必须
+    **显式失败**，不允许返回空集或默认值」。
+    """
+    feed = _feed()  # `_center()` 默认 factor_store=None
+    assert feed.adjust_type is AdjustType.HFQ, "默认口径是 HFQ（DC 契约 §2.3 行 265）"
+    with pytest.raises(DataNotAvailableError) as excinfo:
+        feed.get_adjustment_factor(SYMBOL, datetime(2026, 1, 5))
+    assert excinfo.value.code == "DATA_001"
+    assert "factor_store" in str(excinfo.value), (
+        "这一支要说清是**配置**没接上，而不是「这一天没有数据」：%s" % excinfo.value
+    )
+
+
+def test_hfq_with_a_store_that_has_no_row_for_that_day_is_refused():
+    """另一支：存储接上了、但这一天**没有因子行** ⇒ 同样抛 DATA_001，不补 1.0。"""
+    feed = _feed_with_factors(rows=[])  # 接上了，只是空的
+    with pytest.raises(DataNotAvailableError) as excinfo:
+        feed.get_adjustment_factor(SYMBOL, datetime(2026, 1, 5))
+    assert excinfo.value.code == "DATA_001"
+    assert "factor_store" not in str(excinfo.value), (
+        "这一支是「库里没有这一行」，不能再拿配置说事 —— 两句话必须分得开：%s"
+        % excinfo.value
+    )
+
+
+def test_hfq_reads_the_real_factor_instead_of_returning_one():
+    """控制样本 + 防空转：真读到那一天的值（1.25 / 1.10），而不是恒 1.0。
+
+    任何「恒返回 1.0」的实现都能通过上面两条（它两条都抛）—— 只有真给一个非 1.0 的值，
+    才能证明这个数确实来自存储；而 1/3 没有因子行这一条，同时证明它是**逐日**去查的。
+    """
+    feed = _feed_with_factors()
+    assert feed.get_adjustment_factor(SYMBOL, datetime(2026, 1, 5)) == 1.25
+    assert feed.get_adjustment_factor(SYMBOL, datetime(2026, 1, 2)) == 1.10
+    with pytest.raises(DataNotAvailableError):
+        feed.get_adjustment_factor(SYMBOL, datetime(2026, 1, 3))  # MISSING：库里没这一天
+
+
+def test_none_returns_identity_without_touching_the_store():
+    """`NONE` ⇒ 1.0 是**算出来的**结果，而且**一次都不问库**。
+
+    这两件事必须分开断言：只测 1.0 的话，「1.0 是算出来的」与「1.0 是查不到时的退路」
+    给出的是同一个值，而后者正是这个缺口原本的形态。
+    """
+    probe = ExplodingFactorStore()
+    feed = _center(factor_store=probe).as_of(AS_OF, adjust_type=AdjustType.NONE)
+    assert feed.adjust_type is AdjustType.NONE
+    assert feed.get_adjustment_factor(SYMBOL, datetime(2026, 1, 5)) == 1.0
+    assert probe.queries == 0, "NONE 口径下还去查库 ⇒ 这条分支的存在意义就没了"
+
+
+def test_factor_read_is_guarded_by_pit_too():
+    """因子读取也在 PIT 面上：存储忽略窗口 ⇒ 守卫必须炸（DATA_002）。
+
+    「因子只是乘一下」是最容易漏掉的未来函数：累计因子本身就把未来信息（到今天为止的
+    全部送转/分红）折了进去，所以它必须和 K 线走同一条守卫，而不是走一条后门。
+    这条对应 `tools/verify_data_center_pit.py` 里那条**静态**判据（因子读取也要被守卫
+    点名）；静态判据管「有没有写」，这条管「写了到底拦不拦得住」。
+    """
+    feed = _feed(factor_store=LyingFactorStore(_factor_rows()))
+    with pytest.raises(FutureDataAccessError) as excinfo:
+        feed.get_adjustment_factor(SYMBOL, datetime(2026, 1, 5))
+    assert excinfo.value.code == "DATA_002"
+    points = feed.pit_guard.leakage_points()
+    assert [p.trade_date for p in points] == [FUTURE], "越界的必须是因子那一行的日期"
+    assert points[0].field == "adjust_factor", (
+        "因子是**单列**读取 ⇒ field 记真实列名（`FACTOR_FIELD`），不是日线那个整行的 'bar'"
+    )
+
+
+# ── 已知缺口：钉住，不让它悄悄变成「看起来对」（复权价那半）────────────────
+
+
+def test_known_gap_dividend_is_still_zero():
+    """⚠️ 这条**故意**断言一个「还没实现」的结果：分红数据源没接，`get_dividend` 恒 0.0。
+
+    它从原先那条 `test_known_gap_hfq_factor_is_identity_in_s1` 里**拆**出来：那条同时钉着
+    「HFQ 因子恒 1.0」与「分红恒 0.0」，前一件已关闭 ⇒ 整条留着会锁住一个已经正确的实现，
+    整条删掉则会让后一件失去警钟。
+
+    触发条件与原先一致，只认**产物**（`get_dividend` 不再恒 0.0），不认「哪一层接了」——
+    直接删掉这条测试，不要先把期望值改成新数再当成一条通过的测试留着。
     """
     feed = _feed()
-    assert feed.adjust_type is AdjustType.HFQ
-    assert feed.get_adjustment_factor(SYMBOL, datetime(2026, 1, 5)) == 1.0
     assert feed.get_dividend(SYMBOL, datetime(2026, 1, 5)) == 0.0

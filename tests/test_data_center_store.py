@@ -49,7 +49,7 @@ from decimal import Decimal
 import pytest
 
 from quanauto import pgstore
-from quanauto.datacenter import DailyBar
+from quanauto.datacenter import AdjustFactorPoint, DailyBar
 from quanauto.errors import (
     DataStoreError,
     DataVersionError,
@@ -58,10 +58,13 @@ from quanauto.errors import (
 )
 from quanauto.pgstore import (
     BAR_COLUMNS,
+    FACTOR_COLUMNS,
     VALUE_FIELDS,
     IngestReport,
     PgBarIngestor,
     PgBarStore,
+    PgFactorIngestor,
+    PgFactorStore,
     PsycopgConnection,
     SQL_SELECT_EXISTING,
 )
@@ -110,6 +113,30 @@ def _row(close: str = "10.5", amount: str = "10500.0000") -> dict:
         "volume": "1000.0000",
         "amount": amount,
         "source": "akshare",
+        "data_version": VERSION,
+    }
+
+
+def _factor(symbol: str = SYMBOL, trade_date: date = DAY,
+            adjust_factor: str = "1.25000000", data_version: str = VERSION,
+            source: str = "tushare") -> AdjustFactorPoint:
+    """一条标准因子行。`adjust_factor` 收字符串，方便造「同值但尾巴多几位」。"""
+    return AdjustFactorPoint(
+        symbol=symbol,
+        trade_date=trade_date,
+        adjust_factor=Decimal(adjust_factor),
+        source=source,
+        data_version=data_version,
+    )
+
+
+def _factor_row(adjust_factor: str = "1.25000000") -> dict:
+    """库里的那一行因子 —— 与 `_row()` 同理，**故意全是字符串**（文本协议通道）。"""
+    return {
+        "symbol": SYMBOL,
+        "trade_date": "2026-01-05",
+        "adjust_factor": adjust_factor,
+        "source": "tushare",
         "data_version": VERSION,
     }
 
@@ -877,3 +904,173 @@ def test_store_and_ingestor_over_the_driver_seam_end_to_end(monkeypatch):
     )
     bars_again = PgBarStore(conn, VERSION).select_bars(SYMBOL, DAY, DAY)
     assert len(bars_again) == 1, "写完之后再读一次同一条连接：这就是真库上炸过的那一步"
+
+
+# ── 复权因子的落库侧（I2 A6 收口，2026-09-29）──────────────────────────────
+# 这一组与上面那组同源，但**多守一条**：因子的库内标度是 `numeric(18,8)`，
+# 而日线的六列是 `numeric(_,4)`。两处标度不同是**数据表的事实**，不是风格选择 ——
+# 下面的标度样本就是钉它：
+#
+#   库内 1.00000000 vs 本批 1.00000005
+#     * 8 位量子 ⇒ 量化后 1.00000000 vs 1.00000005 ⇒ **异值** ⇒ DATA_007（应当）
+#     * 4 位量子 ⇒ 量化后都是 1.0000 ⇒ **同值** ⇒ 静默跳过重写（漏报）
+#
+# 注意样本的方向：它断言的是**冲突会报出来**。若把标度改错，这条用例会红；
+# 若反过来只断言“尾巴小于 4 位时算同值”（那是恒真的一半），标度改错也看不出来。
+
+
+def test_factor_columns_match_the_ddl():
+    """列清单必须与 `db/data_center.sql` 的 `dc_adjust_factor` 逐列对应。"""
+    assert FACTOR_COLUMNS == ("symbol", "trade_date", "adjust_factor", "source",
+                              "data_version"), FACTOR_COLUMNS
+    assert "open" not in FACTOR_COLUMNS and "close" not in FACTOR_COLUMNS, (
+        "因子表不存价格 —— 库中只存不复权价 + 原始复权因子（D6）"
+    )
+
+
+def test_factor_scale_is_eight_not_the_bar_scale():
+    """标度是 DDL 的事实（`numeric(18,8)`），不是可以顺手复用日线那个 4 的常数。"""
+    assert pgstore._FACTOR_SCALE == 8, pgstore._FACTOR_SCALE
+    assert pgstore._FACTOR_QUANTUM == Decimal("1E-8"), pgstore._FACTOR_QUANTUM
+    assert pgstore._FACTOR_SCALE != pgstore._VALUE_SCALE, (
+        "日线六列是 numeric(_,4)、因子一列是 numeric(18,8)：两者共用一个标度必然会有一"
+        "侧的判等出错（附录 B18.3 的 `842270399.9999999` 就是同一种尾巴咬过一次）"
+    )
+
+
+def test_select_factors_sql_is_parameterized_and_versioned():
+    trap = "600000.SH' OR '1'='1"
+    conn = FakeConn()
+    PgFactorStore(conn, VERSION).select_factors(trap, date(2026, 1, 1), date(2026, 1, 31))
+    assert len(conn.calls) == 1, conn.calls
+    sql, params = conn.calls[0]
+    assert trap not in sql, "标的被拼进了 SQL 文本：%r" % sql
+    assert sql.count("%s") == 4, "四个绑定值各占一个占位符：%r" % sql
+    assert params == (trap, VERSION, date(2026, 1, 1), date(2026, 1, 31)), params
+    assert "data_version = %s" in sql, (
+        "不绑版本的话，同一个 (symbol, trade_date) 会按版本数重复出现，而调用方取的是 "
+        "rows[0] —— 拿到哪个版本就变成执行顺序的函数：%r" % sql
+    )
+    assert ">= %s" in sql and "<= %s" in sql and "ORDER BY trade_date" in sql, sql
+
+
+def test_select_factors_converts_text_columns_to_adjust_factor_point():
+    conn = FakeConn(script=[[_factor_row()]])
+    rows = PgFactorStore(conn, VERSION).select_factors(SYMBOL, DAY, DAY)
+    assert len(rows) == 1, rows
+    point = rows[0]
+    assert isinstance(point, AdjustFactorPoint)
+    assert point.trade_date == DAY, "文本日期必须归一成 date，否则 PIT 的日期比较会静默失效"
+    assert point.adjust_factor == Decimal("1.25000000"), point.adjust_factor
+
+
+def test_select_factors_empty_result_is_an_empty_list():
+    """控制样本，方向很重要：**存储层**查不到就是空表。
+
+    “查不到就抛 DATA_001” 是**读侧**（`DbDataFeed.get_adjustment_factor`）那条判据，
+    不是存储层的 —— 把两者混在一处，会让「今天停牌」与「库连不上」变成同一个异常。
+    """
+    conn = FakeConn(script=[[]])
+    assert PgFactorStore(conn, VERSION).select_factors(SYMBOL, DAY, DAY) == []
+
+
+def test_factor_upsert_sql_follows_contract_rule_6():
+    conn = FakeConn(script=[[], [{"symbol": SYMBOL}]])
+    PgFactorIngestor(conn).upsert_adjust_factors([_factor()])
+    ins = _insert_calls(conn)
+    assert len(ins) == 1, [c[0] for c in conn.calls]
+    sql = ins[0][0]
+    assert "ON CONFLICT (symbol, trade_date, data_version)" in sql, (
+        "约定 6：写入必须是按业务主键的 upsert（幂等，见 D10）：%r" % sql
+    )
+    assert "DO UPDATE" in sql and "IS DISTINCT FROM" in sql, sql
+    assert sql.count("%s") == len(FACTOR_COLUMNS), (
+        "绑定顺序必须与列清单一一对应，实际 %d 个占位符 vs %d 列"
+        % (sql.count("%s"), len(FACTOR_COLUMNS))
+    )
+    for column in FACTOR_COLUMNS:
+        assert column in sql, "%s 不在 INSERT 的列清单里：%r" % (column, sql)
+
+
+def test_factor_upsert_binds_quantized_values_in_column_order():
+    conn = FakeConn(script=[[], [{"symbol": SYMBOL}]])
+    PgFactorIngestor(conn).upsert_adjust_factors([_factor(adjust_factor="1.25")])
+    params = _insert_calls(conn)[0][1]
+    assert params == (SYMBOL, DAY, Decimal("1.25000000"), "tushare", VERSION), params
+    assert params[2].as_tuple().exponent == -pgstore._FACTOR_SCALE, (
+        "绑定的值必须已经量化到**因子**那一列的标度（8 位），否则库端 "
+        "`IS DISTINCT FROM` 那道闸会把同一批重跑判成异值：%r" % params[2]
+    )
+
+
+def test_factor_upsert_new_row_counts_as_inserted():
+    conn = FakeConn(script=[[], [{"symbol": SYMBOL}]])
+    report = PgFactorIngestor(conn).upsert_adjust_factors([_factor()])
+    assert report == IngestReport(inserted=1, skipped=0), report
+    assert report.total == 1
+
+
+def test_factor_identical_rerun_writes_nothing():
+    """D10：同值重跑不产生重复。"""
+    conn = FakeConn(script=[[_factor_row()]])
+    report = PgFactorIngestor(conn).upsert_adjust_factors([_factor()])
+    assert (report.inserted, report.skipped) == (0, 1), report
+    assert _insert_calls(conn) == [], "同值不该写库：%s" % ([c[0] for c in conn.calls],)
+
+
+def test_factor_identical_under_a_tail_below_the_eighth_decimal():
+    """控制样本：尾巴细到 8 位以下 ⇒ 量化后同值 ⇒ 仍然不写。"""
+    conn = FakeConn(script=[[_factor_row("1.25000000")]])
+    report = PgFactorIngestor(conn).upsert_adjust_factors(
+        [_factor(adjust_factor="1.250000004")])
+    assert (report.inserted, report.skipped) == (0, 1), report
+    assert _insert_calls(conn) == []
+
+
+def test_factor_conflict_at_the_eighth_decimal():
+    """**触发样本**：差别正好落在第 8 位 ⇒ 必须报 DATA_007。
+
+    这条是「标度真被当成 8 位在用」的唯一证据：拿 4 位量子去量这两个值，
+    它们会变成同一个 `1.2500` ⇒ 判成同值、静默跳过，而库里那一行与源已经不一致。
+    """
+    conn = FakeConn(script=[[_factor_row("1.25000000")]])
+    with pytest.raises(IngestConflictError) as excinfo:
+        PgFactorIngestor(conn).upsert_adjust_factors(
+            [_factor(adjust_factor="1.25000005")])
+    assert "复权因子不同" in str(excinfo.value), str(excinfo.value)
+    assert "1.25000005" in str(excinfo.value) and "1.25000000" in str(excinfo.value), (
+        "冲突信息要点名是哪一列、两侧各是什么值：%s" % excinfo.value
+    )
+    assert _insert_calls(conn) == [], "判成冲突之后不许再写"
+
+
+def test_factor_upsert_rejects_a_blank_data_version_before_any_sql():
+    """D8：形状问题在开事务之前就要拦掉（一条 SQL 都不发）。"""
+    conn = FakeConn()
+    with pytest.raises(DataVersionError):
+        PgFactorIngestor(conn).upsert_adjust_factors([_factor(data_version="")])
+    assert conn.calls == [], conn.calls
+    assert conn.events == [], "连事务都不该开：%r" % conn.events
+
+
+def test_factor_upsert_batch_mixes_branches_per_row():
+    """整批混着走：新行 / 同值 / —— 逐行判定，报告分别计数。"""
+    conn = FakeConn(script=[[_factor_row()], [], [{"symbol": SYMBOL}]])
+    report = PgFactorIngestor(conn).upsert_adjust_factors([_factor(), _factor()])
+    assert (report.inserted, report.skipped) == (1, 1), report
+    assert conn.events == ["begin", "commit"], (
+        "整批一个事务，中途不出错就提交一次：%r" % conn.events
+    )
+
+
+def test_factor_upsert_stops_the_batch_at_the_conflict():
+    """中途冲突 ⇒ 事务回滚，已写的行一起退掉（「半批落库」比「整批失败」难查得多）。"""
+    conn = FakeConn(script=[[_factor_row("9.00000000")]])
+    with pytest.raises(IngestConflictError):
+        PgFactorIngestor(conn).upsert_adjust_factors([_factor()])
+    assert conn.events == ["begin", "rollback"], conn.events
+
+
+def test_pg_factor_store_requires_a_data_version():
+    with pytest.raises(TypeError):
+        PgFactorStore(FakeConn())  # type: ignore[call-arg]

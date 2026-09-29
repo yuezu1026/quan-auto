@@ -76,7 +76,7 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, Iterator, List, Mapping, Protocol, Sequence, runtime_checkable
 
-from .datacenter import BarStore, DailyBar
+from .datacenter import AdjustFactorPoint, BarStore, DailyBar, FactorStore
 from .errors import (
     DataStoreError,
     DataVersionError,
@@ -87,14 +87,20 @@ from .errors import (
 
 __all__ = [
     "BAR_COLUMNS",
+    "FACTOR_COLUMNS",
     "VALUE_FIELDS",
     "SQL_SELECT_BARS",
     "SQL_SELECT_EXISTING",
+    "SQL_SELECT_FACTORS",
+    "SQL_SELECT_FACTOR_EXISTING",
     "SQL_SELECT_SYMBOLS",
     "SQL_UPSERT_BAR",
+    "SQL_UPSERT_FACTOR",
     "IngestReport",
     "PgBarIngestor",
     "PgBarStore",
+    "PgFactorIngestor",
+    "PgFactorStore",
     "PsycopgConnection",
     "SqlConnection",
 ]
@@ -117,6 +123,20 @@ BAR_COLUMNS = (
 #: 参与「同值/异值」判定的字段（见约定 3）。
 VALUE_FIELDS = ("open", "high", "low", "close", "volume", "amount")
 
+#: `dc_adjust_factor` 被本模块读写的列（顺序 = `INSERT` 的列序 = `%s` 的绑定顺序）。
+#: 比 `BAR_COLUMNS` 少的是 OHLC/成交量/成交额，多的是那一个因子列。
+FACTOR_COLUMNS = (
+    "symbol",
+    "trade_date",
+    "adjust_factor",
+    "source",
+    "data_version",
+)
+
+# 因子表**没有** `VALUE_FIELDS` 的兄弟常量：它只有一个数值列，判等直接指向
+# `adjust_factor`（见 `_raise_if_factor_divergent`）。一个元素的清单只会让人
+# 以为它可以随便加 —— 而这里每加一列都要同时改 DDL、SQL 与标度。
+
 #: `dc_daily_bar` 六个数值列在库里的标度（`numeric(18,4)` / `numeric(20,4)`，**都是 4**）。
 #: 写入/判等前把值量化到这个标度，是 D10「同一批次重跑结果必须与跑一次相同」的前提：
 #: 库会按 `numeric(_,4)` 四舍五入后再存，若本批带子标度的浮点尾巴，两侧就不是同一个数。
@@ -124,6 +144,14 @@ VALUE_FIELDS = ("open", "high", "low", "close", "volume", "amount")
 #: 会从 DDL 正则量出标度并与实际行为对拍，实测记录见契约附录 B18.3）。
 _VALUE_SCALE = 4
 _VALUE_QUANTUM = Decimal(1).scaleb(-_VALUE_SCALE)
+
+#: `dc_adjust_factor.adjust_factor` 的库内标度（`numeric(18,8)`）—— **比日线那六列多 4 位**，
+#: 所以另立一个量子，而不是复用 `_VALUE_QUANTUM`。
+#: 拿 4 位量子去量 8 位的列，`1.00000005` 会被抹成 `1.0000`，而与库里存下的
+#: `1.00000005` 永久不同值 ⇒ 每一轮重采都在第 1 行报 DATA_007，而数据其实一个字没变。
+#: （这不是假设：`dc_daily_bar` 的 `amount` 就是同一种尾巴咬过一次，见附录 B18.3。）
+_FACTOR_SCALE = 8
+_FACTOR_QUANTUM = Decimal(1).scaleb(-_FACTOR_SCALE)
 
 # ── SQL ──────────────────────────────────────────────────────────────────
 #: 读一个 (标的, 版本, 闭区间窗口) 的日线，按交易日升序。
@@ -158,6 +186,35 @@ SQL_UPSERT_BAR = (
     "dc_daily_bar.volume, dc_daily_bar.amount) IS DISTINCT FROM "
     "(EXCLUDED.open, EXCLUDED.high, EXCLUDED.low, EXCLUDED.close, "
     "EXCLUDED.volume, EXCLUDED.amount) "
+    "RETURNING symbol"
+)
+
+#: 读一个标的在一个版本里的因子窗口（闭区间），按交易日升序。
+SQL_SELECT_FACTORS = (
+    "SELECT symbol, trade_date, adjust_factor, source, data_version "
+    "FROM dc_adjust_factor "
+    "WHERE symbol = %s AND data_version = %s "
+    "AND trade_date >= %s AND trade_date <= %s "
+    "ORDER BY trade_date"
+)
+
+#: 按主键取现有因子行 —— 「同值不写」与「异值报冲突」都靠它（只取判等用到的那一列）。
+SQL_SELECT_FACTOR_EXISTING = (
+    "SELECT adjust_factor FROM dc_adjust_factor "
+    "WHERE symbol = %s AND trade_date = %s AND data_version = %s"
+)
+
+#: 与 `SQL_UPSERT_BAR` 同形（约定 1/6），只是表、列、判等字段不一样。
+#: `IS DISTINCT FROM` 里库侧写成 `dc_adjust_factor.adjust_factor` 而不是裸列名：
+#: 别名化会让 `RETURNING` 与 `WHERE` 指向的表在 SQL 文本上不可见，而这条语句
+#: 的真实语义（"**库里的**因子与本批不同才更新"）必须能被人读出来。
+SQL_UPSERT_FACTOR = (
+    "INSERT INTO dc_adjust_factor "
+    "(symbol, trade_date, adjust_factor, source, data_version) "
+    "VALUES (%s, %s, %s, %s, %s) "
+    "ON CONFLICT (symbol, trade_date, data_version) DO UPDATE "
+    "SET source = EXCLUDED.source, ingested_at = CURRENT_TIMESTAMP(3) "
+    "WHERE dc_adjust_factor.adjust_factor IS DISTINCT FROM EXCLUDED.adjust_factor "
     "RETURNING symbol"
 )
 
@@ -216,42 +273,61 @@ def _as_date_value(value) -> date:
     raise DataStoreError("交易日类型无法识别：%r（%s）" % (value, type(value).__name__))
 
 
-def _as_decimal(value) -> Decimal:
-    """数值列一律走 `Decimal`，并量化到库内标度（`_VALUE_SCALE`）。
+def _to_decimal(value, quantum: Decimal, scale: int, what: str) -> Decimal:
+    """把一列数值量化到**该列在库里的标度** —— 日线六列与因子一列共用这一处。
 
     用 `Decimal(str(value))` 而不是 `Decimal(value)`：`Decimal(0.1)` 会把二进制浮点的
     误差原样带进来（`0.1000000000000000055511151231257827`），于是「同一个 0.1」在
     两条路径上判不相等 —— 判等和 CHECK 约束都会跟着出错。`bool` 先挡掉，因为它是
     `int` 的子类，会被 `str()` 变成 `'True'`。
 
-    末尾的 `quantize` 是 2026-09-24 补的，依据是 D10 幂等：库里这六列都是 `numeric(_,4)`，
-    PostgreSQL 入库时会四舍五入到 4 位；若本批带 1e-7 的浮点尾巴（源侧 2 位小数的「万元」
+    `quantum` / `scale` / `what` 由调用方给：标度是**每一列**的属性（DDL 决定），不是
+    全局常数 —— `dc_daily_bar` 的六列是 `numeric(_,4)`，`dc_adjust_factor.adjust_factor`
+    是 `numeric(18,8)`。做成两个各自完整的函数等于把这段逻辑放两份；做成一个带参数的本函数，
+    则要求调用点每次说清自己在量哪一列（`what` 会进错误信息，传错也能被看见）。
+
+    末尾的 `quantize` 是 2026-09-24 补的，依据是 D10 幂等：库里这些列都是 `numeric`，
+    PostgreSQL 入库时会四舍五入到该列标度；若本批带更细的浮点尾巴（源侧 2 位小数的「万元」
     × 10000 走 float64 就会，实测 `842270399.9999999`，数学上是 `842270400`），
     就会与库内的 `842270400.0000` 判成「异值」⇒ **同一批次连跑两次**抛 DATA_007，
     D10 的「重跑不产生重复」当场破裂。量化后两侧都等于库真正会存下的那个数，判等才有意义。
 
-    量化只放在这一个函数里 ⇒ 读、写、比**三条路径同时收敛**（读侧本来就是 4 位，量化为恒等），
-    而且 `INSERT` 绑定的参数也一并带标度，库端 `IS DISTINCT FROM` 那道闸同样判成「同值」。
-    实测见契约附录 B18.3。
+    量化只放在这一个函数里 ⇒ 读、写、比**三条路径同时收敛**（读侧本来就是该列标度，
+    量化为恒等），而且 `INSERT` 绑定的参数也一并带标度，库端 `IS DISTINCT FROM`
+    那道闸同样判成「同值」。实测见契约附录 B18.3（日线）与 B22（因子，标度 8）。
     """
     if isinstance(value, bool) or value is None:
-        raise DataStoreError("数值列收到 %r，无法转成 Decimal" % (value,))
+        raise DataStoreError("%s列收到 %r，无法转成 Decimal" % (what, value))
     try:
         if isinstance(value, Decimal):
             number = value
         else:
             number = Decimal(str(value).strip())
     except (InvalidOperation, ValueError, AttributeError) as exc:
-        raise DataStoreError("数值列收到 %r，无法转成 Decimal" % (value,)) from exc
+        raise DataStoreError("%s列收到 %r，无法转成 Decimal" % (what, value)) from exc
     try:
         # `ROUND_HALF_UP` 在 `Decimal` 里的定义是「半数远离零」，与 PostgreSQL `numeric`
         # 的四舍五入同义 —— 用错模式（如默认的 `ROUND_HALF_EVEN`）会让两侧在 `.00005`
         # 这类值上悄悄分家。
-        return number.quantize(_VALUE_QUANTUM, rounding=ROUND_HALF_UP)
+        return number.quantize(quantum, rounding=ROUND_HALF_UP)
     except InvalidOperation as exc:
         raise DataStoreError(
-            "数值列 %r 量化到 %d 位小数失败（超出 decimal 上下文精度）" % (value, _VALUE_SCALE)
+            "%s列 %r 量化到 %d 位小数失败（超出 decimal 上下文精度）" % (what, value, scale)
         ) from exc
+
+
+def _as_decimal(value) -> Decimal:
+    """`dc_daily_bar` 的六个数值列 → `Decimal`，标度 `_VALUE_SCALE`（4 位）。"""
+    return _to_decimal(value, _VALUE_QUANTUM, _VALUE_SCALE, "数值")
+
+
+def _as_factor_decimal(value) -> Decimal:
+    """`dc_adjust_factor.adjust_factor` → `Decimal`，标度 `_FACTOR_SCALE`（8 位）。
+
+    单独立一个名字而不是让调用点自己传量子：因子列的标度与日线不同，而**传错的后果
+    是静默的**（见 `_FACTOR_SCALE` 那段）。名字里带 `factor`，写侧读侧一眼能对上 DDL。
+    """
+    return _to_decimal(value, _FACTOR_QUANTUM, _FACTOR_SCALE, "复权因子")
 
 
 def _row_to_bar(row: Mapping[str, Any]) -> DailyBar:
@@ -349,6 +425,75 @@ def _raise_if_divergent(bar: DailyBar, row: Mapping[str, Any], concurrent: bool 
     )
 
 
+# ── 复权因子：与日线同一套判据，但**标度不同**（`numeric(18,8)`）─────────────
+
+def _row_to_factor(row: Mapping[str, Any]) -> AdjustFactorPoint:
+    """因子行 → dataclass。与 `_row_to_bar` 同形状：缺列 ⇒ DATA_008，不静默补默认值。"""
+    try:
+        return AdjustFactorPoint(
+            symbol=str(row["symbol"]),
+            trade_date=_as_date_value(row["trade_date"]),
+            adjust_factor=_as_factor_decimal(row["adjust_factor"]),
+            source="" if row["source"] is None else str(row["source"]),
+            data_version=str(row["data_version"]),
+        )
+    except KeyError as exc:
+        raise DataStoreError(
+            "按主键取回的因子行缺少列 %s —— 读的列清单与 db/data_center.sql 不一致" % (exc,)
+        ) from exc
+
+
+def _factor_insert_params(point: AdjustFactorPoint) -> tuple:
+    """按 `FACTOR_COLUMNS` 的顺序绑定 —— 列序与值序必须同源。"""
+    return (
+        point.symbol,
+        _as_date_value(point.trade_date),
+        _as_factor_decimal(point.adjust_factor),
+        "" if point.source is None else str(point.source),
+        _require_version(
+            point.data_version, "因子行 %s/%s" % (point.symbol, point.trade_date)
+        ),
+    )
+
+
+def _factor_primary_key(point: AdjustFactorPoint) -> tuple:
+    return (
+        point.symbol,
+        _as_date_value(point.trade_date),
+        _require_version(
+            point.data_version, "因子行 %s/%s" % (point.symbol, point.trade_date)
+        ),
+    )
+
+
+def _raise_if_factor_divergent(
+    point: AdjustFactorPoint, row: Mapping[str, Any], concurrent: bool = False
+) -> None:
+    """同主键异因子 ⇒ DATA_007（约定 3 / D8）。**只有一列参与判等**（见 `FACTOR_COLUMNS`）。
+
+    不写成「六列判等」的泛化版：因子表就一列，而多出来的循环只会把「到底比了什么」
+    推到一个常量里，读的人还得回头查 `FACTOR_COLUMNS` 才知道判等是不是真的发生了。
+    """
+    mine = _as_factor_decimal(point.adjust_factor)
+    try:
+        theirs = _as_factor_decimal(row["adjust_factor"])
+    except KeyError as exc:
+        raise DataStoreError(
+            "按主键取回的因子行缺少列 %s —— 列清单与 db/data_center.sql 不一致" % (exc,)
+        ) from exc
+    if mine == theirs:
+        return
+    symbol, trade_date, data_version = _factor_primary_key(point)
+    raise IngestConflictError(
+        "主键 (symbol=%s, trade_date=%s, data_version=%s) 已存在且复权因子不同："
+        "库内 %s / 本批 %s%s —— "
+        "D8：同一版本的行不可变，DATA_007 提示可能并发跑了两份采集。"
+        "要改写历史请换一个新的 data_version 重采，不要用 upsert 把冲突盖掉。"
+        % (symbol, trade_date, data_version, theirs, mine,
+           "（并发写入后复查发现）" if concurrent else "")
+    )
+
+
 class PgBarStore(BarStore):
     """PostgreSQL 支撑的 `BarStore`：按窗口 + 版本读日线。"""
 
@@ -414,6 +559,86 @@ class PgBarIngestor:
                 "不能当作成功" % (key,)
             )
         _raise_if_divergent(bar, again[0], concurrent=True)
+        return False
+
+
+class PgFactorStore(FactorStore):
+    """PostgreSQL 支撑的 `FactorStore`：按窗口 + 版本读复权因子。
+
+    与 `PgBarStore` 一样**必须绑 `data_version`**（约定 2 / D8）：不绑的话同一
+    `(symbol, trade_date)` 会按版本数重复出现，而调用方（`DbDataFeed.get_adjustment_factor`）
+    取的是 `rows[0]` —— 它拿到的是**哪一个版本**就变成执行顺序的函数。
+    """
+
+    def __init__(self, conn: SqlConnection, data_version: str):
+        self.conn = conn
+        self.data_version = _require_version(data_version, "PgFactorStore")
+
+    def select_factors(
+        self, symbol: str, start: date, end: date
+    ) -> List[AdjustFactorPoint]:
+        rows = _run(
+            self.conn,
+            SQL_SELECT_FACTORS,
+            (symbol, self.data_version, _as_date_value(start), _as_date_value(end)),
+            "读复权因子窗口",
+        )
+        return [_row_to_factor(row) for row in rows]
+
+
+class PgFactorIngestor:
+    """按 D10 幂等写复权因子：同值不写、异值抛 `IngestConflictError`。
+
+    形状与 `PgBarIngestor` 逐条对齐（先过形状、整批一个事务、`_write_one` 返回布尔、
+    `_run` 收口异常），但**刻意不抽成一个「通用 upsert 引擎」**：两张表的判等列集合
+    不同（六列 vs 一列）、标度不同（4 vs 8）、主键的语义也可能分家（因子将来可能按
+    源再分）。抽早了会把两边都不需要的约束焊死；真正该共用的部分（`_to_decimal`、
+    `_run`、`_require_version`）已经共用了。
+    """
+
+    def __init__(self, conn: SqlConnection):
+        self.conn = conn
+
+    def upsert_adjust_factors(
+        self, rows: Sequence[AdjustFactorPoint]
+    ) -> IngestReport:
+        points = list(rows)
+        # 与日线同序：先一次过掉形状问题（不写一行、不开事务），再整批一个事务。
+        for point in points:
+            _require_version(
+                point.data_version, "因子行 %s/%s" % (point.symbol, point.trade_date)
+            )
+        inserted = 0
+        skipped = 0
+        with self.conn.transaction():
+            for point in points:
+                if self._write_one(point):
+                    inserted += 1
+                else:
+                    skipped += 1
+        return IngestReport(inserted=inserted, skipped=skipped)
+
+    def _write_one(self, point: AdjustFactorPoint) -> bool:
+        """返回 True 表示这一行是新写入的，False 表示本来就在库里且值相同。"""
+        key = _factor_primary_key(point)
+        existing = _run(self.conn, SQL_SELECT_FACTOR_EXISTING, key, "按主键查现有因子行")
+        if existing:
+            _raise_if_factor_divergent(point, existing[0])
+            return False
+        written = _run(
+            self.conn, SQL_UPSERT_FACTOR, _factor_insert_params(point), "写入复权因子"
+        )
+        if written:
+            return True
+        # 与日线同一条推理（见 `PgBarIngestor._write_one`）：
+        # upsert 没返回行 ⇒ 只能是并发写者在这一瞬间插进去的同一主键。
+        again = _run(self.conn, SQL_SELECT_FACTOR_EXISTING, key, "并发写入后复查（因子）")
+        if not again:
+            raise DataStoreError(
+                "主键 %s 的因子 upsert 既没返回行、复查也查不到 —— 驱动/事务语义与预期不符，"
+                "不能当作成功" % (key,)
+            )
+        _raise_if_factor_divergent(point, again[0], concurrent=True)
         return False
 
 

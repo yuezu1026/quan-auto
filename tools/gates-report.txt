@@ -28,7 +28,7 @@ GATE data-center-ddl (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 数据中心契约 §3.6.1 与 db/data_center.sql 约束清单双向一致
 argv: tools/verify_data_center.py
 ------------------------------------------------------------------------------
-CRLF-normalised: contract=166139 bytes, ddl=20308 bytes, smoke=41415 bytes
+CRLF-normalised: contract=171813 bytes, ddl=20308 bytes, smoke=41415 bytes
 extracted: tables=9 documented=16 declared=16 in_body=16 mysqlisms=0 smoke_asserted=16
 verdict: PASS (0 issue(s))
 NOTE: this gate never executes the DDL and never inspects a CHECK expression. Passing it does NOT mean the constraints reject bad values -- that is what db/data_center.smoke.sql has to print SMOKE PASS for. That run has happened (see tools/sql-smoke-report.txt, and tools/falsify-report.txt for the per-constraint falsification); both are SNAPSHOTS and are void the moment any db/*.sql or *.smoke.sql file changes.
@@ -38,8 +38,8 @@ GATE data-center-pit (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: DataFeed 取数路径的 as_of 两层防线（_require_visible + record_access）与回测会话的 QFQ/BFILL 拒绝都还在，且只由 DataCenter.as_of() 产出
 argv: tools/verify_data_center_pit.py
 ------------------------------------------------------------------------------
-CRLF-normalised: quanauto\datafeed.py=12304 bytes, quanauto\datacenter.py=25555 bytes, quanauto\datasources.py=111752 bytes
-extracted: scanned_modules=3 feed_classes=3 pit_feeds=1 unbounded_feeds=2 feed_methods=22 feed_instantiations=1 store_touchers=4 date_takers=7 as_of_impls=1 guard_raises=1
+CRLF-normalised: quanauto\datafeed.py=13207 bytes, quanauto\datacenter.py=33124 bytes, quanauto\datasources.py=112013 bytes
+extracted: scanned_modules=3 feed_classes=3 pit_feeds=1 unbounded_feeds=2 feed_methods=23 feed_instantiations=1 store_touchers=5 date_takers=7 as_of_impls=1 guard_raises=1
 verdict: PASS (0 issue(s))
 NOTE: this gate parses the source, it never executes it. Passing it does NOT mean the PIT guard rejects at runtime -- that is what tests/test_data_center_pit.py shows (18 cases, including the I2 trigger test where a store ignores the window and record_access must refuse). This gate proves the opposite direction: that the two layers cannot be dropped silently when a method is added later.
 
@@ -48,8 +48,8 @@ GATE data-center-adapter (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 适配器把源列名/取值翻成标准 schema、采集层不含数据库驱动、上游 SDK 只在函数内惰性 import、且行对象不暴露源字段名
 argv: tools/verify_data_center_adapter.py
 ------------------------------------------------------------------------------
-CRLF-normalised: quanauto\datasources.py=111752 bytes, quanauto\datacenter.py=25555 bytes, quanauto\errors.py=17585 bytes, docs\智能量化交易平台-数据中心接口契约文档.md=166139 bytes
-extracted: scanned_modules=3 str_maps=8 column_maps=7 value_maps=1 schema_bindings=5 module_imports=15 lazy_source_imports=2 row_classes=3 denylist_names=35 contract_schemas=4 taxonomy_declared=8 taxonomy_producers=8 taxonomy_wiring=1
+CRLF-normalised: quanauto\datasources.py=112013 bytes, quanauto\datacenter.py=33124 bytes, quanauto\errors.py=17585 bytes, docs\智能量化交易平台-数据中心接口契约文档.md=171813 bytes
+extracted: scanned_modules=3 str_maps=8 column_maps=7 value_maps=1 schema_bindings=5 module_imports=15 lazy_source_imports=2 row_classes=4 denylist_names=35 contract_schemas=4 taxonomy_declared=8 taxonomy_producers=8 taxonomy_wiring=1
 verdict: PASS (0 issue(s))
 NOTE: 这个门禁只解析源码、从不执行、不导入 pandas、不跑 pytest。它证明的是「结构上没被绕过」，**不是**「映射表的内容是对的」—— 源列名是从各源文档抄来的，从未联网核对（akshare/baostock 都没装），那条欠账登记在数据中心契约附录 B。东财两张财务表是照实测重排的（附录 B12），但那是**人工冒烟**的结论，不是这里出来的。运行时行为由 tests/test_data_center_adapter.py 负责。
 
@@ -58,7 +58,7 @@ GATE iteration-plan (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 迭代计划里每个标「已交付」的迭代都引用了一条真实存在的证据路径
 argv: tools/verify_iteration_plan.py
 ------------------------------------------------------------------------------
-CRLF-normalised: plan=79879 bytes (迭代计划.md)
+CRLF-normalised: plan=85918 bytes (迭代计划.md)
 extracted: iterations=5 delivered=4 dod_sections=5
 verdict: PASS (0 issue(s))
 NOTE: this gate checks the plan is internally well-formed and that no completion claim dangles. It cannot judge whether an iteration was actually delivered -- someone still has to open the cited evidence file.
@@ -159,10 +159,10 @@ GATE appendix-refs (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 契约文档里被引用的附录标签（含条目号、点名归属）都真实存在
 argv: tools/verify_appendix_refs.py
 ------------------------------------------------------------------------------
-scan scope: git ls-files=99 file(s), read as text=96, skipped=3
+scan scope: git ls-files=100 file(s), read as text=97, skipped=3
   skipped (binary/undecodable): docs/智能量化交易平台-数据中心数据源选型与接入规范.docx, docs/智能量化交易平台-核心模块接口契约文档.docx, docs/智能量化交易平台.docx
 appendix index: core=7L/24I dc=4L/73I prd=2L/0I risk=0L/0I
-citations: 298 total, 171 with an item label, 85 naming an owner, in 35 file(s)
+citations: 318 total, 193 with an item label, 95 naming an owner, in 35 file(s)
 verdict: PASS (0 issue(s))
 
 ==============================================================================
@@ -175,7 +175,7 @@ contract:        docs\智能量化交易平台-核心模块接口契约文档.md
 G section:       line 2204
 python blocks:   5
 declarations:    41
-impl scan:       quanauto/*.py files=16 classes=146 newtypes=1
+impl scan:       quanauto/*.py files=16 classes=151 newtypes=1
 compared:        matched=35 contract-first=6
 verdict: PASS (0 finding(s))
 
@@ -201,18 +201,18 @@ argv: tools/verify_class_coverage.py
 ------------------------------------------------------------------------------
 root:            D:\project-quan\quan-auto
 contract[core]   docs\智能量化交易平台-核心模块接口契约文档.md  classes=80 prose=21437 chars
-contract[dc  ]   docs\智能量化交易平台-数据中心接口契约文档.md  classes=29 prose=83124 chars
+contract[dc  ]   docs\智能量化交易平台-数据中心接口契约文档.md  classes=29 prose=86129 chars
 contract[risk]   docs\智能量化交易平台-风控层接口契约文档.md  classes=24 prose=35220 chars
 python blocks:   71 (unparsable=2, of which class-like=2, NewType aliases=1)
 NOTE: 契约 core 文档 1167 行的块解析不了（第 1168 行语法错：invalid syntax）—— 类名提示=Account 首行=@dataclass class Account: account_id: str # 账户ID total_capital: float 
 NOTE: 契约 core 文档 1989 行的块解析不了（第 2005 行语法错：unterminated triple-quoted string literal (detected at line 23)）—— 类名提示=ResultSerializer 首行=class ResultSerializer: """ 回测结果序列化器。 """
 declared side:   classes=132（只认 ast 解出来的 ClassDef，文本搜不算）
-registry side:   manifest.classes=9 impl_only=23 CONTRACT_FIRST=6 T1_REQUIRED=2 -> union=39（声明∪登记=147）
-impl scan:       quanauto/*.py files=16 classes=146 (NewType aliases=1, 不计入)
-coverage:        covered=116 (by declaration=101, registration-only=15) uncovered=30
-triage:          debt(契约点过名、正文没有类块)=7 local(契约不定义)=23
-mention split:   登记表里 30 个名字：契约散文提到过 14 / 连名字都没有 16 （提及不算覆盖）
-  只靠散文提及 14 个：DataStoreError, IngestReport, OrderRejectedError, PgBarIngestor, PgBarStore, PsycopgConnection, RiskConfigInvalidError, RiskConfigLoadError, RiskConfigWriteError, RiskDecisionLogWriter, RiskError, RiskInterceptError, RiskInterceptLogWriter, StrategyHandle
+registry side:   manifest.classes=9 impl_only=26 CONTRACT_FIRST=6 T1_REQUIRED=2 -> union=42（声明∪登记=150）
+impl scan:       quanauto/*.py files=16 classes=151 (NewType aliases=1, 不计入)
+coverage:        covered=119 (by declaration=101, registration-only=18) uncovered=32
+triage:          debt(契约点过名、正文没有类块)=7 local(契约不定义)=25
+mention split:   登记表里 32 个名字：契约散文提到过 15 / 连名字都没有 17 （提及不算覆盖）
+  只靠散文提及 15 个：DataStoreError, IngestReport, OrderRejectedError, PgBarIngestor, PgBarStore, PgFactorIngestor, PsycopgConnection, RiskConfigInvalidError, RiskConfigLoadError, RiskConfigWriteError, RiskDecisionLogWriter, RiskError, RiskInterceptError, RiskInterceptLogWriter, StrategyHandle
 verdict: PASS (0 finding(s))
 
 ==============================================================================
@@ -224,11 +224,11 @@ root:            D:\project-quan\quan-auto
 CORE table:      rows=21  line=2111  类名列=无  docs\智能量化交易平台-核心模块接口契约文档.md
 DC   table:      rows=7  line=1072  类名列=有  docs\智能量化交易平台-数据中心接口契约文档.md
 RISK table:      rows=11  line=1417  类名列=无  docs\智能量化交易平台-风控层接口契约文档.md
-impl scan:       quanauto/*.py files=16 classes=146 codes=30 unparsable=0
+impl scan:       quanauto/*.py files=16 classes=151 codes=30 unparsable=0
 contract side:   codes=37（core=21, dc=7, risk=11）重叠=2
 pending:         registered=12 matched=12 stale=0
 impl-only:       registered=5 matched=5 stale=0
-spelling:        tokens=278 normalized=43 divergent=1 registered=1
+spelling:        tokens=295 normalized=43 divergent=1 registered=1
 detectors:       16（每个检查码在 --selftest/--falsify 里各有一个坏样本）
 notes:           三份契约的码表与 quanauto/ 双向对齐（码 / 拼写 / 级别 / 类名）
 verdict: PASS (0 finding(s))

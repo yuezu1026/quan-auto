@@ -40,13 +40,23 @@ bug），没有越界时返回**最后一次访问**的报告；全部越界点�
 因为 `record_access` 一越界就抛，越界列表在实践中最多一条 —— 除非调用方自己 `except`
 掉继续跑，那时候 `leakage_points()` 就是唯一的现场。
 
-## 已知缺口（I2 S1 不修，但必须写在这里）
+## 已知缺口（写在这里，而不是散在实现里）
 
-* **复权因子恒为 1.0**：本切片没有接 `dc_adjust_factor`，`get_adjustment_factor` 返回 1.0，
-  即**等价于不复权**。所以 `as_of(..., adjust_type=AdjustType.HFQ)` 与 `NONE` 结果相同 ——
-  D6 要求的"读取时按 `as_of_date` 现算后复权"还没实现。  **订正（2026-09-29）**：I2c 已给复权因子接上**采集路径**（`TushareAdapter.fetch_adjust_factor`，
-  DC 契约附录 B21），但那是 `quanauto/datasources.py` 里的东西，与本文件无关 ——
-  **写入侧（`dc_adjust_factor`）与读侧（这个方法）都还没接**，所以这里的 `1.0` 一天没变，缺口也一天没关。* `live()` / `trading_calendar()` 未实现（`NotImplementedError`）。
+* **复权价仍未实施**（2026-09-29 收口一半）：`get_adjustment_factor` 现在真的从
+  `dc_adjust_factor` 读**累计因子**（`FactorStore` 这条缝；写入口 = `quanauto/pgstore.py` 的
+  `PgFactorIngestor`，但它与 `PgBarIngestor` 一样**没有任何产品调用点**——
+  `quanauto/` 内零调用者，"接口存在"不等于"已经有人在写库"），
+  但它只把因子交给策略（`MarketDataBundle.adjust_factor`，见 `quanauto/engine.py`）——
+  `quanauto/engine.py` 里 `adjust_factor` 只出现在 `build_bundle` 那一行，
+  **没有任何算术用它**；`BarData` 的 OHLC 仍是**不复权价** ⇒ D6 那条
+  "复权是**读取时的视图行为**"（按 `as_of_date` 现算后复权价）**还没实现**。
+  这条缺口登记在 DC 契约附录 A6 / B7，别把它读成"复权已经做完了"。
+  订正（历史）：本段曾写"复权因子恒为 1.0"，那在 2026-09-29 之前是事实；
+  现在的事实是**因子真了、价还没复**——两句话必须一起说，否则读者会得出相反的结论。
+  因子"真"到什么程度也要一起说：`HFQ`/`QFQ` 下取不到因子**会抛**出去
+  （`DataNotAvailableError` = DATA_001），只有 `AdjustType.NONE` 才返回 1.0。
+* `get_dividend` 仍恒 0.0（没有分红数据源）。
+* `live()` / `trading_calendar()` 未实现（`NotImplementedError`）。
 * 财务 / 指数成分股 / 数据质量 / 采集幂等不在本切片。
 """
 
@@ -60,7 +70,7 @@ from typing import List, Optional, Sequence, Tuple
 
 from .datafeed import DataFeed, epoch_seconds
 from .enums import AdjustType, FillPolicy, MarketStatus
-from .errors import DataVersionError, FutureDataAccessError
+from .errors import DataNotAvailableError, DataVersionError, FutureDataAccessError
 from .models import BarData
 
 # `select_bars(symbol, start, end)` 的下界哨兵：只有 `get_available_dates` 那种
@@ -73,6 +83,10 @@ MIN_DATE = date(1900, 1, 1)
 # "字段名"，没有规定日线该填什么 —— 所以这是一个**选择**，写在这里而不是散在调用点。
 # 单字段读取（财务的 `revenue` / `roe` 之类）才该填真实列名。
 BAR_FIELD = "bar"
+
+# 复权因子是**单字段**读取（`dc_adjust_factor.adjust_factor` 那一列），所以这里填真实列名
+# 而不是像日线那样填整行名 —— 契约 §3.7 的 `field` 参数本来就是这个意思。
+FACTOR_FIELD = "adjust_factor"
 
 
 class SessionMode(Enum):
@@ -151,6 +165,62 @@ class InMemoryBarStore(BarStore):
 
     def select_symbols(self) -> List[str]:
         return sorted({r.symbol for r in self.rows})
+
+
+@dataclass(frozen=True)
+class AdjustFactorPoint:
+    """一条复权因子 —— 列名与 `db/data_center.sql` 的 `dc_adjust_factor` 逐列对应。
+
+    **刻意不是** `DailyBar` 上的一个字段：因子的主键与日线相同（`symbol` / `trade_date` /
+    `data_version`），但「这一天没有因子行」是常事（停牌、非交易日、源只发变动日），
+    那时正确的行为是抛 DATA_001，而**不是**给日线补一个 1.0 —— 把两者塞进同一行，
+    「缺的到底是哪一半」在类型上就消失了，而判据（要不要抛）也跟着消失。
+
+    `adjust_factor` 是**累计因子**（DC 契约 §2.3：无量纲、累乘、`> 0`；附录 B21.5：
+    tushare 的 `adj_factor` 本身就是累计值，采集侧归一化但**不换算**）⇒ 后复权价 =
+    不复权价 × 该交易日的累计因子，读取时**不需要**再把历史因子累乘一遍。
+
+    注解写 `float` 是契约形状（§2.1.1 的数值字段都是 `float`），但存储层交出来的实际是
+    `Decimal`（`pgstore._row_to_factor`，与 `DailyBar` 的价格列同一条缝）⇒ 收口在
+    `DbDataFeed.get_adjustment_factor` 里那次 `_as_float`。
+    """
+
+    symbol: str
+    trade_date: date
+    adjust_factor: float
+    source: str = ""
+    data_version: str = ""
+
+
+class FactorStore(ABC):
+    """复权因子的存储接口 —— 与 `BarStore` **并列**，而不是并进它。
+
+    为什么不把 `select_factors` 加到 `BarStore` 上：那会让每一个「只关心日线」的存储
+    实现（以及用例里所有的假存储）都必须为一个它不关心的方法写桩，而**桩是探测器最爱的
+    地方**——一个空实现的 `select_factors` 会让「复权因子没接」这件事看起来像
+    「接上了但库里没有数据」。两个协议，各自实现，各自测。
+
+    窗口是**闭区间**且必须接受：与 `BarStore` 同一个理由 —— 存储接口不接受窗口，
+    第二层防护（`PITGuard`）就永远没有触发场景，那会是一个测不出东西的空转守卫。
+    """
+
+    @abstractmethod
+    def select_factors(self, symbol: str, start: date, end: date) -> List[AdjustFactorPoint]:
+        """闭区间 `[start, end]` 的因子行，按 `trade_date` 升序。"""
+        raise NotImplementedError
+
+
+class InMemoryFactorStore(FactorStore):
+    """内存实现 —— 给单元测试与门禁用，不依赖数据库（本机没有本地 PostgreSQL）。"""
+
+    def __init__(self, rows: Sequence[AdjustFactorPoint]):
+        self.rows = list(rows)
+
+    def select_factors(self, symbol: str, start: date, end: date) -> List[AdjustFactorPoint]:
+        return sorted(
+            (r for r in self.rows if r.symbol == symbol and start <= r.trade_date <= end),
+            key=lambda r: r.trade_date,
+        )
 
 
 @dataclass
@@ -315,6 +385,7 @@ class DbDataFeed(DataFeed):
         adjust_type: AdjustType = AdjustType.HFQ,
         fill_policy: FillPolicy = FillPolicy.NONE,
         pit_guard: Optional[PITGuard] = None,
+        factor_store: Optional[FactorStore] = None,
     ):
         self.store = store
         self.as_of_date = _as_date(as_of_date)
@@ -322,6 +393,10 @@ class DbDataFeed(DataFeed):
         self.session_mode = session_mode
         self.adjust_type = adjust_type
         self.fill_policy = fill_policy
+        # `factor_store` 追加在最后且带默认值：位置参数的老用法（`DbDataFeed(store, as_of, ver)`）
+        # 一字不改。没有接因子源的 feed 仍然是**合法**的 —— 它只是回答不了"HFQ 的因子是多少"
+        # （那时抛 DATA_001，见 `get_adjustment_factor`），而不是悄悄地按不复权跑。
+        self.factor_store = factor_store
         self.pit_guard = pit_guard if pit_guard is not None else RecordingPITGuard(self.as_of_date)
 
     # ── 内部：把存储行变成 `BarData` ──────────────────────────────────────
@@ -370,6 +445,24 @@ class DbDataFeed(DataFeed):
             bars.append(self._row_to_bar(row))
         return bars
 
+    def _select_factors(self, symbol: str, start: date, end: date) -> List[AdjustFactorPoint]:
+        """因子行走**同一套**第二层防护：每一行都要过 `PITGuard`（理由见 `_select`）。
+
+        单独一个方法而不是往 `_select` 的循环里塞：两者读的是两张表、返回两种行。
+        一条被库多吐出来的因子行（窗口写错、缓存按 symbol 命中忘了带日期）与一根多余的
+        K 线是**同等严重**的未来函数 —— 它会把后复权价乘上一个未来才生效的因子。
+
+        没有接因子源时返回空列表：这是存储层的事实（"没有行"），**不是**本方法替调用方
+        做决定 —— 要抛还是退回 1.0，是 `get_adjustment_factor` 的判据，只写在那一处。
+        """
+        if self.factor_store is None:
+            return []
+        factors = []
+        for row in self.factor_store.select_factors(symbol, start, end):
+            self.pit_guard.record_access(row.symbol, row.trade_date, FACTOR_FIELD)
+            factors.append(row)
+        return factors
+
     # ── DataFeed 的 9 个方法 ──────────────────────────────────────────────
     def get_bar(self, symbol: str, datetime: datetime) -> Optional[BarData]:
         when = self._require_visible(datetime, "DbDataFeed.get_bar")
@@ -405,18 +498,44 @@ class DbDataFeed(DataFeed):
         return bar is not None and bar.volume > 0
 
     def get_adjustment_factor(self, symbol: str, datetime: datetime) -> float:
-        """已知缺口：本实例没有复权数据，恒返回 1.0（= 不复权）。见模块 docstring。
+        """该 (标的, 交易日) 的**累计**复权因子（D6 / §2.3）。
 
-        订正（2026-09-29）：I2c 已给复权因子接上**采集路径**（`TushareAdapter.fetch_adjust_factor`，
-        DC 契约附录 B21），但**读侧（本方法）与写入侧都没接** ⇒ 这里仍是 1.0。
-        别把这个常量读成「还没人做这件事」：采集侧已做，缺的是从 `dc_adjust_factor` 读回来。
+        三条分支，按"先问要不要因子、再问库里有没有"的顺序（2026-09-29 裁决）：
 
-        仍然要过 `_require_visible`：即使返回值是个常数，**问**"1 月 6 日的复权因子是多少"
-        这件事本身就是一次对未来数据的访问 —— 今天返回 1.0，明天实现之后返回真因子，
-        同一个调用在两种实现下语义不同，所以现在就得拒。
+        * `AdjustType.NONE`（不复权）⇒ 返回 `1.0`，**不查库**。不复权就是"不乘任何东西"，
+          去查一张可能没有这一行的表，只会把"今天停牌"变成 DATA_001 —— 那不是调用方
+          想知道的事。这条分支是**纯计算**，所以它连 `factor_store` 都不看：一个没接
+          因子源的 feed 在 `NONE` 下依然可用（否则 `NONE` 会因为配置而变红）。
+        * `HFQ` / `QFQ` ⇒ **严格查** `dc_adjust_factor`，取 `(symbol, trade_date,
+          data_version)` 那一行；**没有行就抛 `DataNotAvailableError`（DATA_001）**。
+          不退化、不补 1.0：§2.4「所有"找不到数据"的分支都必须显式失败，不允许返回空集
+          或默认值」。静默补 1.0 的后果不是一个错数，而是**整段回测悄悄变成不复权**，
+          曲线照样好看。
+        * 本 feed 没接因子源（`factor_store=None`）⇒ 同样是 DATA_001，但消息里点明是
+          **配置**没接上、不是这一天没数据 —— 两种情形一个错误码，靠消息区分：
+          真实原因不同，**修法**也不同（一个去接线，一个去重采）。
+
+        `_require_visible` 必须在最前面：**问**"1 月 6 日的复权因子是多少"这件事本身
+        就是一次对未来数据的访问。它也是 `tools/verify_data_center_pit.py` 的 P4
+        钉住的不变量（带日期参数的公开方法必须过第一层）。
         """
-        self._require_visible(datetime, "DbDataFeed.get_adjustment_factor")
-        return 1.0
+        when = self._require_visible(datetime, "DbDataFeed.get_adjustment_factor")
+        if self.adjust_type is AdjustType.NONE:
+            return 1.0
+        if self.factor_store is None:
+            raise DataNotAvailableError(
+                "本 feed 没有接复权因子存储（factor_store=None）⇒ 给不出 %s 在 %s 的复权因子。"
+                "这是**配置**没接上，不是这一天没有数据（DATA_001）—— "
+                "D6 下 HFQ/QFQ 必须有因子，不能退化成 1.0" % (symbol, when)
+            )
+        rows = self._select_factors(symbol, when, when)
+        if not rows:
+            raise DataNotAvailableError(
+                "%s 在 %s 没有复权因子行（dc_adjust_factor，data_version=%s）⇒ DATA_001。"
+                "D6/§2.4：找不到数据必须显式失败 —— 静默返回 1.0 会让这个标的的回测"
+                "整体变成不复权，而报告里看不出任何异常" % (symbol, when, self.data_version)
+            )
+        return _as_float(rows[0].adjust_factor)
 
     def get_dividend(self, symbol: str, datetime: datetime) -> float:
         """已知缺口：本切片没有分红数据，恒返回 0.0（理由同 `get_adjustment_factor`）。"""
@@ -484,11 +603,15 @@ class InMemoryDataCenter(DataCenter):
         versions: Sequence[str] = ("v2026.09.23",),
         active_version: str = "v2026.09.23",
         session_mode: SessionMode = SessionMode.BACKTEST,
+        factor_store: Optional[FactorStore] = None,
     ):
         self.store = store
         self.versions = tuple(versions)
         self._active_version = active_version
         self.session_mode = session_mode
+        # 因子源与日线源是两个存储（两张表、两种行），所以在**数据中心**这一层也得各接一根
+        # 线；默认 `None` 的老用法向后兼容（位置参数一个没动）。
+        self.factor_store = factor_store
 
     def as_of(
         self,
@@ -525,6 +648,7 @@ class InMemoryDataCenter(DataCenter):
             # 每次取视图配一个新的守卫：守卫的状态（count / last_access / leakage）
             # 是**会话级**的，跨会话复用会让上一个视图的泄露点污染下一个视图的报告。
             pit_guard=RecordingPITGuard(as_of_date),
+            factor_store=self.factor_store,
         )
 
     def live(self, account_mode: str) -> DataFeed:

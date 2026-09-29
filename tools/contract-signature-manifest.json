@@ -407,6 +407,13 @@
       "reason": "契约用项目符号逐条列出它的方法，不是可解析的类块，所以只能按实现侧登记：只查「清单记的成员还在不在、参数还对不对」，新增公有方法不判红。attach_risk_engine / risk_summary 是 I3 加的两个：前者是风控闸门唯一的接线入口（参数名改了，接线方静默接不上就回到无风控），后者是运行统计的唯一读取点（字段改了，报告/测试的取值会静默变空）。",
       "source": "quanauto/engine.py"
     },
+    "AdjustFactorPoint": {
+      "extras": [],
+      "impl_fields": null,
+      "impl_params": {},
+      "reason": "dc_adjust_factor（db/data_center.sql）的行对象 —— 与 `DailyBar` 完全同一形状的登记：@dataclass 的类体里没有 def，所以这条登记实际只等于一句「类还在」。字段与列名的对应写在类的 docstring 里，而**有牙**的那一半在别处：落库侧由 `tests/test_data_center_store.py::test_factor_columns_match_the_ddl` 对着 `db/data_center.sql` 逐列比。它**故意不是** `DailyBar` 上的一个字段（缺因子行是常事 ⇒ 必须抛 DATA_001，不能补 1.0）—— 那条裁决写在类 docstring 里，也是 I2 A6 收口的核心。",
+      "source": "quanauto/datacenter.py"
+    },
     "BarStore": {
       "extras": [],
       "impl_fields": null,
@@ -466,7 +473,8 @@
           "session_mode",
           "adjust_type",
           "fill_policy",
-          "pit_guard"
+          "pit_guard",
+          "factor_store"
         ],
         "_require_visible": ["self", "when", "where"],
         "_row_to_bar": ["self", "row"],
@@ -481,7 +489,7 @@
         "get_trading_calendar": ["self", "start", "end"],
         "is_symbol_available": ["self", "symbol", "datetime"]
       },
-      "reason": "契约里的 DataFeed 是抽象基类，本类是它唯一带 as_of 的实现体；契约文档用项目符号描述取数语义（§3.3/§3.4），没有可解析的类块，所以按实现侧登记。登记的价值是：I2 S1 定下的「显式日期参数 = 抛，列表方法 = 裁剪」这一组签名与语义，不会被后续迭代悄悄改成另一种形状。",
+      "reason": "契约里的 DataFeed 是抽象基类，本类是它唯一带 as_of 的实现体；契约文档用项目符号描述取数语义（§3.3/§3.4），没有可解析的类块，所以按实现侧登记。登记的价值是：I2 S1 定下的「显式日期参数 = 抛，列表方法 = 裁剪」这一组签名与语义，不会被后续迭代悄悄改成另一种形状。I2 A6 收口时 `__init__` 末尾追加了 `factor_store`（关键字参数、带默认值 `None`，位置调用点不受影响）—— 追加本身**不判红**（这条登记只查「记下来的成员还在、参数没变」），但把它记进来是有价值的：`factor_store=None` 与「给了存储但没有这一天的行」是**两条不同的失败路径**（都抛 DATA_001，消息可区分），谁要是把它挪到中间或改成必填，这里会立刻报参数漂移。",
       "source": "quanauto/datacenter.py"
     },
     "EastMoneyAdapter": {
@@ -496,6 +504,15 @@
       "reason": "同前两个源适配器，另外单独登记它有一个额外理由：它的 _default_fetch 只有 **kwargs 一个参数，是全项目唯一「取数入口不做位置参数约束」的地方 —— 这个差异是刻意的（分支参数由子类自己解释），登记它正好把「不要为了统一形状给它加位置参数」固化成一条可见的约束。",
       "source": "quanauto/datasources.py"
     },
+    "FactorStore": {
+      "extras": [],
+      "impl_fields": null,
+      "impl_params": {
+        "select_factors": ["self", "symbol", "start", "end"]
+      },
+      "reason": "复权因子的读接口，与 `BarStore` **并列**；契约里没有类块，按实现侧登记它的那一个方法。登记的价值与 `BarStore` 那条同源：窗口是**闭区间**且必须接受，否则第二层防护（`PITGuard`）永远没有触发场景。刻意**不把 `select_factors` 并进 `BarStore`** —— 那会让每个「只关心日线」的存储实现（以及用例里所有假存储）都必须为一个它不关心的方法写桩，而桩会让「因子没接」看起来像「接上了但库里没有数据」（理由原写在类的 docstring 里）。",
+      "source": "quanauto/datacenter.py"
+    },
     "InMemoryBarStore": {
       "extras": [],
       "impl_fields": null,
@@ -507,6 +524,16 @@
       "reason": "同上：契约没有这个测试替身。登记它是为了让「窗过滤发生在 store 而不是 feed」这条设计决定（PIT 守卫要逐行看得到越界行）保持可见。",
       "source": "quanauto/datacenter.py"
     },
+    "InMemoryFactorStore": {
+      "extras": [],
+      "impl_fields": null,
+      "impl_params": {
+        "__init__": ["self", "rows"],
+        "select_factors": ["self", "symbol", "start", "end"]
+      },
+      "reason": "同上：契约没有这个测试替身。与 `InMemoryBarStore` 成对 —— 窗过滤发生在 store 而不是 feed（PIT 守卫要逐行看得到越界行）。它同时是**夹具的必需件**：`as_of()` 的默认口径是 `HFQ`（DC 契约 §2.3）⇒ 不给因子存储就抛 DATA_001，所以几乎每个 data-center 用例都会经过它。",
+      "source": "quanauto/datacenter.py"
+    },
     "InMemoryDataCenter": {
       "extras": [],
       "impl_fields": null,
@@ -516,7 +543,8 @@
           "store",
           "versions",
           "active_version",
-          "session_mode"
+          "session_mode",
+          "factor_store"
         ],
         "as_of": [
           "self",
@@ -529,7 +557,7 @@
         "live": ["self", "account_mode"],
         "trading_calendar": ["self", "as_of_date"]
       },
-      "reason": "契约没有 InMemoryDataCenter（测试替身，非契约类型）。按实现侧登记，保证 D3 的唯一合法入口 DataCenter.as_of() 与 D6/D7 的拒绝分支不会消失。",
+      "reason": "契约没有 InMemoryDataCenter（测试替身，非契约类型）。按实现侧登记，保证 D3 的唯一合法入口 DataCenter.as_of() 与 D6/D7 的拒绝分支不会消失。I2 A6 收口时 `__init__` 末尾追加了 `factor_store`（带默认值，`as_of()` 把它透传给 `DbDataFeed`）—— 这一条比 `DbDataFeed` 那条更值得记：它是**每个用例唯一的接缝**，`as_of()` 默认口径 `HFQ` 又要求因子存储必须存在，所以谁把透传那一步删掉，用例会集体红而不是这里红；这条登记至少让「参数被挪动/改必填」当场报出来。",
       "source": "quanauto/datacenter.py"
     },
     "LeakagePoint": {

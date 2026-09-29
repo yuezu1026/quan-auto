@@ -138,7 +138,7 @@ LOCAL = {
         '风控契约 §8.3 明确登记为「实现侧新增的名字（契约里没有，别拿契约去找）」'
         '—— 与 `RiskInterceptLogWriter` 同一条裁决（§7.3）在决策日志表上的落点；'
         '契约 §3.6.1 只规定「谁写这张表」，不规定写入器的类形状',
-    # —— 三份契约连名字都没有（15 个）——
+    # —— 三份契约连名字都没有（17 个）——
     'BrokerError':
         '核心契约附录 D 只给码（`BROKER_001`）；类名与继承层次是实现侧命名 ——'
         '`BrokerError` / `InsufficientFundsError` 同码，说明类名不是契约概念',
@@ -184,6 +184,18 @@ LOCAL = {
         '（那份盯成员，这份盯它没有契约来源）',
     'SqlConnection':
         '存储层连接抽象（协议），与 `PsycopgConnection` 成对；契约没有存储层这一层',
+    'PgFactorStore':
+        '同 `PgBarStore`：存储层类形状不在契约里，三份契约正文连这个名字都没有。'
+        '它比 `PgBarStore` 多一条值得记的理由：**必须绑 `data_version`**（约定 2 / D8）'
+        '—— 不绑的话同一 `(symbol, trade_date)` 会按版本数重复出现，而调用方'
+        '（`DbDataFeed.get_adjustment_factor`）取的是 `rows[0]` ⇒ 它拿到的是**哪一个版本**'
+        '就变成执行顺序的函数。这条约束由 `__init__` 里的 `_require_version` 实现'
+        '（缺版本抛 `TypeError`），比类块细',
+    'PgFactorIngestor':
+        '同 `PgBarIngestor`：三份契约连名字都没有，存储层类形状不在契约里。'
+        'D10 幂等写（同值不写、异值抛 `IngestConflictError`）在两张表上**各自实现、'
+        '刻意不抽成通用 upsert 引擎**（判等列集合 6 列 vs 1 列、标度 4 vs 8 都不同）'
+        '⇒ 它不能被 `PgBarIngestor` 的存在掩盖，所以单独占一条',
 }
 
 # 提取为空 / 提取变薄 ⇒ 拒绝通过。实测值（2026-09-25）：契约声明 132、登记侧 54、

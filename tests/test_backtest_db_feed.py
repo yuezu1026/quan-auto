@@ -48,10 +48,12 @@ from quanauto.cli import (
 from quanauto.datafeed import CsvDataFeed
 from quanauto.datacenter import (
     MIN_DATE,
+    AdjustFactorPoint,
     DailyBar,
     DbDataFeed,
     InMemoryBarStore,
     InMemoryDataCenter,
+    InMemoryFactorStore,
 )
 from quanauto.engine import BacktestEngine, dump_report, report_payload
 from quanauto.enums import BacktestStatus
@@ -128,6 +130,28 @@ def _bar_rows(version: str = VERSION):
     ]
 
 
+def _factors(version: str = VERSION, symbol: str = SYMBOL):
+    """`AdjustFactorPoint` 是**存储形状**，与 `DailyBar` 一样由存储层交出来。
+
+    因子恒 1.0 是**诚实**的：本夹具的 OHLC 本来就是不复权价（复权价仍未实现，
+    见 `quanauto/datacenter.py` 模块头的「已知缺口」）。这里必须给因子，不是因为
+    断言依赖它 —— `quanauto/engine.py` 里 `adjust_factor` 只出现在 `build_bundle`
+    那一行，**没有任何算术用它** —— 而是因为 A6 收口后，默认口径（`HFQ`）下
+    **没有因子存储就要抛** `DataNotAvailableError`（DATA_001）。
+    换句话说：这份夹具在满足 A6 的前置条件，不是在钉某个数值。
+    """
+    return [
+        AdjustFactorPoint(
+            symbol=symbol,
+            trade_date=day,
+            adjust_factor=1.0,
+            source="fixture",
+            data_version=version,
+        )
+        for day in _days()
+    ]
+
+
 class FakeConn:
     """只回答 `PgBarStore` 的两条读语句，并记下每一次调用。
 
@@ -172,7 +196,16 @@ class LyingBarStore(InMemoryBarStore):
 def _center(store=None, version: str = VERSION) -> InMemoryDataCenter:
     if store is None:
         store = InMemoryBarStore(_bars(version))
-    return InMemoryDataCenter(store, versions=(version,), active_version=version)
+    # `as_of()` 默认口径是 `HFQ`（DC 契约 §2.3 行 265：后复权 = 回测默认）⇒ 因子存储
+    # 是**必需的前置条件**，不是可选装饰：不给它，`get_adjustment_factor` 就会按
+    # §2.4「找不到数据必须显式失败」抛 DATA_001。一次性接在这里，`as_of()` 那条
+    # 链上的每个调用点就都满足了。
+    return InMemoryDataCenter(
+        store,
+        versions=(version,),
+        active_version=version,
+        factor_store=InMemoryFactorStore(_factors(version)),
+    )
 
 
 def _feed(center: InMemoryDataCenter) -> DbDataFeed:
@@ -247,7 +280,12 @@ def test_a_feed_that_declares_a_blank_version_is_refused_not_faked():
     `as_of()` 挡得住未知版本，挡不住「版本字段本身是空的」—— 那要在引擎盖章之前判。
     一纸 `600000.SH::35` 出了报告，读它的人没有任何办法知道这轮读的是哪份数据。
     """
-    feed = DbDataFeed(InMemoryBarStore(_bars()), AS_OF, "")
+    feed = DbDataFeed(
+        InMemoryBarStore(_bars()),
+        AS_OF,
+        "",
+        factor_store=InMemoryFactorStore(_factors()),
+    )
     with pytest.raises(DataVersionError) as excinfo:
         _build_engine(feed).run()
     assert excinfo.value.code == "DATA_004"

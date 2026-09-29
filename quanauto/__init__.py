@@ -5,8 +5,12 @@ I2 的 S1（PIT / `as_of` 边界层，`quanauto/datacenter.py`）、S2（采集�
 `quanauto/datasources.py`）与 S3（落库侧 `quanauto/pgstore.py` + 引擎改读 `as_of()` 产出的
 feed）已落地，**但 I2 未关闭** —— 订正（2026-09-29）：原先这里写「真实数据源**从未联网联调**」，
 那句话**已过期**（I2a/I2b 真的联调过：腾讯日线、东财财务表、一次真入库）；**I2c** 又接上了复权因子的
-**采集路径**（tushare `adj_factor`），但**写入侧与读侧都没接** ⇒ `get_adjustment_factor()` 依旧恒返回 `1.0`，
-缺口一步都没往前。
+**采集路径**（tushare `adj_factor`）；**2026-09-29 晚**把**读数侧与写入口**也接上了
+（`get_adjustment_factor()` 从 `dc_adjust_factor` 读累计因子：`HFQ`/`QFQ` 缺行 ⇒ 抛 DATA_001，
+`AdjustType.NONE` 才不查库直接返回 1.0；写入口是 `quanauto/pgstore.py` 的 `PgFactorIngestor`）。
+**但缺口没关闭，只是换了名字**：现在开着的是「**复权价仍未实施**」—— `BarData` 的 OHLC 仍是不复权价、
+`quanauto/engine.py` 里没有一处算术用因子 ⇒ 回测口径**仍等于「不复权」**；且两个 ingestor
+在 `quanauto/` 内**零调用者**（接口有实现，没有产品写入路径）。
 I3（风控真正介入交易）已落地两条线：`quanauto/risk.py` 的风控引擎本体，以及
 `BacktestEngine.attach_risk_engine()` 这条**默认关闭**的接线 —— 不接引擎时下单路径与 I1
 逐一相同，接了之后每单在下单前必经 `RiskEngine.check()`。

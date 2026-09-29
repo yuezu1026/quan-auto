@@ -15,8 +15,9 @@ Why a second, structural check is needed at all:
   `record_access` call. Existing pytest cases cannot see either degeneration. Only an
   AST check can.
 
-Detectors (each fires independently; `--selftest` has one MUT sample per detector, one
-"extraction is empty" sample, and one clean synthetic sample):
+Detectors (each fires independently; `--selftest` has one MUT sample per detector, a second
+P3 sample for the factor seam, one "extraction is empty" sample, and one clean synthetic
+sample):
 
   P1  STRUCT-NO-AS-OF-ON-FEED
       No *query* method of `DataFeed` or a subclass may declare a parameter named
@@ -28,7 +29,8 @@ Detectors (each fires independently; `--selftest` has one MUT sample per detecto
       Only a class deriving from `DataCenter` may instantiate a `DataFeed` subclass.
   P3  GUARD-WIRED
       Every method that transitively reads `store.select_*` must also transitively reach
-      `record_access` (layer 2 really is wired).
+      `record_access` (layer 2 really is wired). The store seams are enumerated in
+      `STORE_READERS`, not matched by prefix -- see that constant.
   P4  EXPLICIT-WINDOW-GUARDED
       Every *public* method that declares `datetime`/`start`/`end` must transitively call
       `self._require_visible` (layer 1 really is wired). Private helpers are out of scope
@@ -99,7 +101,17 @@ SOURCE_RELS = (FEED_REL, CENTER_REL) + EXTRA_RELS
 # contract's own spelling (verified character by character by the contract-signature
 # gate), so these three names are matched literally, warts and all.
 DATE_PARAMS = ('datetime', 'start', 'end')
-STORE_READERS = ('select_bars', 'select_symbols')
+# An **explicit enumeration**, deliberately not a prefix match on `select_*`: a prefix rule
+# would silently enlist every future `select_something` (including ones that do not read a
+# store at all) and P3 would start reporting them as "layer 2 unwired". Listing them means
+# adding a store seam is a two-line change with a sample attached (see NEG3b).
+#
+# `select_factors` was added 2026-09-29 together with the 复权因子 read path. Missing it was
+# not harmless: `DbDataFeed._select_factors` reads `factor_store.select_factors` and, with the
+# name absent here, **P3 could not see that read at all** -- the gate stayed green whether or
+# not the factor rows went through `record_access`. A guard that does not know about the new
+# seam reports "nothing to guard".
+STORE_READERS = ('select_bars', 'select_symbols', 'select_factors')
 
 STAT_KEYS = ('scanned_modules', 'feed_classes', 'pit_feeds', 'unbounded_feeds',
              'feed_methods', 'feed_instantiations', 'store_touchers', 'date_takers',
@@ -638,6 +650,22 @@ def selftest():
         ok = False
     else:
         scenario('NEG3-guard-unwired', feed, bad, 'P3', extras)
+
+    # P3, second seam: the factor read path. This sample exists because the *first* P3
+    # sample cannot see it: the bar path and the factor path disagree about which store
+    # they touch, so a mutation to one leaves the other guarded -- the detector stays
+    # correctly silent and the sample would look like "the guard was never written".
+    # Deleting the FACTOR_FIELD `record_access` makes `_select_factors` reachable from no
+    # guarded method, so P3 must name exactly this seam.
+    bad = _mutate(center,
+                  '            self.pit_guard.record_access(row.symbol, row.trade_date, '
+                  'FACTOR_FIELD)\n',
+                  '            pass  # MUT: factor read is no longer guarded\n',
+                  'NEG3b-factor-guard-unwired')
+    if bad is None:
+        ok = False
+    else:
+        scenario('NEG3b-factor-guard-unwired', feed, bad, 'P3', extras)
 
     # P4: layer 1 unwired on one public method.
     bad = _mutate(center,

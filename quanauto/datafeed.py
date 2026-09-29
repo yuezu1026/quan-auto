@@ -73,7 +73,21 @@ class DataFeed(ABC):
 
     @abstractmethod
     def get_adjustment_factor(self, symbol: str, datetime: datetime) -> float:
-        """复权因子；没有复权信息时返回 1.0。"""
+        """该 (标的, 交易日) 的**累计**复权因子。
+
+        口径（DC 契约 §2.3 / D6，订正于 2026-09-29）："没有复权信息"**不是一个可以
+        静默等价于 1.0 的状态**。
+
+        * 调用方要的就是不复权（`AdjustType.NONE`）⇒ 返回 1.0 —— 这是**计算**的结果，
+          不是"查不到"的退路；
+        * 调用方要后复权/前复权（`HFQ`/`QFQ`）而库/源里没有这一天的因子 ⇒
+          抛 `DataNotAvailableError`（DATA_001）。§2.4：「所有『找不到数据』的分支都必须
+          **显式失败**，不允许返回空集或默认值」。
+
+        本方法先前写的是"没有复权信息时返回 1.0"——那句话把两种情况当成一种，而它
+        的后果是**整段回测静默变成不复权**：曲线照样画得出来，报告里一个字都不提。
+        实现层（`DbDataFeed`）现在按上面两条分开走。
+        """
         raise NotImplementedError
 
     @abstractmethod
