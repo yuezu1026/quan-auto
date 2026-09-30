@@ -7,6 +7,15 @@
 #   pytest        收集到 0 个测试 -> 退出码 5（非 0）
 #   run_all_gates 全部门禁 PASS 时退出码 0；门禁失败 = 1；**harness 自身自测失败 = 2**
 #
+# ⚠️ 2026-09-30 追加：还给了一种「环境不在」的出口码 **3**（门禁自己探不到工具链时
+#    打印 `verdict: SKIPPED (...)` 退 3）。harness 把它记成 SKIPPED 且**不算绿** ——
+#    判据一旦环境缺失就变绿就不再是判据；但也不与「真红」混为一谈（那种要去看门禁，
+#    这种要去装工具链）。所以**下面那两个 setup-* 步骤是平台层门禁能在这儿跑的前提**：
+#    少了任何一个，`platform-runtime` 会退 3，CI 照红。这也是为什么它们必须是真步骤，
+#    而不是在门禁里写成「探不到就算了」。
+#    注意 harness 自身退 2（自测失败）与门禁退 3 是两件事：前者说 harness 坏了，
+#    后者说环境不齐。
+#
 # ⚠️ 2026-09-24 起这份 workflow **真的在 GitHub 上跑**（remote `origin`，公开仓库）。
 #    首次真跑就在 `skeleton` 门禁上判红：本机有 `.venv/`、克隆里没有，同一个 commit
 #    两边结论不同 ⇒ 判据依赖环境，已修（`verify_skeleton._classify_ref`）。
@@ -30,6 +39,24 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+
+      # 平台层门禁（`platform-runtime`）要真跑 `mvn test` / `npm ci` / `npm run build`。
+      # 这两个版本不是随手写的：`platform/pom.xml` 里 `<java.version>21</java.version>`
+      # （Maven 用的是 JAVA_HOME，不是 PATH 里的 java）；Node 侧的硬要求写在
+      # `platform/web/package-lock.json` 里 —— `node_modules/vite` 8.3.1 的 engines
+      # 是 `^20.19.0 || >=22.12.0`，所以这里钉 `22`。注意门禁自己只查下界
+      # （Node ≥ 20）；上界这类要求靠 `npm ci` 自己报出来，不在这里再抄一份。
+      # 也故意不加 `cache: npm` / `cache: maven`：缓存能让一次运行变快，也会让
+      # 「依赖真的能从 lockfile 装出来」这件事变得偶尔没验过 —— 而 `npm ci` 存在的
+      # 意义之一正是盖掉本地缓存带来的假绿。
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
 
       # 用 -e .[dev] 而不是单独装 pytest：这样 pyproject.toml 的
       # [build-system] 与 [project] 也会被真实走一遍（打包配置写错会在这里红）。

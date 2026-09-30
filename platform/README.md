@@ -1,13 +1,18 @@
 # `platform/` —— 回测绩效看板（平台层 P0 切片）
 
-> **这一层的「规格表声明」现在有门禁了；运行侧仍然没有**（2026-09-30 订正）。
+> **这一层现在有两条门禁**（2026-09-30 订正：原来的「运行侧仍然没有」已过期）。
 > `platform-spec-parity`（`tools/verify_platform_specs.py`，tier-A）把 Java 侧
 > `MetricSpec.METRIC_SPECS` 与 Python 侧 `quanauto/dashboard.py` 的 `METRIC_SPECS`
 > **双向**比对（14 行的键/分组/标签/量纲/小数位 + **行序** + 量纲与分组常量 + `STRUCTURE_COUNTS`）。
-> 它接在 `tools/run_all_gates.py` 的统一入口里 ⇒ 而 `ci.yml` 最后一步就是那条命令
-> ⇒ **这部分是真的在 CI 上跑**。门禁数现取 `python tools/run_all_gates.py --list`，不要在文档里抄。
-> ⚠️ 它**不编译、不启动 JVM、不渲染页面** ⇒ `mvn test`、`npm run build` 与页面本身
-> 依然没有任何门禁盯着 —— 分工的出处是 `docs/智能量化交易平台.md` 附录C 的 §C.5 与它的 C.8 订正块。
+> `platform-runtime`（`tools/verify_platform_build.py`，tier-A）在**一次性沙箱**里按
+> `npm ci` → `npm run build` → `mvn test` **真跑一遍**——**这个顺序本身是判据**（见下「跑起来」）。
+> 两条都接在 `tools/run_all_gates.py` 的统一入口里 ⇒ 而 `ci.yml` 最后一步就是那条命令
+> ⇒ **两条都真的在 CI 上跑**（代价是 CI 里必须装 JDK 21 与 Node，见 `ci.yml`）。
+> `platform-runtime` 探不到工具链时退 **3 = SKIPPED**，harness 把 3 记成「**不算绿**」。
+> 门禁数现取 `python tools/run_all_gates.py --list`，不要在文档里抄。
+> ⚠️ 两条都**不启动 JVM、不渲染页面** ⇒ **页面本身**仍然没有任何门禁盯着；
+> 两侧**展示文本**也只有手动脚本（见下）。分工的出处是 `docs/智能量化交易平台.md` 附录C 的
+> §C.5 与它的 C.8 / C.9 两个订正块。
 >
 > 本层**不改动研究层的任何文件**（`quanauto/dashboard.py` 一行未改），**不碰 `db/*.sql`**，
 > **不碰 `.github/workflows/ci.yml`**。它只是同一份回测报告的**另一个读法**。
@@ -50,9 +55,12 @@ quanauto/dashboard.py ── 研究层的另一个读法（未改动）
 
 ## 跑起来
 
-**顺序要紧**：前端构建的产物写进 `api/src/main/resources/static/`，
+**顺序要紧**（**现在这条顺序有机器判据了**：`platform-runtime` 门禁会在沙箱里按这个次序真跑，
+并把「`mvn test` 之前 `target/classes/static/` 不为空」或「之后没出现该有的产物」报成
+`PB-STITCH-PREEXISTING` / `PB-STITCH-MISSING`）：前端构建的产物写进 `api/src/main/resources/static/`，
 而 Spring 是从 `classpath:/static/`（= `target/classes/static/`）托管的，
 所以**先 build 前端，再启动后端**；先起后端再 build 的话，served 的那份是旧的。
+⚠️ 这个错**不会**让任何一条 Java 测试变红 —— 所以人工跑的时候尤其容易漏掉。
 
 ```powershell
 # 1) 后端测试

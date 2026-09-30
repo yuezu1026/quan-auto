@@ -1,7 +1,7 @@
-SCOPE: FULL -- all 18 registered gate(s) ran.
-VERDICT: PASS -- 18 of 18 gate(s) ok.
+SCOPE: FULL -- all 19 registered gate(s) ran.
+VERDICT: PASS -- 19 of 19 gate(s) ok.
 NOTE: core-contract-refs=RATCHET 2/2 report a body verdict other than PASS and still count as ok. A tier-B ratchet prints DRIFT+/DRIFT-/DRIFT~ in its GATE header when the debt moved, and RATCHET at baseline; the line under it says verdict: DIRTY in every one of those cases (DIRTY is that script's own word for found N findings; it prints CLEAN when the count is zero). Read the GATE header, not that word.
-SIDE-EFFECT: gates wrote nothing (553 file(s) watched)
+SIDE-EFFECT: gates wrote nothing (555 file(s) watched)
 
 ==============================================================================
 GATE md-fidelity (tier A) selftest=PASS verdict=PASS 0 finding(s)
@@ -162,7 +162,7 @@ argv: tools/verify_appendix_refs.py
 scan scope: git ls-files=125 file(s), read as text=122, skipped=3
   skipped (binary/undecodable): docs/智能量化交易平台-数据中心数据源选型与接入规范.docx, docs/智能量化交易平台-核心模块接口契约文档.docx, docs/智能量化交易平台.docx
 appendix index: core=7L/24I dc=4L/73I prd=3L/0I risk=0L/0I
-citations: 425 total, 241 with an item label, 129 naming an owner, in 51 file(s)
+citations: 429 total, 241 with an item label, 129 naming an owner, in 51 file(s)
 verdict: PASS (0 issue(s))
 
 ==============================================================================
@@ -257,6 +257,19 @@ python spec:     quanauto\dashboard.py
 java spec:       platform\api\src\main\java\com\quanauto\dashboard\MetricSpec.java
   rows=14 (块里 `new MetricSpec(` 处数=14)  units=5/5  groups=4/4  counts=['equity_curve', 'trades', 'orders']
 compared:        14 行按 key 两两比过（顺序敏感）+ 常量 9 条 + 结构计数 1 组
+verdict: PASS (0 issue(s))
+
+==============================================================================
+GATE platform-runtime (tier A) selftest=PASS verdict=PASS 0 finding(s)
+what: npm ci/build 与 mvn test 真跑一遍，且前端产物真的落到 target/classes/static（工具链不在时退 3 = SKIPPED，不算绿）
+argv: tools/verify_platform_build.py
+------------------------------------------------------------------------------
+TOOLCHAIN mvn=3.9.16 java=21 (openjdk version "21.0.12" 2026-07-21 LTS, from JAVA_HOME=C:\Program Files\Zulu\zulu-21) node=v25.2.1 npm=11.16.0
+SANDBOX C:\Users\39002\AppData\Local\Temp\quanauto-platform-build-5kwo48_a (26 file(s) copied)
+STEP npm-ci           rc=0 (1.1s) OK
+STEP npm-build        rc=0 (0.8s) OK
+STEP mvn-test         rc=0 (4.4s) OK
+STATS sandbox_files=26 mvn_tests_run=8 mvn_declared=8 mvn_failures=0 mvn_errors=0 static_files=3 static_bytes=227019 served_files=3
 verdict: PASS (0 issue(s))
 
 ==============================================================================

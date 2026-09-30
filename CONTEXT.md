@@ -70,7 +70,7 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 | `tests/test_risk_engine.py` | I3 前置的风控引擎本体回归测试 67 条（60 个测试函数，其中一条参数化出 8 组合）：规则装载与阈值校验（`RATIO` 不许写成百分数、全局规则缺一不可）、四层作用域优先级、`check()` 零 IO 且可重入、熔断与重启后峰值仍在、`KillSwitch` 没有一键清仓、阈值变更的收紧/放宽（放宽未确认转 PENDING）、LKG 回退与 `RISK_011`。它守的是**引擎**，看不见回测接线（那条缝由下一行守） |
 | `tests/test_backtest_risk_gate.py` | I3 的端到端回归测试 12 条：闸门**默认关闭**（不接线就不拦，I1 口径不变）、接上后每单必过一遍、缩到 0 股＝`REJECT`（不是 REDUCE）、`KillSwitch` 触发后**进市场的订单为 0**、「阈值全放宽 ≡ 不接闸门」这条等价关系、统计**不进**回测报告。含一条把 `_strategy_equity` 的**符号 bug** 钉死的用例（满仓时权益必须为正，否则假回撤→误熔断，症状是「第三笔单莫名被拒」） |
 | `tests/test_dashboard.py` | I4 的绩效看板回归测试 36 条，分 6 节：① **字段清单**（看板常量表与 `PerformanceMetrics` 的 dataclass 字段表**双向相等**，不许自建指标）；② **读数只来自报告**（逐字段取自 payload、结构段缺失显示 `-` 而不是 0、`max_drawdown` 取 `max` 不取 `min`）；③ **防空转**（缺段/缺字段/负数/`NaN`/非 ISO 时间戳一律抛 `DashboardError` 并点名字段，绝不退回 0）；④ **渲染确定性**（`text`/`html` 各渲染两次**逐字节相同**、`html` 自包含、文本可 GBK 打印）；⑤ **跨层**（真 `BacktestResult` 落盘 → 读回 → 与两个绩效指标对拍）；⑥ **CLI 接线**（`dashboard` 子命令：真从磁盘读文件，断言 CLI 产出的字节与库函数**逐字节相等**）。⑤⑥ 两节是「两边各自全绿 ≠ 接起来能跑」那条纪律的又一次落地 —— §1~§5 全绿时 `run_dashboard` 一行都没跑过 |
-| `.github/workflows/ci.yml` | 只两条 `run:`（`pytest -q` 与 `run_all_gates.py`），**禁止 `|| true` 吞退出码**；2026-09-24 起已在 GitHub 上真跑（`origin` 公开）—— 首次真跑抓到的环境依赖判据已修 |
+| `.github/workflows/ci.yml` | `run:` 只有两条（`pytest -q` 与 `run_all_gates.py`），**禁止 `|| true` 吞退出码**；2026-09-30 起另加两个**准备步骤**（GitHub 官方的 `setup-java`，temurin 21；与 `setup-node`，22）—— 它们是 `platform-runtime` 的前置（不装，那条门禁在 CI 上就退 3 = 不算绿）。2026-09-24 起已在 GitHub 上真跑（`origin` 公开）—— 首次真跑抓到的环境依赖判据已修 |
 | `.venv/` | 仓库内虚拟环境，**本机手工装**：`pandas` / `numpy` / `psycopg` + `psycopg-binary` / `pytest`（2026-09-25 现取）。其中 **`numpy` 仍不在 `pyproject.toml` 的声明里**；`psycopg` 已按 2026-09-25 裁决声明进 `[postgres]` extra（**本机这一份仍是手工装的** —— 声明它只是让「怎么装出来」可复现）⇒ **extra 是 opt-in、CI 只装 `.[dev]`**，所以 `pytest_mutation_check.py` 里「把惰性驱动导入改成模块顶层拉驱动」那条变异在 CI 上仍是 `ENV-LIMIT` 而不是 `CAUGHT`；**不入库**（`.gitignore`） |
 
 ### D. 数据库
@@ -102,7 +102,7 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 
 | 文件 | 作用 |
 |---|---|
-| `tools/run_all_gates.py` | ★ **统一入口**，一条命令跑全部门禁并给出一个总判据。四条口径（前两条 2026-09-25 修，见规范 §3.6 案例十；第三条 2026-09-29 加，第四条 2026-09-29 加）：① 每个门禁跑两次，`--selftest` 的**退出码只报自测**（接着跑真实产物得出的结论照常打印，但不进 rc）—— 否则真产物一红，框架的 `rc != 0` 就把「产物红了」写成 `selftest=FAIL`；② 它解析检查码时**认连字符**（`MAP-PATHS` / `CI-SWALLOW` 这类是本仓库自己的代码），tier-B 棘轮的欠账计数直接吃这个数；③ 门禁两两**并行**（`--jobs=N`，默认 `min(8, cpu)`；`--jobs=1` 回到原串行次序），并配一条**副作用守卫**——跑前跑后各打一次仓库指纹，任何门禁在仓库里新增/删除/修改文件即判 FAIL（只豁免 `__pycache__` 与 `.pyc` 这类文档化的缓存，**没有逐文件豁免清单**；指纹若为 0 个文件同样判 FAIL，空转必须判红）。这两条是同一件事的两半：**并行的前提就是「门禁不许写仓库」**。2026-09-29 实测串行 17.9s → 并行 11.3s（**1.6x 而非 8x** —— 墙钟被最慢那条门禁的一对卡住，`risk-table-wiring` 的 `--selftest` 单独就要 9.6s；给它加解析缓存会把 14 个负样本变成 14 个空转，故不动），两种池宽产出的报告**逐字节相同**；④ 「绿」只有**一个**定义（`verdict_of()`）：退出码与报告第 2 行的 `VERDICT:` 都由它产出，**0 行报告判 FAIL**（空报告报绿＝「什么都没错」与「什么都没审」混为一谈），tier-B 的「非 PASS 但算 ok」另补一行 `NOTE:` 解释——这条修的是「证据文件里唯一一个非 PASS 字样落在读者最后看到的位置，而且方向是反的」，详见规范 §4.6 第 6 条 |
+| `tools/run_all_gates.py` | ★ **统一入口**，一条命令跑全部门禁并给出一个总判据。四条口径（前两条 2026-09-25 修，见规范 §3.6 案例十；第三条 2026-09-29 加，第四条 2026-09-29 加）：① 每个门禁跑两次，`--selftest` 的**退出码只报自测**（接着跑真实产物得出的结论照常打印，但不进 rc）—— 否则真产物一红，框架的 `rc != 0` 就把「产物红了」写成 `selftest=FAIL`；② 它解析检查码时**认连字符**（`MAP-PATHS` / `CI-SWALLOW` 这类是本仓库自己的代码），tier-B 棘轮的欠账计数直接吃这个数；③ 门禁两两**并行**（`--jobs=N`，默认 `min(8, cpu)`；`--jobs=1` 回到原串行次序），并配一条**副作用守卫**——跑前跑后各打一次仓库指纹，任何门禁在仓库里新增/删除/修改文件即判 FAIL（只豁免 `__pycache__` 与 `.pyc` 这类文档化的缓存，**没有逐文件豁免清单**；指纹若为 0 个文件同样判 FAIL，空转必须判红）。这两条是同一件事的两半：**并行的前提就是「门禁不许写仓库」**。2026-09-29 实测串行 17.9s → 并行 11.3s（**1.6x 而非 8x** —— 墙钟被最慢那条门禁的一对卡住，`risk-table-wiring` 的 `--selftest` 单独就要 9.6s；给它加解析缓存会把 14 个负样本变成 14 个空转，故不动），两种池宽产出的报告**逐字节相同**；④ 「绿」只有**一个**定义（`verdict_of()`）：退出码与报告第 2 行的 `VERDICT:` 都由它产出，**0 行报告判 FAIL**（空报告报绿＝「什么都没错」与「什么都没审」混为一谈），tier-B 的「非 PASS 但算 ok」另补一行 `NOTE:` 解释——这条修的是「证据文件里唯一一个非 PASS 字样落在读者最后看到的位置，而且方向是反的」，详见规范 §4.6 第 6 条。**2026-09-30 加第五条口径**：门禁可以退 **3 = SKIPPED**（说自己环境不在，如 `platform-runtime` 探不到 JDK/Node）。3 被 harness **单独识别**成「`verdict: SKIPPED` 且 `ok=False`」—— 报告照章红，另出一条 `NOTE:` 说明该去装什么。① 它**不允许**静默变绿（「环境缺失就自动绿」的判据不是判据）；② 它**不与「判据红了」合并成一句**（一个是装工具链、一个是看门禁本体）；③ 退了 3 但**自测也坏了** ⇒ 报 `FAIL` 而不是 SKIPPED（否则「没装 JDK」会把一条没牙的门禁盖住）。样本 `A-skip-is-not-green` / `A-rc3-without-skipped-verdict` / `A-skip-does-not-hide-a-broken-selftest` |
 | `tools/gates-report.txt` | 上一次运行的完整输出 —— **看结果读它，不要重跑**。**第 2 行就是总判据**（`VERDICT: PASS -- N of M gate(s) ok.`），它与退出码同源（2026-09-29 起）；第 3 行可能是解释「非 PASS 但算 ok」的 `NOTE:`。⚠️ **别把末行的 `verdict: DIRTY` 读成失败** —— `DIRTY` 是 tier-B 棘轮说「**发现 N 条**」的词（它的 `CLEAN` = 零条），见规范 §4.6 第 6 条 |
 | `tools/dev.py` | 本地开发环的**单一入口**（`check` / `full` / `gate` / `test` / `status` / `outline` / `find` / `section` / `brief` / `ci` / `--selftest`）：一次调用拿 pytest + 门禁的总判据，省掉 PS 5.1 的编码税。**故意不做**：缓存判定（缓存判定＝假绿工厂）、建第二份门禁注册表、按改动路由门禁（少跑却报绿）。前几个子命令的**总表只打 ASCII**（中文细节留在 `tools/gates-report.txt`）；`outline` / `find` 是**目录优先读取**（2026-09-29 加，**不是门禁**）：`outline FILE [--depth=N]` 给出「行范围 + 每节 ≈token」的目录，`find REGEX [--in=GLOB]…` 跨受控文件定位（清单取 `git ls-files`，拿不到就**拒判**）—— 它们**故意原样打印命中的文本**（打不了也不许静默丢，只在控制台编不出时退化成反斜杠转义并补一行 `NOTE:`）。⚠️ 标题提取**必须跳过围栏代码块**：第一版没跳，数据中心契约 L72-73 的 Python 注释被当成一级标题 ⇒ 凭空多出一个 47,772 tok 的假节并吞掉真正的附录 B，而目录看着完全合理（详见规范 §4.5）。`section FILE TITLE` / `brief`（2026-09-29 加，**不是门禁**）把「每轮开工该看的那几节」按**标题内容**取出来打**原文**：`brief` 一次给 `CONTEXT.md` §1/§2/§6/§7 + 迭代计划 §三（实测 **6,080 tok**，这两份整份读是 **44,142 tok**；`--budget=N` 从计划**末尾**丢、打印丢掉了哪几节、至少留一节）。边界是硬的：**机械取片不是摘要** —— 打出来的就是原文，所以不会像摘要那样随产物老去；标题 0 命中（提取为空）或 ≥2 命中（歧义）都判 FAIL，绝不用一个「看着很全」的空壳顶替。**2026-09-29 晚三处加厚**：① `outline` 对 `.py` 另打一张 **AST 符号图**（`symbols (AST)  n=38`），`section` 在**标题 0 命中**时自动回退到符号匹配（歧义 ≥2 命中**不回退**，列候选后退出码 2）—— 起因是 `quanauto/engine.py` 曾被写成「只有一个 `#` 标题、`section` 切不动」，真相是**提取器只认 markdown 标题**；② `brief` 的**抬头挪到末尾**（只留「正文在前 + 字节稳定」这个机械性质，**不声称省了多少 token** —— 缓存在服务端，在仓库内部测不出收益）；③ `find` 抬头同时打印两个数（总共命中几条、实际打印了几条），超上限时**明写一行 NOTE** 说明只打了前几条（从不静默截断 —— 静默截断会让人把「没显示」读成「不存在」）。`ci [RUN_ID] [--wait=N]` 取代 `gh run watch`：默认查一次即返，`--wait` 硬上限 600s（理由见规范 §4.6 —— 无界阻塞转后台后，通知会把整段终端缓冲**重放**回上下文）。⚠️ `--wait>0` 时**只有「跑完且成功、而且绿的就是 HEAD 那次」才退 0**：跑完但结论是失败、没等到、状态读不出来、绿的是**别的提交**，四种一个都不是 0。两层假绿都在实测里踩过（见规范 §4.6 第 4、5 条）：① 第一版用 `any(...completed...)` 判「等到了」⇒ 列表里较老那次早就是 completed ⇒ **一次都没等就退 0**；② 修好后第一次用又退 0 —— 推送后 gh 还没登记这次的运行，最新一条是**上一个提交**的 success。故 `--wait` 会拿 `git rev-parse HEAD` 与 `headSha` 核对身份，不一致就当没等到；取不到 HEAD 会显式打 NOTE 说「rc=0 只代表最新一次运行绿了」 |
 | `tools/gates-baseline.json` | tier-B 棘轮基线，**手工维护**，禁止自动写入 |
@@ -115,6 +115,7 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 | `tools/verify_class_coverage.py` | ★ **新门禁**（`class-coverage`，2026-09-25 注册）：`quanauto/*.py` 里**每一个类**都必须落在四个集合之一 —— ① 契约**声明**（三份契约的 ```` ```python ```` 块里由 `ast` 真解出 `class 同名`，**文本搜不算**）；② **登记表**（`manifest.classes` ∪ `impl_only` ∪ `CONTRACT_FIRST` ∪ `T1_REQUIRED`，**并集算出来**，实测 38）；③ `DEBT`（契约点了名却没类块 = 明账欠款，7 个）；④ `LOCAL`（契约不定义，22 个）。它补的正是最大的那块盲区：`contract-signature` 只查「登记过的成员还在不在」、`contract-appendix` 只审附录 G、`enum-members` 只管枚举成员 ⇒ 此前一个新写的类可以既不在契约、也不在任何清单里而全部门禁全绿（2026-09-25 实测 29 个）。**提及不算覆盖**：报告单印一行 `mention split`（待裁 29 个：散文提到过 13 / 连名字都没有 16），因为「把名字写进任何一句话」不该算合规。③④ 两张表**双向自查**（已能被声明/登记覆盖 ⇒ `CC-DEBT-DRIFT`/`CC-LOCAL-DRIFT`；类消失 ⇒ `*‑STALE`），`DAMAGED` 表给 `.docx` 压坏的两个块（`Account`/`ResultSerializer`）豁免但同样双向查。证伪两条通道：`--selftest` 29 个合成样本（逐条断言**预期检查码**），`--falsify` 在**真实产物的逐字节副本**上改坏（不写仓库）。**边界**：只证明「每个类都有人认领过」，**不证明实现对**，也不比成员/字段/方法 |
 | `tools/verify_error_codes.py` | ★ **新门禁**（`error-codes`，2026-09-25 注册）：三份契约的**错误码表**与 `quanauto/errors.py` 在**码 / 拼写 / 级别 / 类名**四样上对拍（16 个检查码族）。它关的是一个**登记过三次**的洞：数据中心契约的附录 A8 / B10 / C6 都写着「无机器判据，已知缺口」，风控契约 §3.7 那句「两处定义必须保持一致，不得冲突」本身就是一条没有判据的要求。**首跑就报出真冲突**：`RISK_001` 在主契约附录 D 是 `CRITICAL`、在风控契约 §3.7 是 `ERROR`，而那一行还标着「（主契约原有）」。两张登记表（`PENDING` 契约定义而刻意不实现、`IMPL_ONLY` 实现自有）**反向也查**（落地或消失即 `EC-STALE-PENDING` / `EC-IMPL-ONLY-STALE`），拼写分歧（看板码少一个下划线）登记为**显式例外**，一旦不再分歧就报 `EC-SPELLING-STALE`。**边界**：不查描述与建议措施（人写的话不是标识）、不比继承关系（一处已登记的刻意偏差会让 `issubclass` 判据误报）；方向**有意单向**（契约可以定义实现里还没有的码，反向才报 `EC-CODE-INVENTED`）；扫描面 = 三份契约 + `quanauto/*.py`，**不含** `docs/迭代计划.md` 与 `docs/开工前缺口清单.md`（它们是记录，不是契约 —— 拿记录去当判据，等于把过去的自己变成法条）。证伪两条通道：`--selftest` 19 个样本、`--falsify` 在真实产物的逐字节副本上打 7 组变异（含一个不变异的控制组） |
 | `tools/verify_platform_specs.py` | ★ **新门禁**（`platform-spec-parity`，2026-09-30 注册，tier-A）：把 **Java 侧** `platform/api/src/main/java/com/quanauto/dashboard/MetricSpec.java` 的 `METRIC_SPECS` 与 **Python 侧** `quanauto/dashboard.py` 的同一个表**双向**比对 —— 量纲 / 分组两组常量的**取值**、14 行的「键 / 分组 / 标签 / 量纲 / 小数位」**逐行**比、**行序**（只在键集合与条数都相同的前提下才比，否则不乱报漂移）、以及 `STRUCTURE_COUNTS` 的三段名。它关的是 `docs/智能量化交易平台.md` 附录C 里 C.5 第 2 条那条**登记**：「14 条规格表是**手抄副本**、没有任何门禁比对两者」⇒ 两端一旦不一致**当场红**（这正是手动脚本 `platform/check_text_parity.py` 做不到的：那个要一个活着的 JVM）。两侧提取为空、或任一侧行数低于门槛一律 FAIL（空转守卫）。**只解析文本 + Python AST**：不 import 被测代码、不编译、不启动 JVM、不渲染页面。**修复方向永远是改 Java 侧** —— `quanauto/dashboard.py` 是冻结的参照物。**边界**：只证明两侧**声明**一致，证明不了 Java 真的按这张表渲染（见 §3.G） |
+| `tools/verify_platform_build.py` | ★ **新门禁**（`platform-runtime`，2026-09-30 注册，tier-A）：在**一次性沙箱**里按 `npm ci` → `npm run build` → `mvn test` **真跑一遍**平台层切片 —— **三条命令的顺序本身就是判据**。四个判据：① 前端产物真的落进 `platform/api` 下的静态资源目录（src/main/resources/static，**该目录不入库**）；② **接缝**：`mvn test` **之前** Java 侧那份构建产物目录（target/classes/static，同样不入库）必须为空、**之后**必须出现与前端产物逐文件同名的文件（构建顺序反了会让页面 served 旧包，而这个错**不会**让任何一条 Java 测试变红）；③ surefire 的 `Tests run: N, Failures, Errors` 必须与 Java 源码里 `@Test` 的**声明数**（当前 8）对得上，解析不到汇总行（例如编译不过）同样 FAIL；④ 沙箱**不写仓库一个字节**（把 `platform/` 去 `node_modules`/`target`/`dist`/`static` 后连同 `.rounds/i1` 复制到临时目录，另放一个**空的 `.git`** 供 `ReportCatalog.resolve()` 定位报告目录）⇒ harness 的指纹守卫不必为它放开任何跳过目录。**工具链（JDK 21 + Node）探不到时退 3 = SKIPPED**，harness 把 3 记成「**不算绿**」并单独出一条 `NOTE:`（「没装 JDK」与「测试红了」是两种红）。证伪：6 条注入变异全被抓（`PB-MVN-TESTS-RED` / `PB-SUREFIRE-NOT-PARSED` / `PB-NPM-BUILD-FAIL` / `PB-STATIC-EMPTY` ×2 / `PB-STITCH-PREEXISTING` / `PB-NPM-CI-FAIL`），见附录C §C.9。**边界**：不启动 JVM、不渲染页面、不比对两侧展示文本 ⇒ 「**页面本身**」仍然零覆盖 |
 | `tools/verify_data_center.py` | 数据中心契约 §3.6.1 与 DDL 约束清单双向一致（C1~C7）+ 对 `db/data_center.smoke.sql` 的触发测试覆盖核对（C7） |
 | `tools/verify_data_center_pit.py` | ★ **I2 S1 新门禁**：`DataFeed` 取数路径的 `as_of` **两层防线**（显式日期参数越界必须抛 / 经 guard 逐行登记 —— **2026-09-29 晚 Ⅱ 起第二层要求逐条写入口记它自己那个字段**，同一条写入口拿另一条的字段顶包不算接线完成，见 DC 契约 A4）+ 回测会话下 `QFQ`/`BFILL` 必须被拒 + 只有 `DataCenter.as_of()` 能产出 `DataFeed`。「越界＝抛而非裁剪」这条语义的机器判据就在这里。**只解析 AST，从不执行被检代码、不跑 pytest** |
 | `tools/verify_data_center_adapter.py` | ★ **I2 S2 新门禁**（`data-center-adapter`）：采集侧适配器把源列名/取值翻成标准 schema（A1/A2/A4/A8）、采集层不含数据库驱动（A5）、源 SDK 只能惰性 import（A6）、行对象不暴露源字段名（A7）、新映射表/列名元组未登记即报错（A3/A9）、两个空转守卫（A0/A10）。**只解析源码文本**：不执行适配器、不联网、不 import pandas |
@@ -156,18 +157,24 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 > `GATE-COUNT` 抓的写法。**边界**：skill 是规程，没有牙；它说得再对也不构成证据，
 > 判据只有门禁与测试。
 
-### G. 平台层读取侧切片（2026-09-29 追加；守门门禁 = `platform-spec-parity`）
+### G. 平台层读取侧切片（2026-09-29 追加；守门门禁 = `platform-spec-parity` + `platform-runtime`）
 
 | 文件 | 作用 |
 |---|---|
 | `platform/` | 平台层**读取侧**切片（Spring Boot 3.5.16 / Java 21 只读 REST + React 19 / Vite 8 单页），读的与 I4 命令行看板是**同一份**回测报告。**不改 `quanauto/dashboard.py` 一行、不碰 `db/`、不改 `ci.yml`** ⇒ 它**不等于平台层开工**（裁决 Q3 仍有效），也**不解除**任何缺口。契约、字段清单与代价登记在 `docs/智能量化交易平台.md` 附录C，操作细节见 `platform/README.md` |
 | `platform/api/src/main/java/com/quanauto/dashboard/MetricSpec.java` | Java 侧的**规格表手抄副本**（14 行）。它与 Python 侧的一致性由 `platform-spec-parity`（见 §3.E）双向核对 ⇒ 「两边各写一套」这件事从此有牙；**不一致时要改的是这里**（Python 侧是冻结的参照物） |
 | `platform/check_text_parity.py` | 两侧**展示文本**（服务端算好的串有没有真的印到页面上）的核对 —— **手动脚本，不是门禁**（需要一个活着的 JVM ⇒ 不能当门禁，也就不构成常驻证据）。它与 `platform-spec-parity` 查的是**两件事**：声明是否一致 vs 真实输出是否一致 |
+| `tools/verify_platform_build.py` | ★ **新门禁**（`platform-runtime`，2026-09-30 注册，tier-A）：在沙箱里真跑 `npm ci` → `npm run build` → `mvn test`，并查前端产物有没有真的走到被 Spring 托管的目录（顺序反了报 `PB-STITCH-PREEXISTING`）。它是 §3.E 那张表的同一条目，放在这里是因为它守的正是**这一层**：它关掉了 C.5 里「`mvn test`、`npm run build` 没有任何门禁盯着」那半句。工具链探不到时退 **3 = SKIPPED**，而 harness 把 3 记成「不算绿」 |
 
-> **这一层的覆盖边界（别读多）**：门禁只盯「两侧**声明**一致」。`mvn test`、`npm run build`、
-> 页面本身**没有任何门禁盯着** —— 这一层是**真的零覆盖**，不是「已覆盖但没登记」。
+> **这一层的覆盖边界（别读多；2026-09-30 订正「零覆盖」那半句）**：三层要分清 ——
+> ① **声明**层 = `platform-spec-parity`（两侧规格表双向比）；② **运行**层 = `platform-runtime`
+> （沙箱里真跑 `npm ci` / `npm run build` / `mvn test`，并查前端产物有没有真的走到被服务的目录）；
+> ③ **仍然零覆盖**的只剩**页面本身**与两侧**展示文本**（后者只有手动脚本
+> `platform/check_text_parity.py`，要一个活着的 JVM ⇒ 不能当门禁）。
+> 「这一层真的零覆盖」那句在 2026-09-30 之前是对的，**现在不成立了** —— 订正块在附录C **§C.9**
+> （声明那层是 §C.8）。
 > 三个已知的操作坑（构建顺序、`JAVA_HOME` 与 PATH 里不是同一个 Java、展示串只许在服务端算）
-> 写在 `platform/README.md` 与附录C 里，不在这里复制。
+> 写在 `platform/README.md` 与附录C 里，不在这里复制；其中**构建顺序那个坑现在有机器判据**。
 
 ## 4. 怎么跑门禁
 
@@ -182,7 +189,7 @@ python tools/run_all_gates.py --full          # 连每个门禁的原始输出�
 python tools/run_all_gates.py --selftest      # 证明这个 harness 自己会报 FAIL
 ```
 
-退出码：`0` 全绿 / `1` 有门禁失败或 harness 自身无法完成检查 / `2` harness 自测失败。
+退出码：`0` 全绿 / `1` 有门禁失败或 harness 自身无法完成检查 / `2` harness 自测失败 / `3` **某条门禁说它环境不在**（SKIPPED）—— 3 也**不是绿**：报告照红，另出一条 `NOTE:` 告诉你该装什么（当前唯一会退 3 的是 `platform-runtime`，它要 JDK 21 + Node）。
 
 **开工怎么读**（2026-09-29 起）：先 `python tools/dev.py brief` —— 它把「每轮真正会变的那几节」
 （`CONTEXT.md` §1/§2/§6/§7 + 迭代计划 §三）原文打出来，约 **6.1k token**，而这两份**整份读是 44.1k**
@@ -215,6 +222,7 @@ python tools/run_all_gates.py --selftest      # 证明这个 harness 自己会�
 | dashboard-consistency | `python tools/verify_dashboard.py` | 无参数。**只解析源码 + 跑真的 `PerformanceAnalyzer`**，不起浏览器、不联网。C10 的参照物是写出这些数的同一个分析器 ⇒ 「公式本身错了」它看不见（核心契约 §F5 记了这个边界） |
 | appendix-refs | `python tools/verify_appendix_refs.py` | 无参数。**只读文本**：不执行被检代码、不联网；文件清单取自 `git ls-files`，**拿不到就拒判**（不在 git 仓库里跑会红）。边界：只证明标签存在，**证明不了标签背后的裁决仍然成立** |
 | platform-spec-parity | `python tools/verify_platform_specs.py` | 无参数。**只解析文本 + Python AST**：不 import 被测代码、不编译、不启动 JVM、不渲染页面。它比的是两侧**声明**是否一致 ⇒ 红了先看 Java 侧那张手抄副本是不是旧了（方向是**改 Java**，Python 侧是冻结的参照物）；**别**把它读成「页面印对了」 |
+| platform-runtime | `python tools/verify_platform_build.py` | 无参数（另有 `--keep` 留下沙箱、`--repo-root=` 换根）。在临时沙箱里**真跑** `npm ci` → `npm run build` → `mvn test`，**不写仓库一个字节**。**需要 JDK 21 与 Node**：探不到工具链就退 **3 = SKIPPED**，而 harness 明确把 3 记成「**不算绿**」（两种红不合并：一种去装工具链、一种去看门禁本体）。它**不启动 JVM、不渲染页面** ⇒ 红了先看它打印的那条检查码（都以 `PB-` 开头），别把它读成「页面印对了」；沙箱会下 Maven/npm 依赖，所以它是这一批里最慢的一条 |
 
 每个门禁都支持 `--selftest`。
 
@@ -342,7 +350,11 @@ tier-A 全绿；`core-contract-refs` 是仅剩的 tier-B 欠账，基线 **2**�
   证伪两条通道：`--selftest` 19 样本 + `--falsify` 在真实产物的逐字节副本上打 7 组变异（含一个不变异的控制组）。
 - `contract-appendix` / `appendix-refs` 见 §3.E。
 - `platform-spec-parity` —— 平台层读取侧切片（`platform/`，见 §3.G）的**Java 侧手抄规格表**与 `quanauto/dashboard.py` 的双向核对。
-  **只覆盖「声明一致」**：`mvn test`、`npm run build`、页面本身仍然没有任何门禁盯着。
+  **只覆盖「声明一致」**。
+- `platform-runtime` —— 同一层的**运行**侧：在一次性沙箱里真跑 `npm ci` / `npm run build` / `mvn test`，
+  并查前端产物有没有真的走到被 Spring 托管的目录（构建顺序反了就是它报）。
+  **仍然零覆盖**的只剩**页面本身**与两侧**展示文本**（后者的手动脚本要一个活着的 JVM，不能当门禁）。
+  这两句的分工与 2026-09-30 的订正写在附录C §C.8 / §C.9。
 其他能力缺口（复权因子、未确认清单等）与编号一律以 `docs/开工前缺口清单.md` 为准，不要在本文件里复制它。
 
 **数据库侧已不再是「运行时未证实」**：两份触发测试 2026-09-23 先在容器 `postgres:17`（17.11）上

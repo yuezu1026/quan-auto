@@ -132,10 +132,23 @@ REPORT_PATH = os.path.join(ROOT, 'tools', 'gates-report.txt')
 # 运行时验证属于**另一个 channel**，故意不注册成门禁：注册进来后，没有 docker 的
 # 环境要么拿到一条环境性 FAIL，要么被静默 SKIP 而报绿 —— 后者正是本项目反复踩的
 # 假门禁。这里只指向它的产物，不转述它的结论。
+#
+# 2026-09-30 修订：`platform-runtime`（`mvn test` / `npm ci` / `npm run build`）
+# 是**有意的例外**。区别在于它需要的东西是**可装、可探、缺失时说得清**的（JDK≥21 /
+# Node），而且它正是这一层最大的那个缺口；让它能注册的前提是给 harness 加**第三种
+# 出口**（见 SKIP_RC 与 evaluate() 里的 SKIPPED 分支）：「环境不在」既不当 FAIL
+# （那会把「没装 JDK」写成和「测试红了」同一种红），也不当绿（那更糟）——
+# 它是一条单独的、ok=False 的 INCOMPLETE。而 docker/PostgreSQL 那条仍然靠人手动跑、
+# 只指向产物：那种环境本机装不了，也不该在每次门禁里起一次容器。
 SMOKE_TOOL = os.path.join(ROOT, 'tools', 'run_sql_smoke.py')
 SMOKE_REPORT_PATH = os.path.join(ROOT, 'tools', 'sql-smoke-report.txt')
 FALSIFY_TOOL = os.path.join(ROOT, 'tools', 'falsify_smoke.py')
 FALSIFY_REPORT_PATH = os.path.join(ROOT, 'tools', 'falsify-report.txt')
+
+# 门禁自己的退出码约定（见 evaluate 的 SKIPPED 分支与它的样本）：
+#   0 = 通过；1 = 判据红了；3 = **环境不在**（工具链探不到），打印 `verdict: SKIPPED (...)`。
+# 3 是故意选的：2 留给「自测入口自己红了」，0/1 已被占。
+SKIP_RC = 3
 
 CORE_CONTRACT = 'docs/智能量化交易平台-核心模块接口契约文档.md'
 DC_CONTRACT = 'docs/智能量化交易平台-数据中心接口契约文档.md'
@@ -426,6 +439,33 @@ GATES = [
                 '（量纲/分组常量取值、14 行的键-分组-标签-量纲-小数位与行序、结构计数）',
         'runner': ['tools/verify_platform_specs.py'],
         'selftest': ['tools/verify_platform_specs.py', '--selftest'],
+    },
+    {
+        'name': 'platform-runtime',
+        'tier': 'A',
+        # 上一条比的是两侧的**声明**；这一条是平台层运行侧的第一条：真的把
+        # `npm ci` / `npm run build` / `mvn test` 跑一遍，并在同一棵树里核对
+        # 「前端产物真落进了 Java 侧被服务的那个目录」。附录C §C.5 第 4 条把它们
+        # 记成缺口，理由一直是「需要 JDK/Node，而判据依赖环境就是判据的缺陷」。
+        # 解法不是不跑，而是把「环境不在」变成一个**响亮的、不算绿**的结论：
+        # 探不到 mvn / node / java≥21 时它退 SKIP_RC(3) 并打印 `verdict: SKIPPED(缺什么)`，
+        # harness 把它记成 SKIPPED 且 ok=False ⇒ 报告照红，只是红得说清了原因
+        # （与「测试红了」分开：那种要去看门禁本体，这种要装工具链）。
+        # 它跑在 %TEMP% 的沙箱里（`platform/` 去掉 node_modules|target|dist|static，
+        # 加 `.rounds/i1` 与一个**空的 `.git`**）—— 一个字节都不写进仓库，因此不必
+        # 去放宽 FINGERPRINT_SKIP_DIRS（放宽判据是禁的）；`.git` 是必需的，
+        # `ReportCatalog.resolve()` 靠往上找 `.git` 定位报告目录，没有它测试会假红。
+        # 步骤**顺序**是判据的一部分：`npm run build` 必须早于 `mvn test` —— 产物
+        # 写进 `api/src/main/resources/static/`，而 Spring 从 `target/classes/static/`
+        # 托管（`platform/README.md` 里记的那个坑）。
+        # 边界（别把这些读进来）：**页面本身仍然零覆盖** —— 打开页面要一个活着的
+        # JVM+端口，`platform/check_text_parity.py` 因此不是门禁；展示串两侧是否一致
+        # 也一样；它也不判断页面好不好看。它证明的是「这一层今天真的构建了、真的
+        # 测试了，且产物真的走到被服务的那个目录」。
+        'what': 'npm ci/build 与 mvn test 真跑一遍，且前端产物真的落到'
+                ' target/classes/static（工具链不在时退 3 = SKIPPED，不算绿）',
+        'runner': ['tools/verify_platform_build.py'],
+        'selftest': ['tools/verify_platform_build.py', '--selftest'],
     },
     {
         'name': 'core-contract-refs',
@@ -731,18 +771,38 @@ def evaluate(gate, selftest, real, baseline):
 
     pk = parse(real['text'])
     detail = ''
+    skipped = False
 
     if tier == 'A':
         # The exit code is authoritative, but a missing verdict line is a separate
         # defect: the script ran to completion without saying what it concluded.
         if pk['verdict'] is None:
             problems.append('no "verdict:" line in the output')
+        elif real['rc'] == SKIP_RC and pk['verdict'] == 'SKIPPED':
+            # 第三个出口：**环境不在**（工具链探不到）。故意 ok=False —— 判据一旦
+            # 「环境缺失就自动变绿」，它就不再是判据。也不落进下面那条 rc!=0 分支：
+            # 「没装 JDK」与「测试红了」要分别去干两件不同的事，写成同一种红的话，
+            # 报告同时丢掉了这两个信息。
+            skipped = True
+            problems.append('SKIPPED -- the gate exited %d saying its toolchain is absent, '
+                            'and this run counts that as NOT green on purpose: a '
+                            'criterion that goes green whenever its environment is '
+                            'missing is not a criterion. Install the toolchain the '
+                            'gate names in its own output and re-run.' % real['rc'])
         elif real['rc'] != 0:
             problems.append('exit=%s with verdict %s (%d finding(s))'
                             % (real['rc'], pk['verdict'], pk['total']))
-        v_status = 'FAIL' if problems else 'PASS'
-        detail = '%d finding(s)' % (pk['verdict_n'] if pk['verdict_n'] is not None
-                                    else pk['total'])
+        # 注意顺序：SKIPPED 这个结论只在「没有别的毛病」时才给。若同一条门禁还带着
+        # 自测失败之类的真问题，那它就该按 FAIL 报 —— 别让「环境不在」把真红洗成
+        # 一个看起来无害的 INCOMPLETE。两处的判据都是 problems 本身，不是复制一份。
+        others = [p for p in problems if not p.startswith('SKIPPED --')]
+        if skipped and not others:
+            v_status = 'SKIPPED'
+            detail = 'skipped'
+        else:
+            v_status = 'FAIL' if problems else 'PASS'
+            detail = '%d finding(s)' % (pk['verdict_n'] if pk['verdict_n'] is not None
+                                        else pk['total'])
 
     else:  # tier B -- ratchet
         want = baseline.get(name)
@@ -854,8 +914,24 @@ def verdict_of(rows, side_problems=()):
         if side_problems:
             why.append('%d side-effect problem(s): %s'
                        % (len(side_problems), '; '.join(side_problems)))
-        return False, ['VERDICT: FAIL -- %s. See the GATE sections below.'
-                       % '; '.join(why)]
+        lines = ['VERDICT: FAIL -- %s. See the GATE sections below.'
+                 % '; '.join(why)]
+        # 「环境不在」要单独说一句，理由有两条：① 它的红**根因不在本仓库**，谁读到
+        # 「1 of 19 gate(s) not ok」都会先去翻那条门禁的代码，而这里该干的是装工具链；
+        # ② 它照红是**故意的**（判据一旦环境缺失就变绿就等于没有判据），不写出来
+        # 下一个人会把它当成 harness 的 bug 去「修」。措辞与 SKIPPED 分支同源但不复用
+        # 字符串 —— 这里说的是文件里的读者，那里说的是这条门禁本身。
+        sk = [r for r in rows if r['verdict'] == 'SKIPPED']
+        if sk:
+            lines.append(
+                'NOTE: %s exited 3 = SKIPPED: the gate itself says its toolchain is '
+                'absent here, so it proved nothing either way. This run counts that as '
+                'NOT green on purpose -- a criterion that goes green whenever its '
+                'environment is missing is not a criterion -- but it is a different '
+                'to-do from a gate that FAILED: install what the gate names and re-run, '
+                'do not go read the gate.'
+                % ', '.join('%s' % r['name'] for r in sk))
+        return False, lines
     lines = ['VERDICT: PASS -- %d of %d gate(s) ok.' % (len(rows), len(rows))]
     odd = [r for r in rows if r['verdict'] != 'PASS']
     if odd:
@@ -1093,6 +1169,25 @@ def selftest():
     print('  [verdict-red-names-side-effects] %s' % ('OK' if hit else 'MISSED'))
     ok = ok and hit
 
+    # 第五支：有门禁是 **SKIPPED**（退出码 3 = 环境不在）。红，但要在文件开头就说清
+    # 「这不是去读那条门禁的信号，是去装工具链的信号」。断言两件事：① 仍是红；
+    # ② VERDICT 行后面**真的跟了**那句 NOTE（只断言「红」的话，把 NOTE 删掉也照样绿）。
+    green, vlines = verdict_of([_vrow('a', True),
+                                _vrow('b', False, verdict='SKIPPED', detail='skipped')])
+    hit = (green is False
+           and vlines[0].startswith('VERDICT: FAIL')
+           and any(l.startswith('NOTE:') and 'SKIPPED' in l and 'b' in l
+                   for l in vlines[1:]))
+    print('  [verdict-red-explains-a-skipped-gate] %s' % ('OK' if hit else 'MISSED'))
+    ok = ok and hit
+    # 干净侧：没有 SKIPPED 时**不许**多印那句 NOTE（否则读的人会去找一个不存在的
+    # 「环境缺了」）。上面绿的样本已断言 len(vlines)==1，这里补的是「有别的红、
+    # 但没有 SKIPPED」时也不许多印。
+    green, vlines = verdict_of([_vrow('a', False, verdict='FAIL')])
+    hit = green is False and not any(l.startswith('NOTE:') for l in vlines)
+    print('  [verdict-note-only-when-actually-skipped] %s' % ('OK' if hit else 'MISSED'))
+    ok = ok and hit
+
     green, vlines = verdict_of([])
     hit = (green is False and len(vlines) == 1 and vlines[0].startswith('VERDICT: FAIL'))
     print('  [verdict-empty-report-is-NOT-green] %s' % ('OK' if hit else 'MISSED'))
@@ -1213,6 +1308,41 @@ def selftest():
             'seconds': 0.1}, base, True)
     expect('A-red', ga, stok, bad, base, False)
     expect('A-nooutput', ga, stok, empty, base, False)
+    # tier-A 的第三种出口：**环境不在**（rc=3 + verdict: SKIPPED，本仓库目前只有
+    # platform-runtime 用它）。两条要求缺一不可：① 不算绿（「环境缺失就自动变绿」
+    # 的判据等于没有判据）；② 不能退化成下面那条 rc!=0 的通用红 —— 那会把
+    # 「没装 JDK」和「测试红了」印成同一句话，而这两件事要人去干完全不同的活。
+    # 这里直接断言 problems 的措辞，因为 ok 在两支里都是 False，光看 ok 分不出走了哪支。
+    row = evaluate(ga, stok,
+                   {'rc': SKIP_RC, 'text': 'SKIP mvn not found on PATH\n'
+                                           'verdict: SKIPPED (mvn not found on PATH)\n',
+                    'error': None, 'seconds': 0.1}, base)
+    hit = (row['ok'] is False and row['verdict'] == 'SKIPPED'
+           and any('SKIPPED' in p and 'NOT green' in p for p in row['problems'])
+           and not any('with verdict SKIPPED' in p for p in row['problems']))
+    print('  [A-skip-is-not-green] verdict=%s ok=%s %s'
+          % (row['verdict'], row['ok'], 'OK' if hit else 'MISSED'))
+    if not hit:
+        print('      problems=%s' % row['problems'])
+    ok = ok and hit
+    # 反向样本：退了 3 但**没有**说 SKIPPED（例如脚本崩在探工具链之前）不能被当成
+    # 「环境不在」放行 —— 否则任何崩溃都成了免检通道。它必须落到通用红。
+    expect('A-rc3-without-skipped-verdict', ga, stok,
+           {'rc': SKIP_RC, 'text': 'ISSUE [PB-X] boom\nverdict: FAIL (1 issue(s))\n',
+            'error': None, 'seconds': 0.1}, base, False)
+    # 第三种出口**不能把真红洗白**：同一条门禁若自测是坏的（这条最严重 —— 它意味着这条
+    # 门禁证明不了自己有牙），报出来的必须是 FAIL 而不是 SKIPPED。这里断言的就是那句
+    # 「others 非空 ⇒ 不给 SKIPPED」，光看 ok 分不出这两支。
+    row = evaluate(ga, stbad,
+                   {'rc': SKIP_RC, 'text': 'verdict: SKIPPED (no toolchain)\n',
+                    'error': None, 'seconds': 0.1}, base)
+    hit = (row['ok'] is False and row['verdict'] == 'FAIL'
+           and any('selftest FAILED' in p for p in row['problems']))
+    print('  [A-skip-does-not-hide-a-broken-selftest] verdict=%s ok=%s %s'
+          % (row['verdict'], row['ok'], 'OK' if hit else 'MISSED'))
+    if not hit:
+        print('      problems=%s' % row['problems'])
+    ok = ok and hit
     expect('A-noverdict-line', ga, stok,
            {'rc': 0, 'text': 'all good honest\n', 'error': None, 'seconds': 0.1}, base,
            False)
