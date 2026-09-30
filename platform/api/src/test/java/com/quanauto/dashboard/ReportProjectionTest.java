@@ -14,9 +14,14 @@ import org.junit.jupiter.api.Test;
  * 投影层的用例。<b>用仓库里真实的报告文件当样本</b>（{@code .rounds/i1/report-seed7-a.json}）——
  * 自己造一个「好看的」样本只能证明它读得动我自己写的东西。
  *
- * <p>⚠️ 这一层<b>不在任何门禁里，也不在 CI 里</b>（见附录C §C.5）。下面这些用例要人手动跑
- * {@code mvn -f platform/pom.xml test} 才有意义；没人跑的时候，它们和不存在没区别。
- * 这一轮选择把它们写在这里、并把「没进 CI」明说，而不是假装这一层也有人盯着。
+ * <p>⚠️ 订正（2026-09-30）：原来这里写「这一层<b>不在任何门禁里，也不在 CI 里</b>」，<b>已过期</b>
+ * —— 现在 {@code platform-runtime} 门禁会在一次性沙箱里真跑 {@code mvn test}（也就是这个类），
+ * 而它接在 {@code tools/run_all_gates.py} 的统一入口里、{@code ci.yml} 会跑那条命令
+ * ⇒ 下面这些用例真的有人跑，把它们弄红会在 CI 上被拦住。
+ *
+ * <p>仍然零覆盖的是：<b>页面本身</b>（渲染 / 布局 / 视觉）与<b>两侧展示文本是否一致</b>
+ * —— 后者只有手动脚本 {@code platform/check_text_parity.py}（需要一个活着的 JVM ⇒ 不能当门禁）。
+ * 分工见 {@code docs/智能量化交易平台.md} 附录C §C.8 / §C.9。
  */
 class ReportProjectionTest {
 

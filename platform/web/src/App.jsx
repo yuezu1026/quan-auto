@@ -233,7 +233,11 @@ export default function App() {
           同一份报告的两个读法。
         </p>
         <p className="warn">
-          本层目前没有自建门禁覆盖，也不在 CI 里 —— 见 <code>docs/智能量化交易平台.md</code> 附录C §C.5。
+          本层有自建门禁了（<code>platform-spec-parity</code> 管声明层、<code>platform-runtime</code> 管运行层，两条都在 CI 里跑）
+          —— 但两条都<b>不启动 JVM、不渲染页面</b> ⇒ <b>这个页面本身</b>（渲染 / 布局 / 视觉）与
+          <b>两侧展示文本是否一致</b>仍然没有常驻判据，只有手动脚本{" "}
+          <code>platform/check_text_parity.py</code>（需要活着的 JVM ⇒ 不能当门禁）。
+          见 <code>docs/智能量化交易平台.md</code> 附录C §C.8 / §C.9。
         </p>
       </footer>
     </main>

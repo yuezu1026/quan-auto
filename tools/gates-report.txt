@@ -1,7 +1,7 @@
 SCOPE: FULL -- all 19 registered gate(s) ran.
 VERDICT: PASS -- 19 of 19 gate(s) ok.
 NOTE: core-contract-refs=RATCHET 2/2 report a body verdict other than PASS and still count as ok. A tier-B ratchet prints DRIFT+/DRIFT-/DRIFT~ in its GATE header when the debt moved, and RATCHET at baseline; the line under it says verdict: DIRTY in every one of those cases (DIRTY is that script's own word for found N findings; it prints CLEAN when the count is zero). Read the GATE header, not that word.
-SIDE-EFFECT: gates wrote nothing (555 file(s) watched)
+SIDE-EFFECT: gates wrote nothing (527 file(s) watched)
 
 ==============================================================================
 GATE md-fidelity (tier A) selftest=PASS verdict=PASS 0 finding(s)
@@ -265,11 +265,11 @@ what: npm ci/build 与 mvn test 真跑一遍，且前端产物真的落到 targe
 argv: tools/verify_platform_build.py
 ------------------------------------------------------------------------------
 TOOLCHAIN mvn=3.9.16 java=21 (openjdk version "21.0.12" 2026-07-21 LTS, from JAVA_HOME=C:\Program Files\Zulu\zulu-21) node=v25.2.1 npm=11.16.0
-SANDBOX C:\Users\39002\AppData\Local\Temp\quanauto-platform-build-2j93q34r (26 file(s) copied)
+SANDBOX C:\Users\39002\AppData\Local\Temp\quanauto-platform-build-xq3sqbjc (26 file(s) copied)
 STEP npm-ci           rc=0 (1.2s) OK
 STEP npm-build        rc=0 (0.9s) OK
-STEP mvn-test         rc=0 (5.0s) OK
-STATS sandbox_files=26 mvn_tests_run=8 mvn_declared=8 mvn_failures=0 mvn_errors=0 static_files=3 static_bytes=227019 served_files=3
+STEP mvn-test         rc=0 (4.4s) OK
+STATS sandbox_files=26 mvn_tests_run=8 mvn_declared=8 mvn_failures=0 mvn_errors=0 static_files=3 static_bytes=227549 served_files=3
 verdict: PASS (0 issue(s))
 
 ==============================================================================

@@ -16,8 +16,16 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * 「不能各算一套指标」这个担忧由「本层零统计」这条结构约束来消解，
  * 详见 {@link ReportProjection} 的类注释。
  *
- * <p><b>本层目前没有门禁、也不在 CI 里</b>（`docs/开工前缺口清单.md` 与
- * `docs/智能量化交易平台.md` 附录C 都已如实登记）。别把「本地跑绿过」当证据。
+ * <p><b>本层现在有门禁了</b>（2026-09-30 订正：原文写的是「本层目前没有门禁、也不在 CI 里」，
+ * <b>已过期</b>）—— 声明层 {@code platform-spec-parity} 与运行层 {@code platform-runtime}
+ * 两条 tier-A 门禁都接在 {@code tools/run_all_gates.py} 的统一入口里，
+ * 而 {@code ci.yml} 的最后一步就是那条命令 ⇒ 两条都真的在 CI 上跑。
+ *
+ * <p><b>但两条都既不启动 JVM、也不渲染页面</b> ⇒ 这一层仍然零覆盖的只有两件事：
+ * ① <b>页面本身</b>（渲染 / 布局 / 视觉）；② <b>两侧展示文本是否一致</b>
+ * —— 后者只有手动脚本 {@code platform/check_text_parity.py}，而它需要一个活着的 JVM
+ * ⇒ 不能当门禁 ⇒ 不构成常驻证据。分工与更正见 {@code docs/智能量化交易平台.md}
+ * 附录C §C.8（声明那层）与 §C.9（运行那层）。别把「本地跑绿过」当证据。
  */
 @SpringBootApplication
 public class DashboardApiApplication {
