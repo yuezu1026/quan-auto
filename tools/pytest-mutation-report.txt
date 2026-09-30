@@ -1,5 +1,5 @@
-baseline: 先跑一次干净的全绿（tests/test_backtest_slice.py + tests/test_data_center_adapter.py + tests/test_data_center_store.py + tests/test_backtest_db_feed.py + tests/test_data_center_pit.py + tests/test_backtest_risk_gate.py + tests/test_risk_store.py + tests/test_dashboard.py）
-baseline: 全绿 OK (passed=388)
+baseline: 先跑一次干净的全绿（tests/test_backtest_slice.py + tests/test_data_center_adapter.py + tests/test_data_center_store.py + tests/test_backtest_db_feed.py + tests/test_data_center_pit.py + tests/test_backtest_risk_gate.py + tests/test_risk_store.py + tests/test_dashboard.py + tests/test_ingest.py）
+baseline: 全绿 OK (passed=433)
 APPLIED M1-account-double-frozen @ quanauto/broker.py (newline='\r\n', tests=tests/test_backtest_slice.py)
   CAUGHT=yes exit=1 failed=2 (test_max_drawdown_is_plausible, test_pending_buy_does_not_change_total_capital)
 APPLIED M2-fill-at-close-not-open @ quanauto/broker.py (newline='\r\n', tests=tests/test_backtest_slice.py)
@@ -146,6 +146,22 @@ APPLIED D10-cli-swallows-unreadable-report @ quanauto/cli.py (newline='\r\n', te
   CAUGHT=yes exit=1 failed=1 (test_cli_dashboard_refuses_a_report_it_cannot_read)
 APPLIED CONTROL-comment-only-dashboard @ quanauto/dashboard.py (newline='\r\n', tests=tests/test_dashboard.py)
   control OK: 没抓到（本检查器确实会报 caught=NO）
-mutations=67 caught=67 control=6 env_limited=0
+APPLIED IG1-validation-gate-ignored @ quanauto/ingest.py (newline='\r\n', tests=tests/test_ingest.py)
+  CAUGHT=yes exit=1 failed=4 (test_a_frame_that_fails_validation_writes_nothing_and_marks_the_run_failed, test_a_leaked_source_column_is_refused, test_an_empty_frame_is_refused_not_treated_as_a_pass, test_failure_recording_never_masks_the_original_error)
+APPLIED IG2-ledger-mismatch-ignored @ quanauto/ingest.py (newline='\r\n', tests=tests/test_ingest.py)
+  CAUGHT=yes exit=1 failed=1 (test_the_write_report_must_account_for_every_row)
+APPLIED IG3-missing-symbols-reports-success @ quanauto/ingest.py (newline='\r\n', tests=tests/test_ingest.py)
+  CAUGHT=yes exit=1 failed=1 (test_a_frame_missing_a_requested_symbol_is_partial_not_success)
+APPLIED IG4-source-stamp-dropped @ quanauto/ingest.py (newline='\r\n', tests=tests/test_ingest.py)
+  CAUGHT=yes exit=1 failed=4 (test_adjust_factor_channel_writes_the_factor_table, test_adjust_factor_rows_are_the_factor_dataclass, test_daily_happy_path_writes_bars_and_one_finished_run_row, test_the_row_objects_are_the_normalized_dataclasses_we_think_they_are)
+APPLIED IG5-requested-symbols-not-normalized @ quanauto/ingest.py (newline='\r\n', tests=tests/test_ingest.py)
+  CAUGHT=yes exit=1 failed=3 (test_a_bad_symbol_is_reported_as_a_source_adapter_error, test_duplicate_requested_symbols_are_deduped_keeping_the_order, test_the_requested_symbols_are_normalized_so_partial_is_not_reported_falsely)
+APPLIED IG6-finish-accepts-running @ quanauto/ingest.py (newline='\r\n', tests=tests/test_ingest.py)
+  CAUGHT=yes exit=1 failed=1 (test_finish_refuses_running_and_unknown_statuses)
+APPLIED IG7-reversed-window-accepted @ quanauto/ingest.py (newline='\r\n', tests=tests/test_ingest.py)
+  CAUGHT=yes exit=1 failed=1 (test_a_reversed_window_is_rejected)
+APPLIED CONTROL-comment-only-ingest @ quanauto/ingest.py (newline='\r\n', tests=tests/test_ingest.py)
+  control OK: 没抓到（本检查器确实会报 caught=NO）
+mutations=74 caught=74 control=7 env_limited=0
 report=D:\project-quan\quan-auto\tools\pytest-mutation-report.txt
 verdict: PASS

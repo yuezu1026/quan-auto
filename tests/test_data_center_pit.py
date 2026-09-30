@@ -335,6 +335,13 @@ def test_default_data_version_is_the_active_one():
 # 认 schema（DC 契约附录 B21.5 的 Ⅳ 块与 B21.6 表里那一行）⇒ 开着的**只剩两半**：
 # 分红与两个 ingestor 零产品调用点。**「缺口没关」这句话本身继续成立**，那条用例也继续不许删。
 #
+# **订正（2026-09-30，I2 收口 ①ⓑ「采集编排层」）**：上面那两半里的第二半（两个 ingestor 在
+# `quanauto/` 内零产品调用点）**已收口** —— `quanauto/ingest.py` 就是那条缺的编排层
+# （取数 → `validate_frame` → 盖 `source`/`data_version` → 落库 → 写 `dc_ingest_run` 批次留痕），
+# 两个 ingestor 各有一个调用点，`tests/test_ingest.py` 45 条压着它（DC 契约附录 H）。
+# ⇒ 开着的**只剩一半**：分红（就是下面 `get_dividend` 那条）。**「缺口没关」这句话本身继续成立。**
+# ⚠️ 它只主张「调用点接上了」：`quanauto/cli.py` 没开采集子命令、这条路径在任何真实 PostgreSQL 上没跑过。
+#
 # 另一半（`get_dividend` 仍恒 0.0）改由文件末尾那条单独的用例钉住 —— 同一条测试里
 # 钉着两件事，其中一件关闭时只能拆开，不能整条留着也不能整条删掉。
 

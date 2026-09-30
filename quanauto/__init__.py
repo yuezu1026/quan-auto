@@ -18,9 +18,14 @@ feed）已落地，**但 I2 未关闭** —— 订正（2026-09-29）：原先�
 守着这条缝的是读侧 7 条用例 + 端到端控制组 `test_adjusted_prices_reach_the_strategy_through_the_engine`
 （变异 `S11` / `A12`），逐条见数据中心契约附录 A6 / B21.3 的订正块。
 **I2 仍未关闭的理由也换了**：现在开着的是①**分红**（`get_dividend()` 恒 `0.0`）、
-②两个 ingestor 在 `quanauto/` 内**零调用者**（接口有实现，没有产品写入路径）、
 ③~~`validate_frame` 对复权帧一条判据都没有~~ —— **2026-09-29 晩 Ⅳ 已收口**（值域对齐
 `ck_dc_factor_positive` / 帧级自然键重复 / 认 schema），**「复权价」这一条不在其中了** 。
+②~~两个 ingestor 在 `quanauto/` 内**零调用者**（接口有实现，没有产品写入路径）~~ ——
+**2026-09-30 已接上**：`quanauto/ingest.py` 就是那条缺的编排层（取数 → 校验 → 盖戳 →
+落库 → 写 `dc_ingest_run` 批次留痕），两个 ingestor 各有一个调用点，`tests/test_ingest.py`
+45 条压着它。⚠️ **但它不主张这条路径被真实走过**：`quanauto/cli.py` 没开采集子命令、
+真库上没跑过 ⇒ 「采集覆盖面够不够」「真源上能不能通」仍归 `docs/迭代计划.md` I2 的
+「产物」行，那一行**照旧不打勾**。
 I3（风控真正介入交易）已落地两条线：`quanauto/risk.py` 的风控引擎本体，以及
 `BacktestEngine.attach_risk_engine()` 这条**默认关闭**的接线 —— 不接引擎时下单路径与 I1
 逐一相同，接了之后每单在下单前必经 `RiskEngine.check()`。

@@ -1,6 +1,6 @@
 """变异检查：把 quanauto 的实现逐处改坏，确认对应套件真的会红。
 
-基线跑八个套件（即下面那些常量）：
+基线跑九个套件（即下面那些常量）：
   * `tests/test_backtest_slice.py`（I1 回测切片）
   * `tests/test_data_center_adapter.py`（I2 S2 适配器，含复权帧的 `validate_frame` 判据）
   * `tests/test_data_center_store.py`（I2 S3 落库侧，含 A6 的因子读写）
@@ -9,6 +9,7 @@
   * `tests/test_backtest_risk_gate.py`（I3 风控闸门）
   * `tests/test_risk_store.py`（I3b 规则存储 + 拦截留痕）
   * `tests/test_dashboard.py`（I4 绩效看板：只读数不算数 + CLI 接线）
+  * `tests/test_ingest.py`（I2 收口 ①ⓑ：采集 → 落库编排层与批次留痕）
 （本仓库对门禁的同一条纪律：每个自建检查器都要做触发测试；测试套件就是检查器。）
 
 **纪律（每条都对应过一次真实的假绿）**：
@@ -21,13 +22,13 @@
   * `MUTATION` 触发出来的失败必须是**断言/异常**，不能是 `ImportError`/语法错
     （收集阶段就炸掉，等于测试根本没跑）。
 
-**它不进 `run_all_gates.py` 的注册表**：每条样本要跑一次 pytest（2026-09-29 晚 Ⅳ「复权帧的 `validate_frame`
-判据」后实测 **73 条样本：67 条变异 + 6 条 CONTROL + 0 条 ENV-LIMIT**（基线八套件 `passed=388`；报告里那行
-`mutations=67 caught=67 control=6 env_limited=0` 的 `mutations` **只数变异、不含 CONTROL**，所以总数是 73
-而不是 67 —— 别把两处加混了）；同日晚 Ⅲ「CSV 侧复权口径」那轮是 68 条 = 63 + 5 + 0
-（基线七套件 `passed=252`）；同日晚 Ⅱ「复权价实施」那轮是 66 条 = 61 + 5 + 0
-（基线七套件 `passed=249`）；同一日的 A6 收口那轮是 59 条 = 54 + 5 + 0
-（基线七套件 `passed=241`），I4 是 54 条 = 49 + 5 + 0（基线六套件 `passed=181`），I3 那轮是 43 条 = 39 + 4 + 0
+**它不进 `run_all_gates.py` 的注册表**：每条样本要跑一次 pytest（2026-09-30「采集编排层」后实测 **81 条样本：74 条变异 + 7 条 CONTROL + 0 条 ENV-LIMIT**（基线**九**套件 `passed=433`；报告里那行
+`mutations=74 caught=74 control=7 env_limited=0` 的 `mutations` **只数变异、不含 CONTROL**，所以总数是 81
+而不是 74 —— 别把两处加混了）；此前 2026-09-29 晚 Ⅳ「复权帧的 `validate_frame`
+判据」那轮是 **73 条样本：67 条变异 + 6 条 CONTROL + 0 条 ENV-LIMIT**（基线八套件 `passed=388`）；同日晚 Ⅲ「CSV 侧复权口径」那轮是 68 条 = 63 + 5 + 0
+（基线 `passed=252`，当时清单里**漏了** `tests/test_data_center_adapter.py`，所以下面几处「七套件」这个称呼与实际不符）；同日晚 Ⅱ「复权价实施」那轮是 66 条 = 61 + 5 + 0
+（基线 `passed=249`）；同一日的 A6 收口那轮是 59 条 = 54 + 5 + 0
+（基线 `passed=241`），I4 是 54 条 = 49 + 5 + 0（基线六套件 `passed=181`），I3 那轮是 43 条 = 39 + 4 + 0
 （基线五套件 `passed=145`），再往前 B20 后是 32 条 = 29 + 3 + 0），慢，且它验证的对象是测试而不是产物契约。
 
 ⚠️ **2026-09-29 A6 那一批同时干了三件事，别只看新增的 5 条**：
@@ -112,6 +113,7 @@ TESTS_PIT = "tests/test_data_center_pit.py"
 TESTS_RISK_GATE = "tests/test_backtest_risk_gate.py"
 TESTS_RISK_STORE = "tests/test_risk_store.py"
 TESTS_DASHBOARD = "tests/test_dashboard.py"
+TESTS_INGEST = "tests/test_ingest.py"
 REPORT = os.path.join(ROOT, "tools", "pytest-mutation-report.txt")
 
 CONTROL = "MUST-NOT-BE-CAUGHT"
@@ -1046,6 +1048,88 @@ MUTATIONS = [
         "new": "    \"\"\"等距抽样 + 分档字符。纯 ASCII，确定性（同输入同输出）。（MUT：只改注释）\"\"\"\n",
         "expect": CONTROL,
     },
+    # ── 采集编排层（quanauto/ingest.py，2026-09-30 追加）──────────────────────
+    # 这个模块把「采集」与「落库」两半接了起来（此前两边各自有测试、缝上没测过）。
+    # 它的测试是同一批写的、没有红→绿的历史 ⇒ 只能靠这一组变异证明它有牙。
+    {
+        # 校验没过也照样落库：契约「is_valid 为 False 时不得写入」当场失守。
+        "tag": "IG1-validation-gate-ignored",
+        "tests": TESTS_INGEST,
+        "path": "quanauto/ingest.py",
+        "old": "        if not report.is_valid:\n",
+        "new": "        if False:\n",
+        "expect": ["test_a_frame_that_fails_validation_writes_nothing_and_marks_the_run_failed"],
+    },
+    {
+        # 落库报告与帧对不上也当成功：日志主动撒谎（表里的行还在，状态却写 SUCCESS）。
+        "tag": "IG2-ledger-mismatch-ignored",
+        "tests": TESTS_INGEST,
+        "path": "quanauto/ingest.py",
+        "old": "        if settled.total != len(rows):\n",
+        "new": "        if False:\n",
+        "expect": ["test_the_write_report_must_account_for_every_row"],
+    },
+    {
+        # 缺标的也写 SUCCESS：`dc_ingest_run.status` 这一列从此不可信。
+        # 期望只有一条测试 —— `test_the_requested_symbols_are_normalized_…` 断言的是
+        # 「缺了谁」和「拿到的是 SUCCESS」，它本来就要 SUCCESS，所以这一改**不该**让它红
+        # （实测过：把它写进期望会让这一条报 CAUGHT=no，那是期望写错了不是守卫没牙）。
+        "tag": "IG3-missing-symbols-reports-success",
+        "tests": TESTS_INGEST,
+        "path": "quanauto/ingest.py",
+        "old": "        status = STATUS_PARTIAL if missing else STATUS_SUCCESS\n",
+        "new": "        status = STATUS_SUCCESS\n",
+        "expect": ["test_a_frame_missing_a_requested_symbol_is_partial_not_success"],
+    },
+    {
+        # 溯源戳丢掉：落库的行分不清是哪一次采集写进去的（D8 的版本列同理）。
+        "tag": "IG4-source-stamp-dropped",
+        "tests": TESTS_INGEST,
+        "path": "quanauto/ingest.py",
+        "old": "    values[\"source\"] = source\n",
+        "new": "    values[\"source\"] = \"\"\n",
+        "expect": ["test_daily_happy_path_writes_bars_and_one_finished_run_row",
+                   "test_adjust_factor_channel_writes_the_factor_table",
+                   "test_the_row_objects_are_the_normalized_dataclasses_we_think_they_are"],
+    },
+    {
+        # 请求侧不归一：`['600000']` 与帧里的 `['600000.SH']` 永远对不上 ⇒ 每次都假报 PARTIAL。
+        "tag": "IG5-requested-symbols-not-normalized",
+        "tests": TESTS_INGEST,
+        "path": "quanauto/ingest.py",
+        "old": "        normalized = normalize_symbol(code)\n",
+        "new": "        normalized = code\n",
+        "expect": ["test_the_requested_symbols_are_normalized_so_partial_is_not_reported_falsely",
+                   "test_duplicate_requested_symbols_are_deduped_keeping_the_order",
+                   "test_a_bad_symbol_is_reported_as_a_source_adapter_error"],
+    },
+    {
+        # 收批次时允许把状态写回 RUNNING ⇒ 留下一条永远不会结束的日志。
+        "tag": "IG6-finish-accepts-running",
+        "tests": TESTS_INGEST,
+        "path": "quanauto/ingest.py",
+        "old": "        if status == STATUS_RUNNING:\n",
+        "new": "        if False:\n",
+        "expect": ["test_finish_refuses_running_and_unknown_statuses"],
+    },
+    {
+        # 窗口反了也不拦：`fetch_*` 会拿着 end<start 去问源。
+        "tag": "IG7-reversed-window-accepted",
+        "tests": TESTS_INGEST,
+        "path": "quanauto/ingest.py",
+        "old": "    if end < start:\n",
+        "new": "    if False:\n",
+        "expect": ["test_a_reversed_window_is_rejected"],
+    },
+    {
+        # 对照组：只改 docstring 的一句话，必须**不**被抓到。
+        "tag": "CONTROL-comment-only-ingest",
+        "tests": TESTS_INGEST,
+        "path": "quanauto/ingest.py",
+        "old": "    \"\"\"起止必须是 `date` 且有序。**拒绝 `datetime`**：见下方注释。\"\"\"\n",
+        "new": "    \"\"\"起止必须是 `date` 且有序。**拒绝 `datetime`**：见下方注释。（MUT：只改注释）\"\"\"\n",
+        "expect": CONTROL,
+    },
 ]
 
 FAILED_RE = re.compile(r"^(FAILED|ERROR) (\S+)::(\w+)")
@@ -1118,7 +1202,7 @@ def main() -> int:
     # 基线一起跑：基线只要有一处不是全绿，后面的「红」就什么都证明不了。
     # 一条变异期望落在哪个套件，那个套件就必须在基线里 —— 否则「红」没有全绿垫底。
     suites = [TARGET, TESTS_ADAPTER, TESTS_STORE, TESTS_DB_FEED, TESTS_PIT,
-              TESTS_RISK_GATE, TESTS_RISK_STORE, TESTS_DASHBOARD]
+              TESTS_RISK_GATE, TESTS_RISK_STORE, TESTS_DASHBOARD, TESTS_INGEST]
     say("baseline: 先跑一次干净的全绿（%s）" % " + ".join(suites))
     code, names, counts, output = run_pytest(suites)
     if code != 0 or names:
