@@ -4,10 +4,10 @@
 CI 自 2026-09-24 起在 GitHub 上真跑（`origin` 公开；首次真跑判红、修复后第二次 success）；
 下面这份是**本地等价**：它给的是本机解释器的口径，和 GitHub 上那次真跑不能互相替代。
 
-generated: 2026-09-30 08:38:39
+generated: 2026-09-30 08:45:51
 python:    D:\project-quan\quan-auto\.venv\Scripts\python.exe  (.venv/Scripts/python.exe)
 version:   Python 3.13.9
-commit:    eb0d7c8124c382bbcc77ee0943478d6c1d725eed
+commit:    93f5af77a5a3c053e5644fbdfa43d4998ecc2be1
 dirty:     0 项未提交改动
 pycache:   启动时清掉 0 个 __pycache__（陈旧字节码会让结论与磁盘源码无关）
 
@@ -20,7 +20,7 @@ exit: 0
   | ........................................................................ [ 76%]
   | ........................................................................ [ 92%]
   | .....................................                                    [100%]
-  | 469 passed in 26.61s
+  | 469 passed in 25.10s
 
 ## 2. 红→绿往返（I0 触发测试的证据：两个关键的东西各红一次）
 
@@ -31,13 +31,13 @@ exit: 0
   红: pytest exit=1
     | =========================== short test summary info ===========================
     | FAILED tests/test_skeleton.py::test_version_matches_pyproject - AssertionErro...
-    | 1 failed, 468 passed in 25.81s
+    | 1 failed, 468 passed in 25.29s
   还原: 与原始字节逐字节一致
   解释器读回: 还原后 0.1.0
   绿: pytest exit=0
     | ........................................................................ [ 92%]
     | .....................................                                    [100%]
-    | 469 passed in 26.17s
+    | 469 passed in 26.19s
 
 ### ci-drops-gates -- 把 CI 里那一行门禁命令换成单跑一个子门禁
   靶子: .github/workflows/ci.yml  'python tools/run_all_gates.py' -> 'python tools/verify_risk_config.py'
