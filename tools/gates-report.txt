@@ -162,7 +162,7 @@ argv: tools/verify_appendix_refs.py
 scan scope: git ls-files=126 file(s), read as text=123, skipped=3
   skipped (binary/undecodable): docs/智能量化交易平台-数据中心数据源选型与接入规范.docx, docs/智能量化交易平台-核心模块接口契约文档.docx, docs/智能量化交易平台.docx
 appendix index: core=7L/24I dc=4L/73I prd=3L/0I risk=0L/0I
-citations: 434 total, 243 with an item label, 130 naming an owner, in 53 file(s)
+citations: 435 total, 243 with an item label, 130 naming an owner, in 53 file(s)
 verdict: PASS (0 issue(s))
 
 ==============================================================================
@@ -265,10 +265,10 @@ what: npm ci/build 与 mvn test 真跑一遍，且前端产物真的落到 targe
 argv: tools/verify_platform_build.py
 ------------------------------------------------------------------------------
 TOOLCHAIN mvn=3.9.16 java=21 (openjdk version "21.0.12" 2026-07-21 LTS, from JAVA_HOME=C:\Program Files\Zulu\zulu-21) node=v25.2.1 npm=11.16.0
-SANDBOX C:\Users\39002\AppData\Local\Temp\quanauto-platform-build-xq3sqbjc (26 file(s) copied)
+SANDBOX C:\Users\39002\AppData\Local\Temp\quanauto-platform-build-p62vgb1c (26 file(s) copied)
 STEP npm-ci           rc=0 (1.2s) OK
 STEP npm-build        rc=0 (0.9s) OK
-STEP mvn-test         rc=0 (4.4s) OK
+STEP mvn-test         rc=0 (4.5s) OK
 STATS sandbox_files=26 mvn_tests_run=8 mvn_declared=8 mvn_failures=0 mvn_errors=0 static_files=3 static_bytes=227549 served_files=3
 verdict: PASS (0 issue(s))
 
