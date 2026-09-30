@@ -111,3 +111,26 @@ mvn -B -f platform/pom.xml -pl api spring-boot:run
 **为什么不是门禁**：它需要一个活着的 JVM 进程。而「环境没起来就判红」的门禁本身就是判据缺陷 ——
 与 `.github/copilot-instructions.md` 里那条「判据依赖环境就是判据的缺陷」同一个理由。
 所以它只能由人在交付时跑一次，**不构成常驻证据**。
+
+## 研究层那份 `quanauto/dashboard.py` 要不要退役（**方向登记，不是施工许可**）
+
+这一层落地后最容易被问到的一句话是「平台层已经有了，研究层那份 `dashboard.py` 是不是可以删了」。
+**答复是：不要删，也不建议现在退役。** 完整的现状对照与理由写在 `docs/迭代计划.md` 的
+**§十「后续方向登记：看板展示面按消费面切」（2026-09-30，未施工）** 那一节里
+（那是一份**手写**文档，按**节名**找，别按行号找 —— 行号会漂，节名不会）。
+这里只留最短的三句：
+
+1. **重复不在渲染层。** 两层真重的是三处 —— 那张 14 行规格表、读数规则、显示规则
+   （`format_metric` ↔ `formatMetric`）。而 `render_html` 与本层的 React 页面是
+   **两套各自重写**的渲染（`_escape` / `_svg_curve` / 逐点 `data-equity` 一个都没出现在
+   Java 或 JS 侧）⇒ 删掉 `render_html` **一处重复都不会少**，只是砍掉
+   「离线单文件 HTML 归档」这个消费面。
+2. **顺序不能反。** 两侧的自动比对都以**研究层**为参照物：`platform-spec-parity`
+   （`tools/verify_platform_specs.py`）读的就是 `quanauto/dashboard.py` 的 `METRIC_SPECS`，
+   对拍脚本 `platform/check_text_parity.py` 也以 `quanauto.dashboard` 为基线
+   ⇒ **先删研究层 = 先杀裁判**，留下的是一份没人再对拍的副本。
+3. **真要消重复，正当做法是「生成」而不是「手抄」** —— 但那是另一轮施工
+   （要改本层文件、也会改 `platform-spec-parity` 的判据形状），不是本节登记的内容。
+
+⚠️ 本节是**方向登记**，不是状态陈述，也不是施工许可：它不解除任何缺口，也不改任何迭代的 DoD。
+门禁数一律现取 `python tools/run_all_gates.py --list`。
