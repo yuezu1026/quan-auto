@@ -18,7 +18,7 @@ GATE risk-config (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 风控契约 §3.6 与 db/risk_control.sql 与 smoke.sql 三方一致
 argv: tools/verify_risk_config.py
 ------------------------------------------------------------------------------
-CRLF-normalised: contract=90260 bytes, sql=15185 bytes, smoke=22801 bytes, specs=119175 bytes
+CRLF-normalised: contract=101940 bytes, sql=15185 bytes, smoke=22801 bytes, specs=124892 bytes
 extracted: seed_rows=6 ddl_tables=9 spec_rows=6 rule_specs=6 contract_table_refs=13 required_constraints=14 covered_by_smoke=14 verified_on=postgres:14 postgres:15 postgres:16 postgres:17 evidence_images=postgres:14 postgres:15 postgres:16 postgres:17
 smoke evidence files: D:\project-quan\quan-auto\tools\sql-smoke-report-pg14.txt D:\project-quan\quan-auto\tools\sql-smoke-report-pg15.txt D:\project-quan\quan-auto\tools\sql-smoke-report-pg16.txt D:\project-quan\quan-auto\tools\sql-smoke-report.txt
 verdict: PASS (0 issue(s))
@@ -58,7 +58,7 @@ GATE iteration-plan (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 迭代计划里每个标「已交付」的迭代都引用了一条真实存在的证据路径
 argv: tools/verify_iteration_plan.py
 ------------------------------------------------------------------------------
-CRLF-normalised: plan=152048 bytes (迭代计划.md)
+CRLF-normalised: plan=162393 bytes (迭代计划.md)
 extracted: iterations=5 delivered=4 dod_sections=5
 verdict: PASS (0 issue(s))
 NOTE: this gate checks the plan is internally well-formed and that no completion claim dangles. It cannot judge whether an iteration was actually delivered -- someone still has to open the cited evidence file.
@@ -202,7 +202,7 @@ argv: tools/verify_class_coverage.py
 root:            D:\project-quan\quan-auto
 contract[core]   docs\智能量化交易平台-核心模块接口契约文档.md  classes=80 prose=21437 chars
 contract[dc  ]   docs\智能量化交易平台-数据中心接口契约文档.md  classes=29 prose=121184 chars
-contract[risk]   docs\智能量化交易平台-风控层接口契约文档.md  classes=24 prose=38995 chars
+contract[risk]   docs\智能量化交易平台-风控层接口契约文档.md  classes=24 prose=45439 chars
 python blocks:   71 (unparsable=2, of which class-like=2, NewType aliases=1)
 NOTE: 契约 core 文档 1167 行的块解析不了（第 1168 行语法错：invalid syntax）—— 类名提示=Account 首行=@dataclass class Account: account_id: str # 账户ID total_capital: float 
 NOTE: 契约 core 文档 1989 行的块解析不了（第 2005 行语法错：unterminated triple-quoted string literal (detected at line 23)）—— 类名提示=ResultSerializer 首行=class ResultSerializer: """ 回测结果序列化器。 """
@@ -228,7 +228,7 @@ impl scan:       quanauto/*.py files=17 classes=158 codes=30 unparsable=0
 contract side:   codes=37（core=21, dc=7, risk=11）重叠=2
 pending:         registered=12 matched=12 stale=0
 impl-only:       registered=5 matched=5 stale=0
-spelling:        tokens=321 normalized=43 divergent=1 registered=1
+spelling:        tokens=327 normalized=43 divergent=1 registered=1
 detectors:       16（每个检查码在 --selftest/--falsify 里各有一个坏样本）
 notes:           三份契约的码表与 quanauto/ 双向对齐（码 / 拼写 / 级别 / 类名）
 verdict: PASS (0 finding(s))
@@ -238,7 +238,7 @@ GATE risk-table-wiring (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 风控契约 §3.6.1 每张表都有产品写入方（或按 §八 登记豁免）、写入方归属契约点名的组件、关键能力未被改掉，且 D1 的 check() 内零 IO 仍成立
 argv: tools/verify_risk_table_wiring.py
 ------------------------------------------------------------------------------
-CRLF-normalised: contract=90260 bytes, product sources=17 file(s)
+CRLF-normalised: contract=101940 bytes, product sources=17 file(s)
 extracted: contract_tables=9 sources=17 sources_with_write_keyword=6 tables_with_writer=7 writer_sites=7 exempt=1
 NOTE 'risk_intercept_log' 契约写入方写作「风控引擎（异步批量）」（未点名类），实测写入作用域是 ['quanauto/risk.py::RiskInterceptLogWriter']
 NOTE 'risk_breaker_state' 契约写入方写作「风控引擎」（未点名类），实测写入作用域是 ['quanauto/risk.py::DbRiskRuleStore']
@@ -265,10 +265,10 @@ what: npm ci/build 与 mvn test 真跑一遍，且前端产物真的落到 targe
 argv: tools/verify_platform_build.py
 ------------------------------------------------------------------------------
 TOOLCHAIN mvn=3.9.16 java=21 (openjdk version "21.0.12" 2026-07-21 LTS, from JAVA_HOME=C:\Program Files\Zulu\zulu-21) node=v25.2.1 npm=11.16.0
-SANDBOX C:\Users\39002\AppData\Local\Temp\quanauto-platform-build-3ty659_t (29 file(s) copied)
-STEP npm-ci           rc=0 (1.4s) OK
-STEP npm-build        rc=0 (1.0s) OK
-STEP mvn-test         rc=0 (4.9s) OK
+SANDBOX C:\Users\39002\AppData\Local\Temp\quanauto-platform-build-1k3chyqe (29 file(s) copied)
+STEP npm-ci           rc=0 (1.6s) OK
+STEP npm-build        rc=0 (1.3s) OK
+STEP mvn-test         rc=0 (7.9s) OK
 STATS sandbox_files=29 mvn_tests_run=17 mvn_declared=17 mvn_failures=0 mvn_errors=0 static_files=3 static_bytes=228233 served_files=3
 verdict: PASS (0 issue(s))
 
@@ -307,7 +307,7 @@ what: 文档与源码里的行号引用都被绑住（同一行有日期/提交�
 argv: tools/verify_line_anchors.py
 ------------------------------------------------------------------------------
 scope: 92 file(s) scanned (docs/**/*.md, quanauto|tools|tests/*.py, CONTEXT.md, platform, .github/**/*.md)
-anchors: hits=71 distinct=56 auto-bound=22 registered=18 numbered-verified=14 row-verified=12
+anchors: hits=72 distinct=57 auto-bound=23 registered=18 numbered-verified=14 row-verified=12
 registry: entries=39 numbered=14 quoted=5 row=12 structural=8
 verdict: PASS (0 issue(s))
 NOTE: 本门禁判的是「这个行号被绑住了」，不是「这个行号是对的」。B1-B4 的绑定只是要求同一行自己声明了它是快照 / 外部版本 / 会漂；kind=numbered / row 才真的按内容核对那一条。

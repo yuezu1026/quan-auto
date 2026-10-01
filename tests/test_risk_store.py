@@ -509,11 +509,16 @@ def test_save_change_unchanged_value_has_no_direction() -> None:
     assert conn.calls[3][1][5] == ""
 
 
-def test_save_change_without_an_existing_row_leaves_the_old_threshold_blank() -> None:
-    """新建一层（D2 允许）时没有「变更前」可言。
+def test_save_change_without_a_row_and_without_a_supplied_value_leaves_it_blank() -> None:
+    """没有同层旧行、调用方也没给生效值 ⇒ 留空（`''`）。
 
-    变更前的**生效**值来自更高的层，存储层算不出继承链 —— 编一个（比如拿默认值顶）就是
-    把分层再实现一遍，而那正是「两套方言」的来源。
+    **留空的意思是「看不到继承链」**，不是「变更前没有值」：新建一层（D2 允许）时，生效值
+    来自更高的层，而存储层算不出继承链 —— 编一个（比如拿默认值顶）就是把分层再实现一遍，
+    而那正是「两套方言」的来源。
+
+    这条**不是**缺口 ① 的收口判据（那条在下面 `..._prefers_the_supplied_effective_value_
+    over_the_missing_row`）：它守的是「调用方也没给」那一支，也就是没有任何权威来源时
+    绝不猜。没有它的话，收口那一条可以被「悄悄拿默认值顶」蒙过去仍全绿。
     """
     script = [
         [],
@@ -523,8 +528,78 @@ def test_save_change_without_an_existing_row_leaves_the_old_threshold_blank() ->
     ]
     conn = FakeConn(script=[list(step) for step in script])
     _store(conn).save_change(_change(scope=RuleScopeEnum.STRATEGY, scope_key="ma-cross"))
-    assert conn.calls[3][1][3] == "", "没有旧行时 old_threshold 必须留空"
+    assert conn.calls[3][1][3] == "", "没有旧行且调用方没给时，old_threshold 必须留空"
     assert conn.calls[3][1][5] == ""
+
+
+# ── 写侧：缺口 ① 收口（2026-10-01）——「变更前的生效值」由引擎交给存储层 ──────
+def test_save_change_prefers_the_supplied_effective_value_over_the_missing_row() -> None:
+    """**缺口 ① 的收口判据**：调用方给的**生效**值优先于「库里查不到」。
+
+    以前 `RuleChangeRequest` 没有 `old_threshold`，存储层只能读**同层**那一行；可「变更前
+    的生效值」要按 D2 逐层解析，新建一层时它来自更高的层。于是真库上留下的是这样一笔
+    **事后无法分辨的假话**：`old_threshold=''`、`change_direction=''` —— 读起来像「什么都
+    没发生」，而 `risk_config_version` 已经 +1、新阈值已经生效。
+
+    这个假连接看不出 D2（它只按脚本回话），所以判据只能是「调用方给的值有没有被写进
+    审计那一列」。
+    """
+    script = [
+        [],                          # 读同层旧行：**没有**（这正是缺口发生的场合）
+        [{"version": RULE_VERSION}],
+        [{"rule_id": RULE_ID}],
+        [],
+    ]
+    conn = FakeConn(script=[list(step) for step in script])
+    _store(conn).save_change(
+        _change(scope=RuleScopeEnum.STRATEGY, scope_key="ma-cross",
+                old_threshold=0.10, new_threshold=0.05)
+    )
+    assert conn.calls[3][1][3] == "0.1", "生效值来自更高层时，审计必须记那一份而不是留空"
+    assert conn.calls[3][1][5] == "TIGHTEN", "方向也是拿这一份算的，不能跟着一起塌掉"
+
+
+def test_save_change_accepts_a_supplied_value_that_agrees_with_the_row() -> None:
+    """两份「变更前」一致 ⇒ 正常写入（**干净样本**：防「一律拒绝」这种假守卫）。
+
+    有同层旧行时，调用方给的值必须与它一致；这条守住「一致不许误伤」那一半。
+    """
+    conn = FakeConn(script=[list(step) for step in SAVE_SCRIPT])
+    _store(conn).save_change(_change(old_threshold=0.1))
+    assert conn.calls[3][1][3] == "0.1"
+    assert conn.events == ["begin", "commit"]
+
+
+def test_save_change_refuses_when_the_supplied_value_contradicts_the_row() -> None:
+    """两份「变更前」对不上 ⇒ 拒（RISK_004），且**一条写语句都不许发**。
+
+    对不上说明引擎手上是旧配置（未 reload）。`risk_rule_audit` 那一行是变更之后唯一的
+    字据，照任何一份写都是假话；而 `change_direction` 也是拿它算的。宁可整笔不写。
+    """
+    conn = FakeConn(script=[list(step) for step in SAVE_SCRIPT])
+    with pytest.raises(RiskConfigInvalidError) as info:
+        _store(conn).save_change(_change(old_threshold=0.11, new_threshold=0.05))
+    message = str(info.value)
+    assert "RISK_004" in message
+    assert "0.11" in message and "0.1" in message, "错误信息要把两份值都打出来，否则无从排查"
+    writes = [sql for sql, _ in conn.calls if not sql.lstrip().upper().startswith("SELECT")]
+    assert writes == [], "本笔必须在递版本号之前停住，不许先写再回滚"
+    assert conn.events == ["begin", "rollback"]
+
+
+def test_the_old_threshold_read_looks_only_at_enabled_rows() -> None:
+    """D2：`enabled=0` 的那一层「视为不存在」⇒ 它不许被当成「变更前的生效值」。
+
+    假连接看不出 SQL 的过滤效果，所以这里钉的是**形状**：那句 SELECT 必须带 `enabled`，
+    且**不能**把它写成绑定参数（写成参数就成了「永远为真」，而传 `False` 反而不返回任何
+    行 —— 一个停用层会变成「整条链都看不到」）。口径与 `RiskEngine.get_effective_rule()`
+    一致：少这个条件，一个被停用的同层旧行会被写进审计，而它根本没在生效。
+    """
+    conn = FakeConn(script=[list(step) for step in SAVE_SCRIPT])
+    _store(conn).save_change(_change())
+    sql, params = conn.calls[0]
+    assert "enabled" in sql
+    assert params == (RULE_ID, "GLOBAL", SCOPE_KEY), "参数里多一个 enabled 就是把判据交给调用方"
 
 
 # ── 写侧：应用层校验重做（绕过引擎的调用方也要撞上同一道闸）────────────────

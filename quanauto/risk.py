@@ -14,8 +14,13 @@
 * `emergency_flatten` 只返回任务标识，真正的清仓执行不在本模块（D5：清仓是显式通道）。
 * 短轮询 watchdog 只在 DB 版才需要，回测路径不启动它。
 * 真库探针（postgres:17 容器，一次性核对、不进仓）实测留下的两条缺口登记在
-  `docs/开工前缺口清单.md` §七之二：① `RuleChangeRequest` 没有 `old_threshold`，
-  审计表里的「变更前的生效值」只能由客户端算（**仍开着**）；
+  `docs/开工前缺口清单.md` §七之二：① ~~`RuleChangeRequest` 没有 `old_threshold`，
+  审计表里的「变更前的生效值」只能由客户端算~~ ⇒ **2026-10-01 收口**：请求对象补了
+  `old_threshold`，`apply_change()` / `apply_pending()` 在调存储前把**按 D2 解析出来的
+  生效值**填进去（引擎本来就是唯一能解析继承链的那一层 —— `_current_threshold_for()`
+  的注释早就写着「要跟生效值比，不是跟同层的旧行比」）；存储层只在调用方没给时才退回
+  读**同层**那一行，且要求它 `enabled`（D2：enabled=0 视为不存在），两处都给且对不上
+  就拒（RISK_004）；
   ② ~~库里 `numeric(18,8)` 会**静默**舍入更多位的小数（`1e-9` 甚至会被舍成 0 之后才被
   CHECK 拒绝）~~ ⇒ **2026-10-01 收口**：`validate_threshold()` 现在当场挡住「比 8 位更细」
   与「超出 `numeric(18,8)` 量程」的阈值，并把库会存成什么写进错误信息；`nan` / `±inf`
@@ -539,6 +544,19 @@ class RuleChangeRequest:
     operator: str
     reason: str
     confirm_relax: bool = False
+    old_threshold: Optional[float] = None
+    """变更前的**生效**值（D2 分层解析后的结果）—— 2026-10-01 补，见
+    `docs/开工前缺口清单.md` §七之二 ①。
+
+    `RiskEngine.apply_change()` / `apply_pending()` 在调用存储前**填/覆盖**它：`risk_rule_audit`
+    那一列的语义是「变更前的生效值」，而生效值要按 D2 逐层解析，只有握有内存索引的引擎
+    算得出来 —— 存储层只看得到**同层**那一行，继承链它算不出来，算就是把分层再实现一遍
+    （两套方言）。
+
+    `None` = 调用方没提供（直接构造本对象的运维脚本）。此时存储层退回读同层那一行，
+    读不到（或那一行 `enabled=0`，D2 视为不存在）就**留空** —— 空的意思是「看不到继承链」，
+    不是「变更前没有值」。
+    """
 
 
 @dataclass
@@ -806,6 +824,16 @@ def _audit_num(value: Any) -> str:
     return format(number.normalize(), "f")
 
 
+def _same_threshold(left: Any, right: Any) -> bool:
+    """两个阈值是不是「同一个值」（`_direction()` 与存储层的旧值核对共用这一条）。
+
+    容差 1e-12 只用来吸收 `float(Decimal(...))` 的换算噪声 —— 阈值进库前已被
+    `validate_threshold()` 钉在 8 位小数上，所以这个量级连标度的最后一位都动不了，
+    它**不是**「差不多就算相等」的许可。判据本身是「变更前后有没有变」。
+    """
+    return abs(float(left) - float(right)) < 1e-12
+
+
 def _as_local_dt(value: Any) -> Optional[datetime]:
     """把库里的 `timestamptz` 归一化成**本地裸时间**（与 `_now()` 同口径）。
 
@@ -844,9 +872,13 @@ class DbRiskRuleStore(RiskRuleStore):
         "ORDER BY rule_id, scope, scope_key"
     )
     VERSION_SQL = "SELECT version FROM risk_config_version WHERE id = 1"
+    # `AND enabled` 是 D2 的一部分，不是「顺手加的过滤」：`enabled=0` 的那一层按 D2
+    # 「视为不存在，继续向下一层查找」，所以它不在生效链上。少了这个条件，一个被停用的
+    # 同层旧行会被当成「变更前的**生效**值」写进审计 —— 而它根本没在生效（2026-10-01 补，
+    # 口径与 `RiskEngine.get_effective_rule()` 一致）。
     OLD_THRESHOLD_SQL = (
         "SELECT threshold FROM risk_rule WHERE rule_id = %s AND scope = %s "
-        "AND scope_key = %s"
+        "AND scope_key = %s AND enabled"
     )
     # 写：三句必须同事务。UPSERT 而不是 UPDATE，是因为 D2 的分层覆盖允许「新建一层」
     # （给某个策略单独收紧却没有那一行）。UPDATE 在这种情况下影响 0 行，而 0 行既可能
@@ -994,17 +1026,20 @@ class DbRiskRuleStore(RiskRuleStore):
         两个 `except QuanAutoError` 分支要先靠 `_is_check_violation()` 穿透 `__cause__`
         把它认回来，否则调用方拿到的是一个 `except RiskError` 接不住的类型（真库实测）。
 
-        `old_threshold` / `change_direction` 在库里**本来没有这一行**时留空：变更前的
-        **生效**值来自更高的层（D2），存储层算不出继承链，算就是把分层再实现一遍。
-        契约 §3.3.4 的 `RuleChangeRequest` 没有 `old_threshold` 字段，所以这里只能留空
-        —— 这一条登记为缺口，见收工记录。
+        审计里「变更前的生效值」取的是哪一份（2026-10-01 收口，见 `docs/开工前缺口清单.md`
+        §七之二 ①）：**优先用 `change.old_threshold`** —— 那是 `RiskEngine` 按 D2 解析出来的
+        生效值，存储层算不出来；调用方没给（直接构造请求对象的运维脚本）才退回读**同层**
+        那一行，且那一行必须 `enabled`（D2：enabled=0 视为不存在）。两处都有且对不上 ⇒ 拒
+        （RISK_004），因为两份视图里必有一份是旧的，拿哪一份写审计都是假话，而变更方向
+        也是拿它算的。都不给（新建一层且调用方没给值）⇒ 留空：空的意思是「看不到继承链」，
+        不是「变更前没有值」。
         """
         self._validate_change(change)
         conn = _open_connection(self._connect, RiskConfigWriteError, "风控存储写入")
         new_version = 0
         try:
             with conn.transaction():
-                old = self._read_old_threshold(conn, change)
+                old = self._resolve_old(change, self._read_old_threshold(conn, change))
                 bumped = _run_sql(conn, self.BUMP_VERSION_SQL, (self._now_stamp(),),
                                   "递增 risk_config_version", RiskConfigWriteError)
                 if len(bumped) != 1:
@@ -1064,12 +1099,42 @@ class DbRiskRuleStore(RiskRuleStore):
             )
 
     def _read_old_threshold(self, conn: Any, change: RuleChangeRequest) -> Optional[float]:
+        """同层那一行的阈值；**没有那一行（或它 `enabled=0`）就返回 `None`**。
+
+        只有「调用方没给生效值」时才用得上它（见 `_resolve_old`）。
+        """
         rows = _run_sql(
             conn, self.OLD_THRESHOLD_SQL,
             (change.rule_id, change.scope.value, change.scope_key),
             "读取变更前的阈值", RiskConfigWriteError,
         )
         return None if not rows else float(rows[0]["threshold"])
+
+    def _resolve_old(self, change: RuleChangeRequest, row: Optional[float]) -> Optional[float]:
+        """审计要写的「变更前的**生效**值」（D6/D10）—— 2026-10-01 收口。
+
+        调用方（`RiskEngine`）给的优先：它是唯一握有内存索引、能按 D2 解析继承链的一层。
+        它没给时才退回 `row`（库里同层那一行；`OLD_THRESHOLD_SQL` 已把 `enabled=0` 滤掉，
+        因为那一层按 D2 就是「不存在」）。两份都没有 ⇒ `None` ⇒ 审计留空。
+
+        **两份都有且对不上 ⇒ 拒**。这不是「更严谨」，是**没有第三种选择**：
+        `change.old_threshold` 来自引擎加载时的索引，`row` 来自**现在**的库，两者对不上
+        说明引擎手上是旧配置；照任何一份写进审计都是一句事后无法分辨的假话，而
+        `change_direction` 也是拿它算的。写完之后 `risk_rule` / `risk_config_version` 都动了，
+        再想回头查「变更前到底是多少」就只剩这一行字据。
+        """
+        supplied = change.old_threshold
+        if supplied is None:
+            return row
+        if row is not None and not _same_threshold(supplied, row):
+            raise RiskConfigInvalidError(
+                "[RISK_004] 变更前的生效值对不上：调用方给出 %s，库里 %s/%s/%s 那一行（enabled）"
+                "是 %s —— 两份视图里有一份是旧的（引擎未 reload？），审计与变更方向都会记错，"
+                "本次变更未写入"
+                % (_audit_num(supplied), change.rule_id, change.scope.value,
+                   change.scope_key, _audit_num(row))
+            )
+        return float(supplied)
 
     def _direction(self, change: RuleChangeRequest, old: float) -> str:
         """`TIGHTEN` / `RELAX` / `''`（相等）。
@@ -1078,7 +1143,7 @@ class DbRiskRuleStore(RiskRuleStore):
         INCREASE，那么把 3 改成 5 是收紧而不是放宽。写死「变小=收紧」会把方向记录反。
         """
         new = float(change.new_threshold)
-        if abs(new - float(old)) < 1e-12:
+        if _same_threshold(new, old):
             return ""
         spec = RULE_REGISTRY[change.rule_id]
         tightening_is_down = spec.tightening_direction is TighteningDirectionEnum.DECREASE
@@ -2057,8 +2122,13 @@ class RiskEngine:
         for change, effective_date in list(self._pending):
             if effective_date > as_of:
                 continue
-            version = int(self._store.save_change(change))
-            self._install_single(change, version)
+            # 生效值在**这一刻**重新解析，而不是冻结在 `apply_change()` 那一刻：挂起期间
+            # 可能有别的变更动过生效值，审计要记的是「这笔变更落地时，变更前是什么」。
+            # ⚠️ 不要把 `change` 直接换成新对象又拿它去 `self._pending.remove()`——
+            # 元组对不上会 `ValueError`（挂起项从此再也落不了地），所以原样留着、另起变量。
+            applied_change = replace(change, old_threshold=self._current_threshold_for(change))
+            version = int(self._store.save_change(applied_change))
+            self._install_single(applied_change, version)
             self._pending.remove((change, effective_date))
             applied += 1
         return applied
@@ -2159,6 +2229,10 @@ class RiskEngine:
                 effective_at=effective_at,
                 message="放宽变更已挂起 PENDING：旧值继续生效，下一交易日开盘生效（D6）",
             )
+        # 生效值必须随请求一起交给存储层：审计里那一列是「变更前的**生效**值」，而按 D2
+        # 解析继承链只有本层做得到（`_current_threshold_for()` 的注释）。这里**覆盖**请求上
+        # 已有的同名字段 —— 调用方给的那份可能来自另一个时刻，引擎手上的索引才是本层判据。
+        change = replace(change, old_threshold=old)
         try:
             version = int(self._store.save_change(change))
         except (RiskConfigLoadError, RiskConfigInvalidError) as exc:

@@ -125,6 +125,23 @@
 CI 只装 `.[dev]`，所以 CI 里 `S9` 会退化成 `ENV-LIMIT`，
 而本机 `.venv` 手工装了 `psycopg` 之后它就是**真的 CAUGHT**（2026-09-25 实测 `env_limited=0`）。
 改环境后要重看这一栏，不要把上一轮的 `env_limited` 当现状引用。
+
+⚠️ **2026-10-01「风控 §7.6 缺口 ①」那一批（`old_threshold` 贯通）：新增 5 条，并把
+`tests/test_risk_engine.py` 补进基线（九套件 → 十套件）**：
+  ① 为什么必须动基线：这次改的两行（`RiskEngine.apply_change()` / `apply_pending()` 把 D2
+     解析出的生效值交给存储层）**只被 `tests/test_risk_engine.py` 覆盖**，而它原本不在基线
+     里 ⇒ 针对它的变异没有「全绿垫底」，按本文件开头那条规矩就不能写。补进基线之后基线
+     变成十套件（代价：基线那一次多跑一个套件；每条的 `tests` 仍只跑自己那一套）。
+  ② `S17` 号段 5 条：引擎交值 / PENDING 落地重解析 / 存储层采纳调用方给的值 / 两份对不上
+     要拒 / 同层读旧行按 D2 只看 `enabled`。前两条打引擎侧、后三条打存储实现体，
+     `path` 都是 `quanauto/risk.py`。
+  ③ `S17-store-ignores-the-supplied-old-value` 会让**三条**用例一起变红（审计留空 ⇒ 干净
+     样本与「对不上要拒」也一起塌）。`expect` 只列主主人 —— 本 harness 只要求期望的那些
+     变红，多余的红会打印在 `实际变红:` 那一行，不判失败。
+  ④ **故意没给 `_same_threshold()` 的容差写变异**：阈值进库前已被 `validate_threshold()`
+     钉在 8 位小数上 ⇒ 任何两条不相等的值至少差 1e-8，把 1e-12 调大几档仍然全绿。写一条
+     「本来就打不到」的变异，只会制造一条永远 `CAUGHT=no` 的噪音（它也不属于 `ENV-LIMIT`
+     —— 那条出口是给「这个环境里验不了」的，不是给「这条判据没有观测点」的）。
 """
 
 from __future__ import annotations
@@ -143,6 +160,7 @@ TESTS_DB_FEED = "tests/test_backtest_db_feed.py"
 TESTS_PIT = "tests/test_data_center_pit.py"
 TESTS_RISK_GATE = "tests/test_backtest_risk_gate.py"
 TESTS_RISK_STORE = "tests/test_risk_store.py"
+TESTS_RISK_ENGINE = "tests/test_risk_engine.py"
 TESTS_DASHBOARD = "tests/test_dashboard.py"
 TESTS_INGEST = "tests/test_ingest.py"
 REPORT = os.path.join(ROOT, "tools", "pytest-mutation-report.txt")
@@ -1346,6 +1364,56 @@ MUTATIONS = [
         "new": "    \"\"\"起止必须是 `date` 且有序。**拒绝 `datetime`**：见下方注释。（MUT：只改注释）\"\"\"\n",
         "expect": CONTROL,
     },
+    {
+        # 2026-10-01 缺口 ①（风控 §7.6）：审计里的「变更前的生效值」由**引擎**交给存储层。
+        # 不交 ⇒ 存储层只能读同层那一行，新建一层时留空，审计读作「什么都没发生」。
+        "tag": "S17-engine-does-not-hand-over-the-effective-old-value",
+        "tests": TESTS_RISK_ENGINE,
+        "path": "quanauto/risk.py",
+        "old": "        change = replace(change, old_threshold=old)\n",
+        "new": "        change = replace(change)  # MUT：不把生效值交给存储层\n",
+        "expect": ["test_apply_change_hands_the_effective_old_value_to_the_store"],
+    },
+    {
+        # 同上，但打在**PENDING 落地**那条路径上：审计问的是「这笔变更落地时，变更前是
+        # 多少」，沿用一个更早时刻冻住的请求对象就会写下一句已经过期的话。
+        "tag": "S17-pending-landing-reuses-the-stale-request",
+        "tests": TESTS_RISK_ENGINE,
+        "path": "quanauto/risk.py",
+        "old": "            applied_change = replace(change, old_threshold=self._current_threshold_for(change))\n",
+        "new": "            applied_change = change  # MUT：不重新解析生效值\n",
+        "expect": ["test_pending_change_re_reads_the_effective_value_when_it_lands"],
+    },
+    {
+        # 存储层侧：无视调用方给的生效值，回到「读同层那一行 / 没有就留空」。
+        # 这三条用例会一起变红（留空 ⇒ 干净样本也读不到值，且对不上时不再拒），
+        # `expect` 只列主主人 —— harness 只要求期望的那条变红，多余的红会打印出来。
+        "tag": "S17-store-ignores-the-supplied-old-value",
+        "tests": TESTS_RISK_STORE,
+        "path": "quanauto/risk.py",
+        "old": "                old = self._resolve_old(change, self._read_old_threshold(conn, change))\n",
+        "new": "                old = None  # MUT：无视调用方给的生效值，审计留空\n",
+        "expect": ["test_save_change_prefers_the_supplied_effective_value_over_the_missing_row"],
+    },
+    {
+        # 两份「变更前」对不上还要照写：审计行的字据就是假的（而变更方向也是拿它算的）。
+        "tag": "S17-old-value-mismatch-is-accepted",
+        "tests": TESTS_RISK_STORE,
+        "path": "quanauto/risk.py",
+        "old": "        if row is not None and not _same_threshold(supplied, row):\n",
+        "new": "        if False:  # MUT：两份「变更前」对不上也照样写\n",
+        "expect": ["test_save_change_refuses_when_the_supplied_value_contradicts_the_row"],
+    },
+    {
+        # D2：`enabled=0` 的那一层「视为不存在」。少了这个条件，一个被停用的同层旧行会被
+        # 当成「变更前的**生效**值」写进审计 —— 而它根本没在生效。
+        "tag": "S17-old-threshold-read-ignores-enabled",
+        "tests": TESTS_RISK_STORE,
+        "path": "quanauto/risk.py",
+        "old": "        \"AND scope_key = %s AND enabled\"\n",
+        "new": "        \"AND scope_key = %s\"\n",
+        "expect": ["test_the_old_threshold_read_looks_only_at_enabled_rows"],
+    },
 ]
 
 FAILED_RE = re.compile(r"^(FAILED|ERROR) (\S+)::(\w+)")
@@ -1418,7 +1486,7 @@ def main() -> int:
     # 基线一起跑：基线只要有一处不是全绿，后面的「红」就什么都证明不了。
     # 一条变异期望落在哪个套件，那个套件就必须在基线里 —— 否则「红」没有全绿垫底。
     suites = [TARGET, TESTS_ADAPTER, TESTS_STORE, TESTS_DB_FEED, TESTS_PIT,
-              TESTS_RISK_GATE, TESTS_RISK_STORE, TESTS_DASHBOARD, TESTS_INGEST]
+              TESTS_RISK_GATE, TESTS_RISK_STORE, TESTS_RISK_ENGINE, TESTS_DASHBOARD, TESTS_INGEST]
     say("baseline: 先跑一次干净的全绿（%s）" % " + ".join(suites))
     code, names, counts, output = run_pytest(suites)
     if code != 0 or names:

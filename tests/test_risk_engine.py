@@ -102,6 +102,24 @@ class PersistentStore(CountingStore):
         return dict(self.breakers)
 
 
+class RecordingStore(CountingStore):
+    """把 `save_change()` 收到的请求对象原样记下来（缺口 ① 的判据，2026-10-01）。
+
+    为什么非得看「存储层收到了什么」：`RiskChangeResult.old_threshold` 在缺口**还在**的
+    时候也是对的 —— 引擎自己算得出生效值，问题在于它没把那个值**交给存储层**，于是写进
+    `risk_rule_audit` 的是同层那一行（新建一层时根本没有那一行 ⇒ 留空）。判据落在结果
+    对象上，那个缺口可以永远隐身。
+    """
+
+    def __init__(self, rules=None, version: int = 1) -> None:
+        super().__init__(rules, version)
+        self.changes: list = []
+
+    def save_change(self, change) -> int:
+        self.changes.append(change)
+        return super().save_change(change)
+
+
 class BrokenStore(RiskRuleStore):
     """配置源完全不可达（D4/D5）。"""
 
@@ -609,6 +627,52 @@ def test_pending_change_takes_effect_on_the_next_trading_day():
     assert engine.apply_pending("2026-09-24") == 0
     assert engine.get_effective_rule("max_position_pct", "ACC1", "S1", "600000.SH").threshold == 0.05
     assert engine.apply_pending("2026-09-25") == 1
+    assert engine.get_effective_rule("max_position_pct", "ACC1", "S1", "600000.SH").threshold == 0.10
+
+
+def test_apply_change_hands_the_effective_old_value_to_the_store():
+    """**缺口 ① 的收口判据（引擎侧）**：审计里的「变更前」是**生效值**，只有引擎算得出来。
+
+    场景就是缺口本身：GLOBAL 有 0.10，变更落在一个**库里还没有的 STRATEGY 层**。生效值
+    0.10 来自更高的层（D2），存储层看不到继承链 ⇒ 它只能留空，而留空在审计表里读作
+    「什么都没发生」（`old_threshold=''` / `change_direction=''`），版本号却已经动了。
+
+    所以断言落在**存储层收到了什么**上，不是结果对象 —— 见 `RecordingStore` 的说明。
+    """
+    store = RecordingStore()
+    store.publish(rules_with(max_position_pct=0.10), 1)
+    engine, _ = make_engine(store=store)
+    result = engine.apply_change(
+        RuleChangeRequest("max_position_pct", RuleScopeEnum.STRATEGY, "S1", 0.05, "ops", "收紧策略层")
+    )
+    assert result.old_threshold == 0.10
+    assert len(store.changes) == 1
+    assert store.changes[-1].old_threshold == 0.10, \
+        "引擎必须把 D2 解析出的生效值交给存储层；存储层算不出继承链，留空会被读成「没发生」"
+    assert store.changes[-1].scope is RuleScopeEnum.STRATEGY
+
+
+def test_pending_change_re_reads_the_effective_value_when_it_lands():
+    """PENDING 到期时**重新**解析生效值：挂起期间可能有别的变更动过它。
+
+    审计那一列问的是「**这笔变更落地时**，变更前是多少」。冻结在 `apply_change()` 那一刻
+    会写下一句已经过期的话 —— 而挂起本来就意味着「要等到下一交易日」，中间正好隔着一段
+    别人可以改配置的时间。
+    """
+    store = RecordingStore()
+    store.publish(rules_with(max_position_pct=0.05), 1)
+    engine, _ = make_engine(store=store, next_trading_day=lambda day: "2026-09-25")
+    engine.apply_change(
+        RuleChangeRequest("max_position_pct", RuleScopeEnum.GLOBAL, GLOBAL_SCOPE_KEY, 0.10, "ops", "放宽")
+    )
+    assert store.changes == [], "未确认的放宽只落 PENDING，此刻还不该写库"
+    engine.apply_change(  # 挂起期间另一笔变更把生效值压到 0.04
+        RuleChangeRequest("max_position_pct", RuleScopeEnum.GLOBAL, GLOBAL_SCOPE_KEY, 0.04, "ops", "应急收紧")
+    )
+    assert store.changes[-1].old_threshold == 0.05
+    assert engine.apply_pending("2026-09-25") == 1
+    assert store.changes[-1].old_threshold == 0.04, \
+        "落地时重新解析：审计要记的是「落地那一刻，变更前是多少」"
     assert engine.get_effective_rule("max_position_pct", "ACC1", "S1", "600000.SH").threshold == 0.10
 
 
