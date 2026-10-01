@@ -45,8 +45,13 @@ public record MetricSpec(String key, String group, String label, String unit, in
      * 也就是说：<b>本文件与 Python 侧不一致时，是这里要改</b>，不是改 {@code dashboard.py}。
      *
      * <p>⚠️ 门禁只覆盖到「这张<b>声明表</b>两侧一致」为止。它不编译、不启动 JVM、不渲染页面
-     * ⇒ {@code mvn test}、{@code npm run build} 与页面本身依然没有门禁盯着
-     * （见附录C §C.5 与它的 C.8 订正块）。
+     * ⇒ 本门禁管不到 {@code mvn test}、{@code npm run build} 与页面本身。
+     * 订正（2026-10-01）：原文写的是「{@code mvn test}、{@code npm run build} 与页面本身
+     * <b>依然没有门禁盯着</b>」，那半句<b>自 2026-09-30 起已不成立</b> ——
+     * 运行层有 {@code platform-runtime}（一次性沙箱里真跑 {@code npm ci} →
+     * {@code npm run build} → {@code mvn test}，见附录C §C.9），
+     * 显示规则层有 {@code platform-text-parity}（见 §C.11）
+     * ⇒ 如今只剩 <b>页面本身</b>（渲染 / 布局 / 视觉）仍零覆盖。
      */
     public static final List<MetricSpec> METRIC_SPECS = List.of(
             new MetricSpec("total_return", GROUP_RETURN, "累计收益", UNIT_PERCENT, 4),
