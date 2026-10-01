@@ -459,13 +459,40 @@ GATES = [
         # 写进 `api/src/main/resources/static/`，而 Spring 从 `target/classes/static/`
         # 托管（`platform/README.md` 里记的那个坑）。
         # 边界（别把这些读进来）：**页面本身仍然零覆盖** —— 打开页面要一个活着的
-        # JVM+端口，`platform/check_text_parity.py` 因此不是门禁；展示串两侧是否一致
-        # 也一样；它也不判断页面好不好看。它证明的是「这一层今天真的构建了、真的
-        # 测试了，且产物真的走到被服务的那个目录」。
+        # JVM+端口，`platform/check_text_parity.py` 因此不是门禁；它也不判断页面好不好看。
+        # 它证明的是「这一层今天真的构建了、真的测试了，且产物真的走到被服务的那个目录」。
+        # ⚠️ 订正（2026-10-01）：这段原来还写着「展示串两侧是否一致也一样（零覆盖）」，
+        # **已过期** —— 那条缝现在由 `platform-text-parity` 门禁盯着（Python 侧核夹具+
+        # Java 侧 `FormatParityTest` 由本条的真 `mvn test` 跑）；`check_text_parity.py`
+        # 仍不是门禁，但它已经不是唯一手段了。
         'what': 'npm ci/build 与 mvn test 真跑一遍，且前端产物真的落到'
                 ' target/classes/static（工具链不在时退 3 = SKIPPED，不算绿）',
         'runner': ['tools/verify_platform_build.py'],
         'selftest': ['tools/verify_platform_build.py', '--selftest'],
+    },
+    {
+        'name': 'platform-text-parity',
+        'tier': 'A',
+        # 上一条把这一层**真的**编译并测了一遍，但测的用例是手挑的 7 条。2026-10-01 实测：
+        # 拿 73929 组输入做差分，Java 的 `ReportProjection.fixed` 与 Python 的
+        # `dashboard.format_metric` 在 **6887 组（9.3%）**上打印出不同的字符串
+        # （丢负号 4161 / 十进制平局落错边 2726），而当时那 7 条断言**全部通过**
+        # —— 手挑的样本证明不了「两侧一致」，只有按量纲 × 小数位 × 值铺开的语料加自动比对能。
+        # 本门禁是那条缝的常驻判据，两条腿：
+        #   ① Python 侧（就是本文件）：核 `platform/text-parity-cases.json` 新不新鲜
+        #      （逐字段与现算结果比 ⇒ `PARITY-STALE-CASES`）、语料够不够厚（条数 /
+        #      量纲×小数位组合 / 值域边界），以及判定理由与登记项还在不在；
+        #   ② Java 侧：`FormatParityTest` 把同一份夹具逐条喂进 `formatMetric` 与 Python 比，
+        #      由 `platform-runtime` 那条真 `mvn test` 跑 ⇒ 这边**不启动 JVM**（判据依赖
+        #      环境就是判据的缺陷，这条边界是上一轮定下来的，不许回退）。
+        # 为什么夹具不是「Java 侧现场生成」：**Python 侧是冻结的参照**，夹具由它现算得出，
+        # 于是「一侧改了、另一侧不知道」必然表现为夹具变红，而不是两侧一起改绿。
+        # 修法固定：改 Java 侧或改本门禁的判据，**不许**改 `quanauto/dashboard.py`。
+        # 边界：不打开页面（**渲染 / 布局 / 视觉仍然零覆盖**）；不启动 JVM；也不判断
+        # 显示规则本身好不好 —— 它只判断两侧**逐字节一致**。
+        'what': '平台层显示规则与 Python 侧逐字节一致（语料覆盖平局 / 丢负号 / 大整数三类边界）',
+        'runner': ['tools/verify_platform_text_parity.py'],
+        'selftest': ['tools/verify_platform_text_parity.py', '--selftest'],
     },
     {
         'name': 'core-contract-refs',
@@ -917,7 +944,7 @@ def verdict_of(rows, side_problems=()):
         lines = ['VERDICT: FAIL -- %s. See the GATE sections below.'
                  % '; '.join(why)]
         # 「环境不在」要单独说一句，理由有两条：① 它的红**根因不在本仓库**，谁读到
-        # 「1 of 19 gate(s) not ok」都会先去翻那条门禁的代码，而这里该干的是装工具链；
+        # 「<k> of <n> gate(s) not ok」都会先去翻那条门禁的代码，而这里该干的是装工具链；
         # ② 它照红是**故意的**（判据一旦环境缺失就变绿就等于没有判据），不写出来
         # 下一个人会把它当成 harness 的 bug 去「修」。措辞与 SKIPPED 分支同源但不复用
         # 字符串 —— 这里说的是文件里的读者，那里说的是这条门禁本身。

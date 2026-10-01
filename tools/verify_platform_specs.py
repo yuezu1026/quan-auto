@@ -20,9 +20,12 @@
 **边界（它证明不了什么）**：
 
   * 只比这份**声明式规格表**。REST 形状、展示文本、曲线字段、前端有没有偷偷 `toFixed`
-    都不归它管 —— 那是 `platform/check_text_parity.py` 的活，而那个脚本需要一个活着的
-    JVM（「环境没起来就判红」的门禁本身就是判据缺陷）⇒ 它**不是门禁**，本文件也不假装
-    替代它。本门禁**不做端到端**：它只保证两份声明表逐字段一致。
+    都不归它管 —— 「两侧打印出的串是否相同」自 2026-10-01 起归 `platform-text-parity`
+    （`tools/verify_platform_text_parity.py` + Java 侧 `FormatParityTest`，由
+    `platform-runtime` 的真 `mvn test` 跑）；「**活着的服务端**下发了什么」仍归
+    `platform/check_text_parity.py` 那个手动脚本（它需要一个活着的 JVM（「环境没起来就
+    判红」的门禁本身就是判据缺陷）⇒ 它**不是门禁**，本文件也不假装替代它）。
+    本门禁**不做端到端**：它只保证两份声明表逐字段一致。
   * 不比 Java 的 Javadoc / Python 的 docstring 文案，也不判断「某条指标该不该在」。
   * 它**只解析文本与 AST**：不 import `quanauto.dashboard`、也不编译 Java。否则判据会变成
     「拿实现核对自己」，而且会给两边都引入本不该有的运行时依赖。

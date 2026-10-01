@@ -55,7 +55,9 @@ function Meta({ view }) {
       </div>
       <div>
         <dt>策略</dt>
-        <dd>{(view.strategyId || "—") + " / " + (view.strategyVersion || "—")}</dd>
+        <dd>
+          {(view.strategyId || "—") + " / " + (view.strategyVersion || "—")}
+        </dd>
       </div>
       <div>
         <dt>数据版本</dt>
@@ -64,8 +66,8 @@ function Meta({ view }) {
       <div>
         <dt>结构</dt>
         <dd>
-          曲线 {view.counts.equityCurve ?? "—"} 点 · 成交 {view.counts.trades ?? "—"} 笔 · 委托{" "}
-          {view.counts.orders ?? "—"} 条
+          曲线 {view.counts.equityCurve ?? "—"} 点 · 成交{" "}
+          {view.counts.trades ?? "—"} 笔 · 委托 {view.counts.orders ?? "—"} 条
         </dd>
       </div>
     </dl>
@@ -127,8 +129,8 @@ function Curve({ view }) {
         <polyline points={points} />
       </svg>
       <p className="curve-foot">
-        {window ? window[0] + " → " + window[1] : ""} · {view.curve.length} 个点（逐点照抄报告，
-        不插值不平滑）
+        {window ? window[0] + " → " + window[1] : ""} · {view.curve.length}{" "}
+        个点（逐点照抄报告， 不插值不平滑）
       </p>
     </section>
   );
@@ -152,7 +154,9 @@ export default function App() {
         const firstReadable = list.find((item) => !item.error) || list[0];
         setSelected(firstReadable ? firstReadable.id : null);
         if (list.length === 0) {
-          setError("报告目录里没有 .json 报告。先跑一遍回测：backtest --out .rounds/i1/xxx.json");
+          setError(
+            "报告目录里没有 .json 报告。先跑一遍回测：backtest --out .rounds/i1/xxx.json",
+          );
           setBusy(false);
         }
       })
@@ -192,7 +196,9 @@ export default function App() {
     <main>
       <header>
         <h1>回测绩效看板</h1>
-        <p className="sub">平台层 P0 切片 · Spring Boot + React · 只读数，不算数</p>
+        <p className="sub">
+          平台层 P0 切片 · Spring Boot + React · 只读数，不算数
+        </p>
       </header>
 
       <div className="toolbar">
@@ -225,19 +231,25 @@ export default function App() {
 
       <footer>
         <p>
-          每个绩效数字都由服务端算好（量纲换算 + 定点小数）后随 REST 一起下发，本页原样呈现；
-          本页不做指标口径的加工，也不重算任何指标。
+          每个绩效数字都由服务端算好（量纲换算 + 定点小数）后随 REST
+          一起下发，本页原样呈现； 本页不做指标口径的加工，也不重算任何指标。
         </p>
         <p>
-          数据来源：后端直接读取回测报告文件（默认 <code>.rounds/i1</code>），与 I4 命令行看板是
-          同一份报告的两个读法。
+          数据来源：后端直接读取回测报告文件（默认 <code>.rounds/i1</code>），与
+          I4 命令行看板是 同一份报告的两个读法。
         </p>
         <p className="warn">
-          本层有自建门禁了（<code>platform-spec-parity</code> 管声明层、<code>platform-runtime</code> 管运行层，两条都在 CI 里跑）
-          —— 但两条都<b>不启动 JVM、不渲染页面</b> ⇒ <b>这个页面本身</b>（渲染 / 布局 / 视觉）与
-          <b>两侧展示文本是否一致</b>仍然没有常驻判据，只有手动脚本{" "}
-          <code>platform/check_text_parity.py</code>（需要活着的 JVM ⇒ 不能当门禁）。
-          见 <code>docs/智能量化交易平台.md</code> 附录C §C.8 / §C.9。
+          本层有自建门禁了（<code>platform-spec-parity</code> 管声明层、
+          <code>platform-runtime</code> 管运行层、
+          <code>platform-text-parity</code> 管两侧显示规则，三条都在 CI 里跑）
+          —— 但它们都<b>不起服务、不渲染页面</b> ⇒ <b>这个页面本身</b>（渲染 /
+          布局 / 视觉） 仍然没有常驻判据。 ⚠️ 订正（2026-10-01）：
+          <b>两侧展示文本是否一致</b>已不是零覆盖项（那是{" "}
+          <code>platform-text-parity</code> 的活）；仍然只有手动脚本{" "}
+          <code>platform/check_text_parity.py</code>（需要活着的 JVM ⇒
+          不能当门禁）的是
+          <b>活着的服务端到底下发了什么</b>。 见{" "}
+          <code>docs/智能量化交易平台.md</code> 附录C §C.8 / §C.9。
         </p>
       </footer>
     </main>

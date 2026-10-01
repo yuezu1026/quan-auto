@@ -1,0 +1,922 @@
+{
+  "schema": "quanauto.text-parity-cases/1",
+  "generated_by": "tools/verify_platform_text_parity.py --write",
+  "why": [
+    "两侧的定点显示规则各有一份实现（Python 的 quanauto.dashboard.format_metric 与 Java 的 ReportProjection.fixed）。",
+    "2026-10-01 实测：旧 Java 实现在 73929 组样本里有 6887 组（9.3%）打印出与 Python 不同的字符串（丢负号 4161 / 平局落错边 2726）⇒ 两侧的展示文本真的会不一致。",
+    "本文件是那次实测的常驻形式：每条用例的 text 是 **Python 侧现算** 的值，由 tools/verify_platform_text_parity.py 核它是否新鲜（PARITY-DRIFT / PARITY-STALE-CASES），并由 Java 侧的 FormatParityTest 逐条对拍（platform-runtime 门禁真跑 mvn test）。",
+    "手改本文件必红：它是生成物。再生命令：python tools/verify_platform_text_parity.py --write",
+    "故意不同口径的那批（percent 换算后溢出）**不在**本文件里，登记在生成脚本的UNMATCHABLE 中。"
+  ],
+  "cases": [
+    {
+      "source": "edge",
+      "key": "edge:tie-ratio1-neg2995",
+      "unit": "ratio",
+      "digits": 1,
+      "value": "-29.95",
+      "text": "-29.9",
+      "why": "平局点。精确值在 -29.95 略小的一侧 ⇒ Python -29.9；旧 Java 拿十进制串做 HALF_EVEN ⇒ -30.0"
+    },
+    {
+      "source": "edge",
+      "key": "edge:tie-ratio1-neg2985",
+      "unit": "ratio",
+      "digits": 1,
+      "value": "-29.85",
+      "text": "-29.9",
+      "why": "同上。进位还会改整数部分（-29.8 vs -29.9），所以两个成因必须分开验"
+    },
+    {
+      "source": "edge",
+      "key": "edge:tie-ratio1-neg2915",
+      "unit": "ratio",
+      "digits": 1,
+      "value": "-29.15",
+      "text": "-29.1",
+      "why": "平局点，负向"
+    },
+    {
+      "source": "edge",
+      "key": "edge:tie-ratio1-neg2895",
+      "unit": "ratio",
+      "digits": 1,
+      "value": "-28.95",
+      "text": "-28.9",
+      "why": "平局点，负向"
+    },
+    {
+      "source": "edge",
+      "key": "edge:tie-ratio1-pos2995",
+      "unit": "ratio",
+      "digits": 1,
+      "value": "29.95",
+      "text": "29.9",
+      "why": "平局点的**正**值也要有一条：否则修法可能变成「负值特判」而不是「改用精确值」"
+    },
+    {
+      "source": "edge",
+      "key": "edge:tie-ratio1-neg2825",
+      "unit": "ratio",
+      "digits": 1,
+      "value": "-28.25",
+      "text": "-28.2",
+      "why": "同一组合上的**不分歧**样本（精确值就在 -28.2 那一侧）：防「为了对齐而过度修正」"
+    },
+    {
+      "source": "edge",
+      "key": "edge:tie-ratio2-2675",
+      "unit": "ratio",
+      "digits": 2,
+      "value": "2.675",
+      "text": "2.67",
+      "why": "教科书样本：最短表示 \"2.675\" 是平局，精确值在下方 ⇒ Python 2.67，旧 Java 2.68"
+    },
+    {
+      "source": "edge",
+      "key": "edge:tie-ratio2-neg2675",
+      "unit": "ratio",
+      "digits": 2,
+      "value": "-2.675",
+      "text": "-2.67",
+      "why": "上一行的负号版"
+    },
+    {
+      "source": "edge",
+      "key": "edge:tie-ratio2-1005",
+      "unit": "ratio",
+      "digits": 2,
+      "value": "1.005",
+      "text": "1.00",
+      "why": "同类但两侧碰巧一致：防过度修正"
+    },
+    {
+      "source": "edge",
+      "key": "edge:tie-ratio2-0615",
+      "unit": "ratio",
+      "digits": 2,
+      "value": "0.615",
+      "text": "0.61",
+      "why": "同类，两侧**不一致**"
+    },
+    {
+      "source": "edge",
+      "key": "edge:tie-ratio2-8835",
+      "unit": "ratio",
+      "digits": 2,
+      "value": "8.835",
+      "text": "8.84",
+      "why": "同类，两侧一致（进位的方向相反）"
+    },
+    {
+      "source": "edge",
+      "key": "edge:tie-money2-182745",
+      "unit": "money",
+      "digits": 2,
+      "value": "182.745",
+      "text": "182.75",
+      "why": "真实佣金量级上的平局点"
+    },
+    {
+      "source": "edge",
+      "key": "edge:tie-money2-neg182745",
+      "unit": "money",
+      "digits": 2,
+      "value": "-182.745",
+      "text": "-182.75",
+      "why": "上一行的负号版"
+    },
+    {
+      "source": "edge",
+      "key": "edge:tie-money2-0005",
+      "unit": "money",
+      "digits": 2,
+      "value": "0.005",
+      "text": "0.01",
+      "why": "极小值的平局点：0.01 vs 0.00"
+    },
+    {
+      "source": "edge",
+      "key": "edge:tie-money2-neg0005",
+      "unit": "money",
+      "digits": 2,
+      "value": "-0.005",
+      "text": "-0.01",
+      "why": "同时踩两个成因：既落在平局上、又是「舍入到零的负值」⇒ Python -0.01，旧 Java 0.00"
+    },
+    {
+      "source": "edge",
+      "key": "edge:tie-money2-96795655",
+      "unit": "money",
+      "digits": 2,
+      "value": "96795.655",
+      "text": "96795.65",
+      "why": "期末净值量级上的平局点"
+    },
+    {
+      "source": "edge",
+      "key": "edge:tie-money2-neg96795655",
+      "unit": "money",
+      "digits": 2,
+      "value": "-96795.655",
+      "text": "-96795.65",
+      "why": "上一行的负号版"
+    },
+    {
+      "source": "edge",
+      "key": "edge:tie-money1-005",
+      "unit": "money",
+      "digits": 1,
+      "value": "0.05",
+      "text": "0.1",
+      "why": "1 位小数上的平局：Python 0.1，旧 Java 0.0"
+    },
+    {
+      "source": "edge",
+      "key": "edge:tie-money1-neg005",
+      "unit": "money",
+      "digits": 1,
+      "value": "-0.05",
+      "text": "-0.1",
+      "why": "上一行的负号版（旧 Java 连减号一起丢）"
+    },
+    {
+      "source": "edge",
+      "key": "edge:tie-money1-015",
+      "unit": "money",
+      "digits": 1,
+      "value": "0.15",
+      "text": "0.1",
+      "why": "平局，进位改整数部分 ⇒ 0.1 vs 0.2"
+    },
+    {
+      "source": "edge",
+      "key": "edge:tie-money1-025",
+      "unit": "money",
+      "digits": 1,
+      "value": "0.25",
+      "text": "0.2",
+      "why": "平局，两侧一致（HALF_EVEN 取偶）"
+    },
+    {
+      "source": "edge",
+      "key": "edge:tie-percent4-00000125",
+      "unit": "percent",
+      "digits": 4,
+      "value": "0.0000125",
+      "text": "0.0013%",
+      "why": "percent 量纲先乘 100 ⇒ 0.00125，再在 4 位小数上取平局。两侧不一致"
+    },
+    {
+      "source": "edge",
+      "key": "edge:tie-percent4-neg00000125",
+      "unit": "percent",
+      "digits": 4,
+      "value": "-0.0000125",
+      "text": "-0.0013%",
+      "why": "上一行的负号版"
+    },
+    {
+      "source": "edge",
+      "key": "edge:tie-percent4-neg00000245",
+      "unit": "percent",
+      "digits": 4,
+      "value": "-0.0000245",
+      "text": "-0.0024%",
+      "why": "同类，两侧一致"
+    },
+    {
+      "source": "edge",
+      "key": "edge:tie-ratio4-000005",
+      "unit": "ratio",
+      "digits": 4,
+      "value": "0.00005",
+      "text": "0.0001",
+      "why": "4 位小数上的平局：0.0001 vs 0.0000"
+    },
+    {
+      "source": "edge",
+      "key": "edge:tie-days2-1005",
+      "unit": "days",
+      "digits": 2,
+      "value": "1.005",
+      "text": "1.00",
+      "why": "days 量纲也要有一条平局样本"
+    },
+    {
+      "source": "edge",
+      "key": "edge:negzero-money2-minus00",
+      "unit": "money",
+      "digits": 2,
+      "value": "-0.0",
+      "text": "-0.00",
+      "why": "旧实现专门补过的那一条（原值恰好是负零）—— 它绿不代表整族都对"
+    },
+    {
+      "source": "edge",
+      "key": "edge:negzero-money2-zero",
+      "unit": "money",
+      "digits": 2,
+      "value": "0.0",
+      "text": "0.00",
+      "why": "正零对照"
+    },
+    {
+      "source": "edge",
+      "key": "edge:negzero-money2-minus1e-9",
+      "unit": "money",
+      "digits": 2,
+      "value": "-1e-09",
+      "text": "-0.00",
+      "why": "比负零更常见的那一种：负的、小的、舍入后落到零上"
+    },
+    {
+      "source": "edge",
+      "key": "edge:negzero-money2-1e-9",
+      "unit": "money",
+      "digits": 2,
+      "value": "1e-09",
+      "text": "0.00",
+      "why": "正的小值对照"
+    },
+    {
+      "source": "edge",
+      "key": "edge:negzero-money2-minus5e-324",
+      "unit": "money",
+      "digits": 2,
+      "value": "-5e-324",
+      "text": "-0.00",
+      "why": "最小的负次正规数：任何定点位数下都舍入到零，唯一的区别就是那个减号"
+    },
+    {
+      "source": "edge",
+      "key": "edge:negzero-ratio4-minus1e-5",
+      "unit": "ratio",
+      "digits": 4,
+      "value": "-0.00001",
+      "text": "-0.0000",
+      "why": "4 位小数上的「舍入到零的负值」"
+    },
+    {
+      "source": "edge",
+      "key": "edge:negzero-ratio4-minus5e-6",
+      "unit": "ratio",
+      "digits": 4,
+      "value": "-0.000005",
+      "text": "-0.0000",
+      "why": "恰好落在平局上的极小负值"
+    },
+    {
+      "source": "edge",
+      "key": "edge:negzero-ratio4-minus49e-6",
+      "unit": "ratio",
+      "digits": 4,
+      "value": "-0.000049",
+      "text": "-0.0000",
+      "why": "平局点略下方"
+    },
+    {
+      "source": "edge",
+      "key": "edge:negzero-ratio4-49e-6",
+      "unit": "ratio",
+      "digits": 4,
+      "value": "0.000049",
+      "text": "0.0000",
+      "why": "正数对照"
+    },
+    {
+      "source": "edge",
+      "key": "edge:negzero-percent4-minus1e-8",
+      "unit": "percent",
+      "digits": 4,
+      "value": "-1e-08",
+      "text": "-0.0000%",
+      "why": "percent 量纲：乘 100 之后是 -1e-6 ⇒ Python \"-0.0000%\"，旧 Java \"0.0000%\""
+    },
+    {
+      "source": "edge",
+      "key": "edge:negzero-percent4-1e-8",
+      "unit": "percent",
+      "digits": 4,
+      "value": "1e-08",
+      "text": "0.0000%",
+      "why": "上一行的正号版"
+    },
+    {
+      "source": "edge",
+      "key": "edge:negzero-percent4-minus00",
+      "unit": "percent",
+      "digits": 4,
+      "value": "-0.0",
+      "text": "-0.0000%",
+      "why": "percent 量纲上的负零"
+    },
+    {
+      "source": "edge",
+      "key": "edge:negzero-percent4-zero",
+      "unit": "percent",
+      "digits": 4,
+      "value": "0.0",
+      "text": "0.0000%",
+      "why": "percent 量纲上的正零"
+    },
+    {
+      "source": "edge",
+      "key": "edge:zero-digit-neg05",
+      "unit": "ratio",
+      "digits": 0,
+      "value": "-0.5",
+      "text": "-0",
+      "why": "0 位小数：Python 打印 \"-0\"，旧 Java 打印 \"0\"（丢减号）"
+    },
+    {
+      "source": "edge",
+      "key": "edge:zero-digit-pos05",
+      "unit": "ratio",
+      "digits": 0,
+      "value": "0.5",
+      "text": "0",
+      "why": "正数对照：两侧都是 \"0\""
+    },
+    {
+      "source": "edge",
+      "key": "edge:zero-digit-neg15",
+      "unit": "ratio",
+      "digits": 0,
+      "value": "-1.5",
+      "text": "-2",
+      "why": "非平局的负值：两侧都是 \"-2\""
+    },
+    {
+      "source": "edge",
+      "key": "edge:zero-digit-25",
+      "unit": "ratio",
+      "digits": 0,
+      "value": "2.5",
+      "text": "2",
+      "why": "平局取偶：两侧都是 \"2\""
+    },
+    {
+      "source": "edge",
+      "key": "edge:zero-digit-neg25",
+      "unit": "ratio",
+      "digits": 0,
+      "value": "-2.5",
+      "text": "-2",
+      "why": "负的平局取偶"
+    },
+    {
+      "source": "edge",
+      "key": "edge:zero-digit-neg005",
+      "unit": "ratio",
+      "digits": 0,
+      "value": "-0.05",
+      "text": "-0",
+      "why": "0 位小数 + 舍入到零 + 负号，三条叠在一起"
+    },
+    {
+      "source": "edge",
+      "key": "edge:huge-money2-1e20",
+      "unit": "money",
+      "digits": 2,
+      "value": "1e+20",
+      "text": "100000000000000000000.00",
+      "why": "定点大数必须逐位展开（`toPlainString` 的职责）"
+    },
+    {
+      "source": "edge",
+      "key": "edge:huge-money2-minus1e20",
+      "unit": "money",
+      "digits": 2,
+      "value": "-1e+20",
+      "text": "-100000000000000000000.00",
+      "why": "上一行的负号版"
+    },
+    {
+      "source": "edge",
+      "key": "edge:huge-money2-maxdouble",
+      "unit": "money",
+      "digits": 2,
+      "value": "1.7976931348623157e+308",
+      "text": "179769313486231570814527423731704356798070567525844996598917476803157260780028538760589558632766878171540458953514382464234321326889464182768467546703537516986049910576551282076245490090389328944075868508455133942304583236903222948165808559332123348274797826204144723168738177180919299881250404026184124858368.00",
+      "why": "双精度最大值：309 位的十进制展开，两侧必须逐位一样"
+    },
+    {
+      "source": "edge",
+      "key": "edge:huge-count0-1e20",
+      "unit": "count",
+      "digits": 0,
+      "value": "1e+20",
+      "text": "100000000000000000000",
+      "why": "计数类的极大值 —— `(long)` 在这里会溢出并静默给出一个错的整数，所以 Java 侧走 BigDecimal"
+    },
+    {
+      "source": "edge",
+      "key": "edge:huge-count0-1e23",
+      "unit": "count",
+      "digits": 0,
+      "value": "1e+23",
+      "text": "99999999999999991611392",
+      "why": "**非可表示**的极大整数：`1e23` 的精确值是 99999999999999991611392（`int(1e23)` 就是这个），而 `BigDecimal.valueOf(1e23)` 按最短往返表示给出 1e23 ⇒ 两侧打印出不同的整数。`new BigDecimal(double)` 才是精确值，这条钉的就是那个差别"
+    },
+    {
+      "source": "edge",
+      "key": "edge:real-ratio4-sharpe7a",
+      "unit": "ratio",
+      "digits": 4,
+      "value": "1.5102148302585512",
+      "text": "1.5102",
+      "why": "真实夏普量级，两侧一致"
+    },
+    {
+      "source": "edge",
+      "key": "edge:real-ratio4-neg-sharpe7a",
+      "unit": "ratio",
+      "digits": 4,
+      "value": "-1.5102148302585512",
+      "text": "-1.5102",
+      "why": "上一行的负号版"
+    },
+    {
+      "source": "edge",
+      "key": "edge:real-money2-commission7a",
+      "unit": "money",
+      "digits": 2,
+      "value": "182.7465397",
+      "text": "182.75",
+      "why": "真实佣金，两侧一致"
+    },
+    {
+      "source": "edge",
+      "key": "edge:real-percent4-totalreturn7a",
+      "unit": "percent",
+      "digits": 4,
+      "value": "-0.032043452542899906",
+      "text": "-3.2043%",
+      "why": "真实累计收益：显示成 -3.2043%，是 Java 侧 `readsRealReportFromRounds` 的锚"
+    },
+    {
+      "source": "edge",
+      "key": "edge:real-days2-holdperiod7a",
+      "unit": "days",
+      "digits": 2,
+      "value": "2.0",
+      "text": "2.00",
+      "why": "真实平均持仓天数"
+    },
+    {
+      "source": "edge",
+      "key": "edge:real-count0-trades7a",
+      "unit": "count",
+      "digits": 0,
+      "value": "1.0",
+      "text": "1",
+      "why": "真实成交笔数（整数，不给小数）"
+    },
+    {
+      "source": "edge",
+      "key": "edge:real-count0-zero",
+      "unit": "count",
+      "digits": 0,
+      "value": "0.0",
+      "text": "0",
+      "why": "计数类的零"
+    },
+    {
+      "source": "edge",
+      "key": "edge:real-count0-negative",
+      "unit": "count",
+      "digits": 0,
+      "value": "-1.0",
+      "text": "-1",
+      "why": "计数类的负整数"
+    },
+    {
+      "source": "edge",
+      "key": "edge:real-count0-negzero",
+      "unit": "count",
+      "digits": 0,
+      "value": "-0.0",
+      "text": "0",
+      "why": "计数类的负零：两侧都走「必须是整数」分支 ⇒ \"0\"（这条钉的是分支，不是补号）"
+    },
+    {
+      "source": "report:report-seed7-a",
+      "key": "total_return",
+      "unit": "percent",
+      "digits": 4,
+      "value": "-0.032043452542899906",
+      "text": "-3.2043%",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed7-a",
+      "key": "annual_return",
+      "unit": "percent",
+      "digits": 4,
+      "value": "-0.1298627742040288",
+      "text": "-12.9863%",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed7-a",
+      "key": "final_equity",
+      "unit": "money",
+      "digits": 2,
+      "value": "96795.65474571001",
+      "text": "96795.65",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed7-a",
+      "key": "max_drawdown",
+      "unit": "percent",
+      "digits": 4,
+      "value": "0.054043452542899904",
+      "text": "5.4043%",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed7-a",
+      "key": "sharpe_ratio",
+      "unit": "ratio",
+      "digits": 4,
+      "value": "-1.5102148302585512",
+      "text": "-1.5102",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed7-a",
+      "key": "sortino_ratio",
+      "unit": "ratio",
+      "digits": 4,
+      "value": "-1.7471469106129154",
+      "text": "-1.7471",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed7-a",
+      "key": "calmar_ratio",
+      "unit": "ratio",
+      "digits": 4,
+      "value": "-2.4029326050356152",
+      "text": "-2.4029",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed7-a",
+      "key": "win_rate",
+      "unit": "percent",
+      "digits": 4,
+      "value": "0.0",
+      "text": "0.0000%",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed7-a",
+      "key": "profit_factor",
+      "unit": "ratio",
+      "digits": 4,
+      "value": "0.0",
+      "text": "0.0000",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed7-a",
+      "key": "profit_loss_ratio",
+      "unit": "ratio",
+      "digits": 4,
+      "value": "0.0",
+      "text": "0.0000",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed7-a",
+      "key": "max_consecutive_losses",
+      "unit": "count",
+      "digits": 0,
+      "value": "1.0",
+      "text": "1",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed7-a",
+      "key": "avg_hold_period",
+      "unit": "days",
+      "digits": 2,
+      "value": "2.0",
+      "text": "2.00",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed7-a",
+      "key": "total_trades",
+      "unit": "count",
+      "digits": 0,
+      "value": "1.0",
+      "text": "1",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed7-a",
+      "key": "total_commission",
+      "unit": "money",
+      "digits": 2,
+      "value": "182.7465397",
+      "text": "182.75",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed7-b",
+      "key": "total_return",
+      "unit": "percent",
+      "digits": 4,
+      "value": "-0.032043452542899906",
+      "text": "-3.2043%",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed7-b",
+      "key": "annual_return",
+      "unit": "percent",
+      "digits": 4,
+      "value": "-0.1298627742040288",
+      "text": "-12.9863%",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed7-b",
+      "key": "final_equity",
+      "unit": "money",
+      "digits": 2,
+      "value": "96795.65474571001",
+      "text": "96795.65",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed7-b",
+      "key": "max_drawdown",
+      "unit": "percent",
+      "digits": 4,
+      "value": "0.054043452542899904",
+      "text": "5.4043%",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed7-b",
+      "key": "sharpe_ratio",
+      "unit": "ratio",
+      "digits": 4,
+      "value": "-1.5102148302585512",
+      "text": "-1.5102",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed7-b",
+      "key": "sortino_ratio",
+      "unit": "ratio",
+      "digits": 4,
+      "value": "-1.7471469106129154",
+      "text": "-1.7471",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed7-b",
+      "key": "calmar_ratio",
+      "unit": "ratio",
+      "digits": 4,
+      "value": "-2.4029326050356152",
+      "text": "-2.4029",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed7-b",
+      "key": "win_rate",
+      "unit": "percent",
+      "digits": 4,
+      "value": "0.0",
+      "text": "0.0000%",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed7-b",
+      "key": "profit_factor",
+      "unit": "ratio",
+      "digits": 4,
+      "value": "0.0",
+      "text": "0.0000",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed7-b",
+      "key": "profit_loss_ratio",
+      "unit": "ratio",
+      "digits": 4,
+      "value": "0.0",
+      "text": "0.0000",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed7-b",
+      "key": "max_consecutive_losses",
+      "unit": "count",
+      "digits": 0,
+      "value": "1.0",
+      "text": "1",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed7-b",
+      "key": "avg_hold_period",
+      "unit": "days",
+      "digits": 2,
+      "value": "2.0",
+      "text": "2.00",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed7-b",
+      "key": "total_trades",
+      "unit": "count",
+      "digits": 0,
+      "value": "1.0",
+      "text": "1",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed7-b",
+      "key": "total_commission",
+      "unit": "money",
+      "digits": 2,
+      "value": "182.7465397",
+      "text": "182.75",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed8",
+      "key": "total_return",
+      "unit": "percent",
+      "digits": 4,
+      "value": "-0.03263776016992808",
+      "text": "-3.2638%",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed8",
+      "key": "annual_return",
+      "unit": "percent",
+      "digits": 4,
+      "value": "-0.13214235807033625",
+      "text": "-13.2142%",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed8",
+      "key": "final_equity",
+      "unit": "money",
+      "digits": 2,
+      "value": "96736.22398300719",
+      "text": "96736.22",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed8",
+      "key": "max_drawdown",
+      "unit": "percent",
+      "digits": 4,
+      "value": "0.05463776016992808",
+      "text": "5.4638%",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed8",
+      "key": "sharpe_ratio",
+      "unit": "ratio",
+      "digits": 4,
+      "value": "-1.534682532249286",
+      "text": "-1.5347",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed8",
+      "key": "sortino_ratio",
+      "unit": "ratio",
+      "digits": 4,
+      "value": "-1.773636940478153",
+      "text": "-1.7736",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed8",
+      "key": "calmar_ratio",
+      "unit": "ratio",
+      "digits": 4,
+      "value": "-2.4185171145259585",
+      "text": "-2.4185",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed8",
+      "key": "win_rate",
+      "unit": "percent",
+      "digits": 4,
+      "value": "0.0",
+      "text": "0.0000%",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed8",
+      "key": "profit_factor",
+      "unit": "ratio",
+      "digits": 4,
+      "value": "0.0",
+      "text": "0.0000",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed8",
+      "key": "profit_loss_ratio",
+      "unit": "ratio",
+      "digits": 4,
+      "value": "0.0",
+      "text": "0.0000",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed8",
+      "key": "max_consecutive_losses",
+      "unit": "count",
+      "digits": 0,
+      "value": "1.0",
+      "text": "1",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed8",
+      "key": "avg_hold_period",
+      "unit": "days",
+      "digits": 2,
+      "value": "2.0",
+      "text": "2.00",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed8",
+      "key": "total_trades",
+      "unit": "count",
+      "digits": 0,
+      "value": "1.0",
+      "text": "1",
+      "why": ""
+    },
+    {
+      "source": "report:report-seed8",
+      "key": "total_commission",
+      "unit": "money",
+      "digits": 2,
+      "value": "182.7465397",
+      "text": "182.75",
+      "why": ""
+    }
+  ]
+}

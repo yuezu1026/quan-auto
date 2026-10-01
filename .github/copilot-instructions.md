@@ -81,7 +81,7 @@ DC 契约**附录 H** ⇒ 收口条件 ① 的三个子项**全关**（分红那
 - **`platform/` 下有一个平台层读取侧切片**（2026-09-29 追加）：Spring Boot 3.5.16（Java 21）只读 REST +
   React 19 / Vite 8 单页，读的是 `.rounds/i1/*.json` 这**同一份**回测报告。它**不改 `quanauto/dashboard.py`
   一行**、**不碰 `db/`**、**不改 `ci.yml`** ⇒ 它**不等于平台层开工**（裁决 Q3 仍有效），也**不解除**任何缺口。
-  ⚠️ 「**它没有任何自建门禁覆盖**」是 2026-09-29 那句话，**已过期**（现在这一层有两条 tier-A 门禁）。
+  ⚠️ 「**它没有任何自建门禁覆盖**」是 2026-09-29 那句话，**已过期**（现在这一层有**三条** tier-A 门禁）。
   ✅ **声明那一层**（2026-09-30 追加）：`platform-spec-parity`（`tools/verify_platform_specs.py`，tier-A）
   把 Java 侧 `MetricSpec.METRIC_SPECS` 与 Python 侧 `quanauto/dashboard.py` 的 `METRIC_SPECS` **双向**比对
   —— 14 行的键/分组/标签/量纲/小数位 + **行序** + 量纲与分组常量取值 + `STRUCTURE_COUNTS`。
@@ -89,10 +89,18 @@ DC 契约**附录 H** ⇒ 收口条件 ① 的三个子项**全关**（分红那
   在一次性沙箱里按 `npm ci` → `npm run build` → `mvn test` 真跑一遍，并查前端产物有没有真的落到
   Spring 托管的目录（顺序反了报 `PB-STITCH-PREEXISTING`）。它**探不到工具链时退 3 = SKIPPED**，而
   harness 把 3 记成「**不算绿**」⇒ `ci.yml` 里必须真的装好 `setup-java`(21) 与 `setup-node`(22) 两个步骤。
+  ✅ **显示规则那一层**（2026-10-01 追加）：`platform-text-parity`（`tools/verify_platform_text_parity.py`，tier-A）
+  一边核 `platform/text-parity-cases.json` 这份夹具（语料由 Python 现算）新不新鲜、够不够厚，
+  另一边由 Java 用例 `FormatParityTest` 拿同一份夹具逐条对拍（**由上面那条的真 `mvn test` 跑**，
+  本门禁不启动 JVM）。它关的是一条实测出来的真缝：两侧实现在 **6887 / 73929（≈9.3%）**组输入上
+  打印出不同的串（丢负号 / 十进制平局落错边 / 大整数计数），而当时两侧已有的用例**全绿** ——
+  手挑的样本与碰巧没踩边界的真报告都证明不了「两侧一致」。**修法固定：改 Java 侧，不许改** `quanauto/dashboard.py`。
   门禁数现取 `python tools/run_all_gates.py --list`，**不在这里抄**。
-  ⚠️ **仍然零覆盖**的只剩：① **页面本身**（渲染/布局/视觉）；② 两侧**展示文本**是否一致 —— 只有手动脚本
-  `platform/check_text_parity.py`（需要一个活着的 JVM ⇒ 不能当门禁），**不构成常驻证据**。
-  这两句的分工与两个订正块在 `docs/智能量化交易平台.md` 附录C 的 **C.8**（声明那层）与 **C.9**（运行那层）。
+  ⚠️ **仍然零覆盖**的只剩：**页面本身**（渲染/布局/视觉）。
+  仍然只有手动脚本 `platform/check_text_parity.py` 的是**另一件事**：一个**活着的服务端**真实下发了什么
+  （它需要一个活着的 JVM ⇒ 不能当门禁，也就不构成常驻证据）—— 「两侧展示文本是否一致」在 2026-10-01
+  之前也算零覆盖项，**现在不是了**（见上一段）。
+  分工与三个订正块在 `docs/智能量化交易平台.md` 附录C 的 **C.8**（声明那层）/ **C.9**（运行那层）/ **C.5 第 3 条**（显示规则那层）。
   契约、字段清单与代价登记在 `docs/智能量化交易平台.md` 附录C；操作细节见 `platform/README.md`。
   三个坑先记住：① **构建顺序**是先 `npm run build` 再起后端（前端产物写进
   `api/src/main/resources/static/`，而 Spring 从 `target/classes/static/` 托管，反了就 served 旧包）；

@@ -46,6 +46,12 @@ public class ReportController {
      * <p>⚠️ 第一版这里返回的就是裸数组，而前端读的是 {@code body.reports} ⇒
      * 前端把它当成「目录里没有报告」。两侧各自都能跑，缝上直接错 ——
      * {@code platform/check_text_parity.py} 现在也把这条信封形状钉住了。
+     *
+     * <p>ℹ️ 订正（2026-10-01）：那条**信封形状**仍然只有手动脚本在钉（它要一个活着的 JVM），
+     * 别把它读成「这一层已经有门禁了」；有门禁的是**显示规则**那一层 ——
+     * {@code platform-text-parity} 拿 {@code platform/text-parity-cases.json} 对拍
+     * {@link ReportProjection} 打印的串（Java 那半由 {@code platform-runtime} 的真
+     * {@code mvn test} 跑）。两者不是同一件事。
      */
     @GetMapping("/reports")
     public ReportList reports() {

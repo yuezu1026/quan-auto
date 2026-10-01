@@ -32,10 +32,12 @@ Desktop.ini
 
 # ── 平台层切片（`platform/`，2026-09-29 追加）──────────────────────
 # 这一层是本仓库第一次出现非 Python 产物。**刚追加时没有 CI 覆盖、没有自建门禁**
-# （那是 2026-09-29 的实情）；**2026-09-30 起已有两条 tier-A 门禁**：
-# `platform-spec-parity`（比两侧的**声明**）与 `platform-runtime`（在临时沙箱里真跑
-# `npm ci` / `npm run build` / `mvn test`）—— 见 docs/智能量化交易平台.md 附录C §C.8/C.9。
-# 但**页面本身与两侧展示文本仍无判据**，所以忽略规则还得自己写准：
+# （那是 2026-09-29 的实情）；**2026-09-30 起有两条 tier-A 门禁**、**2026-10-01 起三条**：
+# `platform-spec-parity`（比两侧的**声明**）、`platform-runtime`（在临时沙箱里真跑
+# `npm ci` / `npm run build` / `mvn test`）与 `platform-text-parity`（比两侧**显示规则**
+# 打印出的串，Java 侧用例由上面那条 `mvn test` 跑）
+# —— 见 docs/智能量化交易平台.md 附录C §C.8/C.9 与 platform/README.md。
+# 但**页面本身仍无判据**（渲染 / 布局 / 视觉）⇒ 忽略规则还得自己写准：
 # 漏一条就会让构建产物混进工作树，而**门禁不会替你发现** —— run_all_gates.py 的
 # 指纹守卫只比「跑门禁那一小段时间里多了/少了/改了什么」，不看「工作树里本来多不多」。
 #
@@ -51,3 +53,10 @@ platform/api/src/main/resources/static/
 # 它们随每次重跑变化，不是判据本身，也不被任何文档引用为证据，因此不进仓库。
 # 注意：`.rounds/i1/*.json` **不**在此列 —— 那是入库的可复现性证据快照。
 .rounds/_*
+
+# 2026-10-01：探针目录 `.rounds/probe/` 同理，但它**没有** `_` 前缀（当时没按约定命名），
+# 于是 `git status` 里一直是一个未跟踪目录 —— 而它装着那次差分的中间产物
+# （`cases.tsv` 有七万多行）。**永远不要提交它**：里面没有判据，只有一次性取证材料；
+# 能入库的是它**得出**的东西（夹具 `platform/text-parity-cases.json` +
+# 门禁 `tools/verify_platform_text_parity.py` + Java 用例 `FormatParityTest`）。
+.rounds/probe/

@@ -1,18 +1,23 @@
 # `platform/` —— 回测绩效看板（平台层 P0 切片）
 
-> **这一层现在有两条门禁**（2026-09-30 订正：原来的「运行侧仍然没有」已过期）。
+> **这一层现在有三条门禁**（2026-10-01 订正：「两条」是 2026-09-30 的说法，已过期）。
 > `platform-spec-parity`（`tools/verify_platform_specs.py`，tier-A）把 Java 侧
 > `MetricSpec.METRIC_SPECS` 与 Python 侧 `quanauto/dashboard.py` 的 `METRIC_SPECS`
 > **双向**比对（14 行的键/分组/标签/量纲/小数位 + **行序** + 量纲与分组常量 + `STRUCTURE_COUNTS`）。
 > `platform-runtime`（`tools/verify_platform_build.py`，tier-A）在**一次性沙箱**里按
 > `npm ci` → `npm run build` → `mvn test` **真跑一遍**——**这个顺序本身是判据**（见下「跑起来」）。
-> 两条都接在 `tools/run_all_gates.py` 的统一入口里 ⇒ 而 `ci.yml` 最后一步就是那条命令
-> ⇒ **两条都真的在 CI 上跑**（代价是 CI 里必须装 JDK 21 与 Node，见 `ci.yml`）。
+> `platform-text-parity`（`tools/verify_platform_text_parity.py`，tier-A，2026-10-01 追加）比**显示规则**：
+> 一侧核 `platform/text-parity-cases.json` 这份夹具还新不新鲜（语料是 Python 现算的），
+> 另一侧的 Java 用例 `FormatParityTest` 由上面那条 `mvn test` 真的跑 —— 它关掉的是
+> 「两侧打印出的字符串可能不同」这条一直只有手挑样本撑着的缝（实测量级见下面「对拍脚本」一节）。
+> 三条都接在 `tools/run_all_gates.py` 的统一入口里 ⇒ 而 `ci.yml` 最后一步就是那条命令
+> ⇒ **三条都真的在 CI 上跑**（代价是 CI 里必须装 JDK 21 与 Node，见 `ci.yml`）。
 > `platform-runtime` 探不到工具链时退 **3 = SKIPPED**，harness 把 3 记成「**不算绿**」。
 > 门禁数现取 `python tools/run_all_gates.py --list`，不要在文档里抄。
-> ⚠️ 两条都**不启动 JVM、不渲染页面** ⇒ **页面本身**仍然没有任何门禁盯着；
-> 两侧**展示文本**也只有手动脚本（见下）。分工的出处是 `docs/智能量化交易平台.md` 附录C 的
-> §C.5 与它的 C.8 / C.9 两个订正块。
+> ⚠️ 三条都**不启动 JVM、不渲染页面** ⇒ **页面本身**（渲染 / 布局 / 视觉）仍然没有任何门禁盯着；
+> 「**活着的服务端**到底下发了哪些字节」（含 `/api/reports` 的信封形状）也仍然只有手动脚本（见下）。
+> 分工的出处是 `docs/智能量化交易平台.md` 附录C 的 §C.5 与它的 C.8 / C.9 订正块，
+> 以及 C.5 第 3 条的 2026-10-01 订正。
 >
 > 本层**不改动研究层的任何文件**（`quanauto/dashboard.py` 一行未改），**不碰 `db/*.sql`**，
 > **不碰 `.github/workflows/ci.yml`**。它只是同一份回测报告的**另一个读法**。
@@ -34,6 +39,11 @@ quanauto/dashboard.py ── 研究层的另一个读法（未改动）
 `platform-spec-parity` 门禁双向比对（附录C §C.5 与它的 C.8 订正块）。
 ⚠️ 门禁**不管**「服务端算出的 `text` 有没有真的印到页面上」—— 那仍然只有手动脚本
 `check_text_parity.py`（需要一个活着的 JVM ⇒ 不能当门禁）。
+ℹ️ 订正（2026-10-01）：上面这两句旁边原来还写着「两侧**展示文本**也只有手动脚本」。
+**那一半已过期** —— 「两侧按同一条显示规则打印出同一个串」现在有常驻判据
+（`platform-text-parity`：夹具 + `FormatParityTest`，由 `platform-runtime` 的真 `mvn test` 跑）。
+仍然只有手动脚本的是**另一件事**：一个**活着的**服务端到底下发了什么（含 `/api/reports`
+的信封形状）—— 门禁不启动 JVM，所以那一层照旧不构成常驻证据。
 
 ## 目录
 
@@ -42,6 +52,7 @@ quanauto/dashboard.py ── 研究层的另一个读法（未改动）
 | `pom.xml` | 聚合 POM。`java.version=21`、Spring Boot `3.5.16` |
 | `api/` | Spring Boot 只读 REST + 静态资源托管 |
 | `web/` | React 19 + Vite 8 单页 |
+| `text-parity-cases.json` | **两侧显示规则的语料夹具**（由 Python 侧现算写出，`tools/verify_platform_text_parity.py --write` 重录）：`unit / digits / value / text`，Java 侧 `FormatParityTest` 拿它逐条对拍 |
 | `check_text_parity.py` | **不是门禁**的对拍脚本（见下） |
 
 ## 环境要求（**踩过的坑，别重踩**）
@@ -120,6 +131,18 @@ mvn -B -f platform/pom.xml -pl api spring-boot:run
 与 `.github/copilot-instructions.md` 里那条「判据依赖环境就是判据的缺陷」同一个理由。
 所以它只能由人在交付时跑一次，**不构成常驻证据**。
 
+ℹ️ 订正（2026-10-01）：本节原来还顺带承担了「两侧**展示文本**是否一致」这条零覆盖项。
+**那一半已经有门禁了**，而且就是在这里发现的问题：拿 73929 组输入做差分，Java 侧
+`ReportProjection` 与 Python 侧 `dashboard.format_metric` 在 **6887 组（9.3%）**上打印出
+不同的字符串（丢负号 4161 / 十进制平局落错边 2726，另有一类大整数计数），
+而当时两侧**所有**已有的用例（Java 手挑的 7 条断言 + 手动对拍脚本的 3 份真报告）**都是绿的**
+—— 手挑的样本与「碰巧没碰到边界」的真报告都证明不了「两侧一致」。
+现在这件事由 `platform-text-parity`（`tools/verify_platform_text_parity.py`）盯：
+Python 侧保证语料新鲜且够厚，Java 侧 `FormatParityTest` 把同一份语料逐条喂进
+`formatMetric` 与 Python 比（由 `platform-runtime` 的真 `mvn test` 跑）。
+本脚本**仍然有价值且仍然不是门禁**，因为它查的是门禁查不到的那一层：
+**一个活着的服务端**真的下发过什么（含信封形状与每一格的 `text`）。
+
 ## 研究层那份 `quanauto/dashboard.py` 要不要退役（**方向登记，不是施工许可**）
 
 这一层落地后最容易被问到的一句话是「平台层已经有了，研究层那份 `dashboard.py` 是不是可以删了」。
@@ -147,8 +170,10 @@ mvn -B -f platform/pom.xml -pl api spring-boot:run
 
 这一节记的是一次**人工**跑出来的页面端到端结论。它不是门禁、不在 CI 里，
 下次谁动 `platform/**` 它**不会自动重跑** ⇒ 过期了也没人报警。
-它的唯一用途是给两条登记在册的零覆盖项（**页面本身**、**两侧展示文本是否一致**）
-留一份可复核的手工证据 —— **不是**宣布这两条已经有判据了。
+它现在的用途是给**仍然零覆盖的那一条**（**页面本身**：渲染 / 布局 / 视觉）
+留一份可复核的手工证据；另一条（**两侧展示文本是否一致**）自 2026-10-01 起
+已有常驻门禁 `platform-text-parity`，但那条门禁**不启动 JVM**——本节「一」里那些数字
+测的是一个**活着的服务端**，那层仍然只有手工证据（详见下文订正块）。
 
 环境：Spring Boot 3.5.16 / Java 21.0.12 / Tomcat 10.1.55；前端是 Vite 构建产物
 （index.html 443 B + 一个 CSS 2290 B + 一个 JS 224816 B，共 227549 B，构建产物本身不进版本库）；
@@ -160,7 +185,12 @@ mvn -B -f platform/pom.xml -pl api spring-boot:run
 ⚠️ 本节早先记的 **224771 B / 227504 B 是补页脚之前那一版构建**，与树里的产物不是同一份，
 已按重跑实测改正（这也是为什么这一节必须写明「测的是哪一版」—— 它是快照，不是函数）。
 
-### 一、两侧展示文本是否一致（零覆盖项 ②）
+### 一、两侧展示文本是否一致（原「零覆盖项 ②」，**2026-10-01 订正**）
+
+⚠️ 订正：标题里的「零覆盖项 ②」是 2026-09-30 的登记，**已过期** —— 那条缝现在由
+`platform-text-parity` 门禁盯着（Python 侧核语料新鲜度与厚度，Java 侧 `FormatParityTest`
+把同一份语料逐条喂进 `formatMetric` 与 Python 比，由 `platform-runtime` 的真 `mvn test` 跑）。
+下面这三条**仍然只有手工证据**，因为门禁**不启动 JVM**：它们测的是一个真跑起来的服务端。
 
 - `platform/check_text_parity.py`（需要一个活着的 JVM ⇒ 不能当门禁）：
   **831 个字段 / 3 份报告逐字段一致**，含屏幕上会显示的那一列。
@@ -168,6 +198,8 @@ mvn -B -f platform/pom.xml -pl api spring-boot:run
   **14 行 × 3 份报告，不一致 0 处**；切换报告会真的重新渲染（切回仍 14 行）。
 - 分组也一并程序化核对（不是目测）：页面上四个分组标题的**名字与顺序**、
   以及每个分组下的行，与 API 里 `metrics[]` 按 `group` 切出来的结果**完全一致**。
+  ⚠️ 这三条当时全绿，**而两侧的显示规则其实有大面积分歧**（差分量级见上面「对拍脚本」
+  一节的订正）—— 这三份真报告恰好没踩到那几个边界。⇒ 这三条不能当「规则正确」的证据。
 
 ### 二、页面本身（零覆盖项 ①）
 
@@ -226,4 +258,6 @@ mvn -B -f platform/pom.xml -pl api spring-boot:run
   失败，而不是静默变成恒真）。
 
 ⚠️ 再强调一次：这一节是**某一次手工跑的结论快照**，不是判据。
-两条零覆盖项的登记状态**不变**；要变，得先把它们真的做成门禁。
+两条登记的归属**已变了一半**（2026-10-01）：**页面本身**仍然零覆盖；
+**两侧展示文本是否一致**已经不是零覆盖项了 —— 它被做成了门禁 `platform-text-parity`
+（但那条门禁不启动 JVM，所以本节「一」里那些**活服务端**的数字仍属手工证据）。

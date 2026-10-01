@@ -153,7 +153,11 @@ public final class ReportProjection {
             }
             // 用 BigDecimal 而不是 (long)：计数类指标将来可能是个大数，
             // (long) 溢出会静默给出一个错的整数，而那是看板最不该犯的错。
-            return BigDecimal.valueOf(number).toBigInteger().toString();
+            // 这里用 `new BigDecimal(double)`（**精确二进制值**）而不是 `BigDecimal.valueOf`：
+            // 后者走最短往返表示，对 >= 2^53 的非可表示整数**不等于**这个 double 本身
+            // （`1e23` 的精确值是 99999999999999991611392，Python 的 `"%d" % int(1e23)`
+            // 打印的就是它），于是两侧会在这种值上打印出不同的整数。
+            return new BigDecimal(number).toBigInteger().toString();
         }
         return fixed(number, spec.digits());
     }
@@ -162,18 +166,47 @@ public final class ReportProjection {
      * 定点小数。四舍五入的<b>平局规则用 HALF_EVEN</b>，与 Python 的 {@code "%.4f"} 一致
      * （{@code String.format} 的默认是 HALF_UP，会与 Python 在平局处分道扬镳）。
      *
-     * <p>⚠️ 已知边界（附录C §C.5 登记）：<b>显示规则在两侧各有一份实现</b>
-     * （Python 的 {@code format_metric} 与这里），且没有一个门禁逐位对拍过它们。
-     * 数值平局处的舍入、以及 {@code -0.0} 这类边角，理论上是可能分歧的。
+     * <p>⚠️ 这里是「显示规则在两侧各有一份实现」的<b>那一侧</b>（另一侧是 Python 的
+     * {@code dashboard.format_metric}）。2026-10-01 实测过分歧面：73929 组样本里旧版
+     * 打印出 <b>6887 组（9.3%）</b>与 Python 不同的字符串，两类成因各修掉一处 ——
+     *
+     * <ol>
+     *   <li><b>丢负号</b>（4161 组）：{@code BigDecimal} 的零<b>没有符号</b>，
+     *       {@code -0.005} 在 {@code digits=2} 上舍入成零之后减号也没了（打印 {@code 0.00}），
+     *       而 Python 打印 {@code -0.01} / {@code -0.0000}。旧版只补了「原值恰好是
+     *       {@code -0.0}」那一种，补不到「负的、但舍入后落到零上」那一大片。</li>
+     *   <li><b>平局落错边</b>（2726 组）：{@code BigDecimal.valueOf(double)} 走的是
+     *       {@code Double.toString} 的<b>最短往返表示</b>，它不是这个 double 的精确值。
+     *       当那个最短表示恰好落在十进制平局点上（{@code -29.95}、{@code 2.675}、
+     *       {@code 182.745}）时，两侧就分道扬镳：Python 按精确值得到 {@code -29.9}，
+     *       这里按那个十进制串做 HALF_EVEN 得到 {@code -30.0}。</li>
+     * </ol>
+     *
+     * <p>常驻判据：{@code platform/text-parity-cases.json} 是 Python 侧现算出来的夹具，
+     * 由 {@code tools/verify_platform_text_parity.py} 核它新不新鲜，并由
+     * {@code FormatParityTest} 逐条喂进本方法对拍（{@code platform-runtime} 门禁真跑
+     * {@code mvn test}）。改本方法会让夹具变红 —— 那是判据在工作，正确的反应是重新录一遍
+     * 夹具并**让两侧都跑一遍**，不是放宽判据。
      */
     static String fixed(double value, int digits) {
-        String text = BigDecimal.valueOf(value).setScale(digits, RoundingMode.HALF_EVEN).toPlainString();
-        // BigDecimal.valueOf(-0.0) 会把符号丢掉，而 Python 的 "%.4f" % -0.0 打印 "-0.0000"。
-        // 两侧同口径 >=> 把负零的符号补回来（回撤/收益上真的会出现负零）。
-        if (text.charAt(0) != '-' && value == 0.0 && Double.doubleToRawLongBits(value) != 0L) {
+        // 用 `new BigDecimal(double)`（**精确二进制值**）而不是 `BigDecimal.valueOf`：后者
+        // 的最短往返表示会在十进制平局点上把舍入推到另一侧（见上面的 ②）。
+        BigDecimal scaled = new BigDecimal(value).setScale(digits, RoundingMode.HALF_EVEN);
+        String text = scaled.toPlainString();
+        // 补号按**原值的符号**判，而不是按「原值是否恰好是 -0.0」：要盖住的是
+        // 「负的、但舍入后落到零上」那一类（`-0.005` @2 ⇒ `-0.01`；`-1e-9` @2 ⇒ `-0.00`）。
+        if (text.charAt(0) != '-' && scaled.signum() == 0 && isNegative(value)) {
             return "-" + text;
         }
         return text;
+    }
+
+    /**
+     * 原值是不是负的（<b>含负零</b>）：Python 的 {@code "%.1f" % -0.0} 打印 {@code -0.0}，
+     * 而 {@code BigDecimal} 那边负零只是零 ⇒ 光看 {@code setScale} 的结果分不出来。
+     */
+    private static boolean isNegative(double value) {
+        return value < 0.0 || (value == 0.0 && Double.doubleToRawLongBits(value) != 0L);
     }
 
     /** 只接受有限实数。布尔不算数（JSON 的 {@code true} 不是数字节点，天然被挡在外面）。 */
