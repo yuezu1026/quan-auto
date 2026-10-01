@@ -293,12 +293,12 @@
     <div class="kpi">
       <div class="k">一级区 4</div>
       <div class="v" style="font-size:16px">交易 Trading</div>
-      <div class="u">组合调度 · 风控控制台 · 决策留痕 · 执行</div>
+      <div class="u">市场状态 · 组合调度 · 风控控制台 · 决策留痕 · 执行监控</div>
     </div>
     <div class="kpi">
       <div class="k">一级区 5</div>
       <div class="v" style="font-size:16px">绩效 Performance</div>
-      <div class="u">绩效看板 · 收益归因 · 策略生命周期</div>
+      <div class="u">绩效看板 · 收益归因（F5 的一级标签页）· 策略生命周期（画在 F7，与策略中心同屏）</div>
     </div>
     <div class="kpi" style="background:var(--wash)">
       <div class="k">常驻顶栏</div>
@@ -312,13 +312,18 @@
     环境徽标常驻且不可关闭 —— 研究环境看到的数据与生产环境是隔离的，界面必须让人随时知道自己站在哪一边。
   </div>
 
+  <p class="hint" style="margin-top:10px">环境徽标有三种取值（研究 / 模拟 / 生产）。本稿实际用到的是：
+     <b>研究</b>（F2 / F3 / F4 / F5 / F7 / F8）、<b>生产</b>（F6），以及 F1 的<b>跨环境总览</b>
+     （它读的既有研究侧也有生产侧的事实，见那一帧的备注）。<b>「模拟」这一次没有对应屏</b> ——
+     它只出现在 F7 的生命周期阶段里，缺失项登记在 <a href="#s6">6 追溯表</a> 末尾的清单里。</p>
+
   <div class="region" style="margin-top:14px" data-wf-region="站点地图">
     <h4><span class="n">①</span>站点地图（画成树而不是画成菜单）</h4>
     <div class="ph h80" style="flex-direction:column; gap:4px">
       <span>总览 | 数据 ├ 数据中心 ├ 股票池管理 ├ 数据质量</span>
       <span>研究 ├ 回测实验室 ├ 策略中心 ├ 适配矩阵 └ 研究 Agent</span>
-      <span>交易 ├ 组合调度 ├ 风控控制台 ├ 决策留痕 └ 执行监控</span>
-      <span>绩效 ├ 绩效看板 ├ 收益归因 └ 生命周期</span>
+      <span>交易 ├ 市场状态 ├ 组合调度 ├ 风控控制台 ├ 决策留痕 └ 执行监控</span>
+      <span>绩效 ├ 绩效看板 ├ 收益归因（F5 标签页）└ 生命周期（在 F7）</span>
       <span style="color:var(--ink4)">（低保真：只画归属关系，不画菜单的收折形态）</span>
     </div>
   </div>
@@ -345,6 +350,9 @@
   <p class="hint" style="color:var(--ink3); font-size:12.5px; margin-top:8px">
     界面含义：这条链上的每一步都要在总览上有一个<b>可点进去的节点灯</b>，
     并且「卡在哪一步」要一眼能看到。风控校验是<b>唯一一个可以否决整条链</b>的节点。
+    <b>十步就是十盏灯</b>：总览上的节点灯与这一行一一对应（含末步「反馈回池」）；
+    而总览里的「今日巡检清单」是<b>另一种粒度</b> —— 它是当日任务书（几点跑的、产出什么），
+    合并了几步，所以格数少于灯数。两处不是两份互相独立的状态表。
   </p>
 
   <h4 style="margin-top:22px">3.2 策略进化循环（低频，人工把关）</h4>
@@ -364,6 +372,10 @@
     界面含义：这条链上的每一步都产出一份<b>可审计的中间物</b>（诊断报告、diff、回测结论、压力测试结论），
     界面的任务是让人能在两三分钟内判断「要不要点那个晋级的按钮」。
     每一步都能停，停下来的状态必须是「待人工」而不是「失败」。
+    分段说明：<b>前七步（失效检测 → 压力测试）是 Agent 流水线</b>，在 F8 里逐步画；
+    第八步「人工晋级决策」之后是<b>落地阶段</b>（模拟盘 / 灰度 → 正式服役），
+    它属于 F7 的生命周期状态机，不是 Agent 的步骤。所以同一件事在这里数出九步、
+    在 F8 的提案流里数出八步 —— 那是数的<b>范围</b>不同（这里含落地阶段，F8 只算到「晋级推荐」）。
   </p>
 
   <div class="deps">
@@ -385,7 +397,7 @@
   </header>
   <div class="canvas proposal">
     <div class="globalbar">
-      <span class="chip on">研究环境</span>
+      <span class="chip on">跨环境总览</span>
       <span>交易日 [YYYY-MM-DD]</span>
       <span>数据版本 [数据版本]</span>
       <span class="chip ghost">全局 Kill Switch ▸ 常驻，每一屏都可达</span>
@@ -394,7 +406,9 @@
 
     <section class="region" data-wf-region="双循环状态">
       <h4><span class="n">1</span>双循环状态（今天走到哪了）</h4>
-      <p class="hint">两条循环各自一行节点灯：已完成 / 进行中 / 未开始 / 阻塞。点节点进对应屏。</p>
+      <p class="hint">两条循环各自一行节点灯：已完成 / 进行中 / 未开始 / 阻塞。点节点进对应屏。
+        上一行是 <a href="#s3">3.1</a> 的<b>全十步</b>；下一行是 3.2 里 Agent 流水线那一段
+        （前七步压成「验证」一格），落地阶段（模拟盘 / 灰度）不在这里点灯 —— 它归 F7 的状态机。</p>
       <div class="flow" style="margin-bottom:8px">
         <div class="node">① 数据采集</div><div class="arrow">→</div>
         <div class="node">② 校验落库</div><div class="arrow">→</div>
@@ -404,7 +418,8 @@
         <div class="node">⑥ 调度</div><div class="arrow">→</div>
         <div class="node">⑦ 风控</div><div class="arrow">→</div>
         <div class="node">⑧ 执行</div><div class="arrow">→</div>
-        <div class="node">⑨ 归因</div>
+        <div class="node">⑨ 归因</div><div class="arrow">→</div>
+        <div class="node">⑩ 反馈回池</div>
       </div>
       <div class="flow">
         <div class="node" style="border-style:dashed">失效检测</div><div class="arrow">→</div>
@@ -430,15 +445,21 @@
             <tr><td>绩效与归因</td><td>○ 未开始</td><td class="num">—</td><td>—</td></tr>
           </tbody>
         </table>
+        <p class="hint" style="margin-top:6px">这张表是<b>另一种粒度</b>：只列当日任务书里真的会跑的那几步，
+          所以格数少于上面那行节点灯。别拿格数去对步数 —— 节点灯回答「这条链走到哪」，
+          这张表回答「今天几点跑的、产出什么」。</p>
       </section>
 
       <section class="region" data-wf-region="风控摘要">
         <h4><span class="n">3</span>风控摘要</h4>
         <div class="grid g2">
           <div class="kpi"><div class="k">Kill Switch</div><div class="v">正常</div><div class="u">未触发</div></div>
-          <div class="kpi"><div class="k">今日指令</div><div class="v">[n]</div><div class="u">通过 [n] / 拦截 [n]</div></div>
+          <div class="kpi"><div class="k">今日指令</div><div class="v">[n]</div><div class="u">通过 [n] · 缩减 [n] · 拒绝 [n]</div></div>
         </div>
-        <h4 style="margin-top:10px">拒绝原因 Top3</h4>
+        <p class="hint" style="margin-top:6px">三类判定<b>分开计</b>，与 F6 的决策留痕同一口径：
+          「缩减」既不是「通过」也不是「拒绝」。把它并进一个笼统的「拦截」里，
+          事后归因就会把风控的动作读成策略的动作。</p>
+        <h4 style="margin-top:10px">拦截原因 Top3（拒绝 + 缩减）</h4>
         <table class="wf">
           <thead><tr><th>原因</th><th>命中规则</th><th>次数</th></tr></thead>
           <tbody>
@@ -460,15 +481,23 @@
           <tr><td>阈值变更</td><td>[规则名]</td><td>[旧值 → 新值]</td><td>[理由]</td><td>[批准] [驳回]</td></tr>
         </tbody>
       </table>
+      <p class="hint" style="margin-top:6px">这是「待人工」这一类动作的<b>汇总入口</b>，不是全部动作的清单：
+        只收已经<b>生成提案</b>的几类。参数变更（F7）与 Agent 代码评审（F8）在各自屏上就地处理，
+        不重复搬到这里；本屏的动作按钮只做<b>批准 / 驳回</b>，落地一律跳对应屏。</p>
     </section>
   </div>
   <ol class="notes">
-    <li><b>环境徽标常驻、不可关闭。</b>研究环境看的是历史数据，看到的结论与生产环境不是同一个东西；
-        界面必须让人随时知道「我现在站在哪一边」。</li>
+    <li><b>顶栏的环境徽标常驻、不可关闭。</b>研究环境看的是历史数据，看到的结论与生产环境不是同一个东西；
+        界面必须让人随时知道「我现在站在哪一边」。<b>本屏是这条规则的例外</b>：它读的东西一半在
+        研究侧（双循环节点灯、待人工决策），一半是生产侧的事实（当日巡检的真实批次时间、
+        指令与判定计数、Kill Switch 状态、阈值变更审批），所以徽标写的是<b>「跨环境总览」</b>
+        而不是某一个环境 —— 贴一个环境标签撑不起这屏的内容。</li>
     <li><b>Kill Switch 在每一屏的顶栏都可达。</b>「风控拥有最高权限」这件事，在界面上首先体现为
         <b>入口不藏</b>：不允许把它收进二级菜单。</li>
-    <li><b>巡检清单的每一项都能点进去</b>，分别落到 F2~F8。清单是「这条链今天走到哪」的唯一入口，
-        不做另一份重复的状态页。</li>
+    <li><b>巡检清单的每一项都能点进去</b>，分别落到 F2~F8。本屏<b>不另做一份状态页</b>：
+        状态只在这两处出现 —— 节点灯（全链十步，回答「走到哪」）与巡检清单
+        （当日任务书，回答「几点跑的、产出什么」）。两者粒度不同、格数不同，是刻意的；
+        但它们<b>不是两份互相独立的状态源</b>，别指望拿一个去校验另一个。</li>
     <li><b>「待人工决策」是本屏唯一写操作区</b>。Agent 只能提案不能落地：晋级按钮是人的动作，
         且必须走 F7 的状态机，不能在总览上直接改状态。</li>
     <li><b>状态用文字 + 形状，不用颜色</b>（低保真不引入颜色语义；落地时也要保证灰度可读）。</li>
@@ -492,13 +521,15 @@
 
     <section class="region" data-wf-region="口径提示">
       <h4><span class="n">1</span>口径提示（只读，常驻，不可关）</h4>
-      <div class="grid g2">
+      <div class="grid g3">
         <div class="kpi"><div class="k">财报</div><div class="v" style="font-size:15px">以披露日期为准</div>
           <div class="u">不是报告期 / 不是截止日</div></div>
         <div class="kpi"><div class="k">指数成分股</div><div class="v" style="font-size:15px">PIT 快照</div>
           <div class="u">要「当时可见」，不是「今天回看」</div></div>
         <div class="kpi"><div class="k">复权价</div><div class="v" style="font-size:15px">读取时现算</div>
           <div class="u">落库存原始价 + 因子</div></div>
+        <div class="kpi"><div class="k">分红</div><div class="v" style="font-size:15px">可见性用公告日</div>
+          <div class="u">取值与窗口用事件日 —— 两者不是同一天</div></div>
         <div class="kpi"><div class="k">每条数据</div><div class="v" style="font-size:15px">两个时间戳</div>
           <div class="u">数据所属日期 ≠ 数据可获取日期</div></div>
       </div>
@@ -525,7 +556,9 @@
           <div class="kpi"><div class="k">值域越界</div><div class="v">[n]</div></div>
           <div class="kpi"><div class="k">帧级键重复</div><div class="v">[n]</div></div>
         </div>
-        <p class="hint" style="margin-top:8px">点任一计数 → 展开到具体行（哪只股票、哪一天）。</p>
+        <p class="hint" style="margin-top:8px">点任一计数 → 展开到具体行（哪只股票、哪一天）。
+          这四个计数是<b>采集侧的统计口径</b>，不是帧校验判据的全集：帧校验还会看<b>列集合与类型</b>，
+          而<b>覆盖率</b>这一类它并不判 —— 别把这里的格数当成「校验都判什么」的清单。</p>
       </section>
 
       <section class="region" data-wf-region="数据源登记">
@@ -564,6 +597,9 @@
         所以那一行没有数据版本（这是刻意的空，不是漏填）。</li>
     <li><b>数据版本号是回测可重现性的锚点</b>：F4 要选它，F5 要显示它。它出现在界面上比出现在日志里重要得多。</li>
     <li><b>空态</b>：还没有任何批次 → 引导「新建采集」，而不是显示一张空表让人猜。</li>
+    <li><b>口径提示块写的是「怎么算」，不是「算没算」。</b>分红那一行的可见性与取值口径
+        已经按公告日 / 事件日分开；但只要回测引擎还没有真正把它吃进收益，绩效数字就一个都不会变 ——
+        这一条的现状以仓库为准，不要从这张图上读结论。</li>
     <li><b>依赖标注</b>：本屏只画结构。具体的数据源、批次表、质量口径以仓库里的契约与落库实现为准，
         本图<b>不主张</b>任何一项已经接好。</li>
   </ol>
@@ -673,6 +709,7 @@
           <tbody>
             <tr><th>策略</th><td>[策略ID] · 版本 [vN]</td></tr>
             <tr><th>股票池</th><td>[池名] · 快照 [日期]</td></tr>
+            <tr><th>回测库</th><td>含<b>已退市股票</b>及其退市前的历史数据（防幸存者偏差）</td></tr>
             <tr><th>区间</th><td>[起] → [止]</td></tr>
             <tr><th>初始资金</th><td>[金额]</td></tr>
             <tr><th>成本</th><td>佣金 [b] · 印花税 [b] · <b>滑点 [b]</b></td></tr>
@@ -721,6 +758,8 @@
         所以它们在<b>跑之前</b>就显示出来，而不是跑完才藏进 JSON。</li>
     <li><b>区间校验失败时不许提交。</b>提交后报错会让人以为「跑过了只是没结果」。</li>
     <li><b>复权口径里没有「前复权」这一项。</b>界面不给选项，比在说明里写「请不要用前复权」有效。</li>
+    <li><b>回测库必须含已退市股票。</b>只拿「今天还在交易」的票去跑历史，会系统性地高估收益 ——
+        这是数据侧的要求，但界面要把它写在配置里，否则没人看得出那个池子干净不干净。</li>
     <li><b>这一屏产出的报告就是 F5 读的那一份。</b>两个页面必须读同一份文件，
         而不是各自有一份「给页面用的副本」。</li>
     <li><b>三态</b>：空（没选策略）/ 加载（进度条 + 可取消）/ 错误（校验失败，含可点的后续动作）。</li>
@@ -780,6 +819,9 @@
 
     <section class="region" data-wf-region="指标分组">
       <h4><span class="n">4</span>指标（分组 × 格，键/标签/量纲/小数位由服务端规格表驱动）</h4>
+      <p class="hint">四组<b>不等长</b>：格数由服务端规格表里各组的实际条目数决定
+        （本稿以 3 / 4 / 6 / 1 示意），页面不补空格、不凑整、不把某一组的条数复制到别组。
+        实际条数以规格表为准，不要拿这张图去对账。</p>
       <div class="grid g2">
         <div>
           <h4>[分组 1]</h4>
@@ -798,6 +840,7 @@
               <tr><th>[指标标签]</th><td class="num">[值][量纲]</td></tr>
               <tr><th>[指标标签]</th><td class="num">[值][量纲]</td></tr>
               <tr><th>[指标标签]</th><td class="num">[值][量纲]</td></tr>
+              <tr><th>[指标标签]</th><td class="num">[值][量纲]</td></tr>
             </tbody>
           </table>
         </div>
@@ -808,6 +851,9 @@
               <tr><th>[指标标签]</th><td class="num">[值][量纲]</td></tr>
               <tr><th>[指标标签]</th><td class="num">[值][量纲]</td></tr>
               <tr><th>[指标标签]</th><td class="num">[值][量纲]</td></tr>
+              <tr><th>[指标标签]</th><td class="num">[值][量纲]</td></tr>
+              <tr><th>[指标标签]</th><td class="num">[值][量纲]</td></tr>
+              <tr><th>[指标标签]</th><td class="num">[值][量纲]</td></tr>
             </tbody>
           </table>
         </div>
@@ -815,8 +861,6 @@
           <h4>[分组 4]</h4>
           <table class="wf">
             <tbody>
-              <tr><th>[指标标签]</th><td class="num">[值][量纲]</td></tr>
-              <tr><th>[指标标签]</th><td class="num">[值][量纲]</td></tr>
               <tr><th>[指标标签]</th><td class="num">[值][量纲]</td></tr>
             </tbody>
           </table>
@@ -837,6 +881,11 @@
   <ol class="notes">
     <li><b>本帧是唯一已交付的一屏</b>，对应 <code>platform/web/src/App.jsx</code>；
         其余七帧没有对应代码。</li>
+    <li><b>抬头里只有「策略版本 + 数据版本」，没有「参数」与「随机种子」两格</b>，
+        而 F4 的备注说「四项缺一不可复现」—— 这个差<b>是照抄出来的，不是画错</b>：
+        本帧是对已交付页面结构的重新绘制，它长什么样就画什么样，所以这里<b>刻意不改</b>
+        （改了它，四条平台层门禁的比对对象就断了）。报告里到底有哪些可复现性字段、
+        抬头要不要补两格，是平台层的事 —— <b>以 <code>platform/</code> 那一层为准，不要以这张图为准。</b></li>
     <li><b>每个绩效数字都是服务端算好的文本</b>，页面原样呈现：不换算量纲、不决定小数位、不重算指标。
         「两侧各算一套」就是 bug，所以界面上不存在可换算的入口。</li>
     <li><b>指标由服务端规格表驱动，页面不手抄。</b>分组顺序也是从服务端数据里推导出来的，
@@ -877,21 +926,26 @@
     </section>
 
     <div class="grid g2">
-      <section class="region" data-wf-region="阈值表">
+      <section class="region" data-wf-region="规则与阈值">
         <h4><span class="n">2</span>规则与阈值</h4>
         <table class="wf">
           <thead><tr><th>规则</th><th>当前值</th><th>量纲</th><th>生效区间</th><th>上次变更</th></tr></thead>
           <tbody>
-            <tr><td>单票买入上限</td><td class="num">[值]</td><td>比例</td><td>[自] → —</td><td>[人] [日期]</td></tr>
+            <tr><td>单票仓位上限（= 单票集中度）</td><td class="num">[值]</td><td>比例</td><td>[自] → —</td><td>[人] [日期]</td></tr>
             <tr><td>单日单票下单次数</td><td class="num">[值]</td><td>次数</td><td>[自] → —</td><td>[人] [日期]</td></tr>
             <tr><td>单策略回撤熔断</td><td class="num">[值]</td><td>比例</td><td>[自] → —</td><td>[人] [日期]</td></tr>
             <tr><td>全账户总回撤熔断</td><td class="num">[值]</td><td>比例</td><td>[自] → —</td><td>[人] [日期]</td></tr>
-            <tr><td>单票集中度</td><td class="num">[值]</td><td>比例</td><td>[自] → —</td><td>[人] [日期]</td></tr>
             <tr><td>单行业集中度</td><td class="num">[值]</td><td>比例</td><td>[自] → —</td><td>[人] [日期]</td></tr>
             <tr><td>流动性（不超过日均成交额）</td><td class="num">[值]</td><td>比例</td><td>[自] → —</td><td>[人] [日期]</td></tr>
-            <tr><td>黑名单</td><td class="num">[n]</td><td>标的</td><td>[自] → —</td><td>[人] [日期]</td></tr>
           </tbody>
         </table>
+        <p class="hint" style="margin-top:8px">这张表只放<b>数值型</b>规则，一条一行。
+          「单票买入上限」与「单票集中度」在需求里是<b>两条</b>，落到实现是同一条口径
+          （该标的持仓市值 / 账户总资产）⇒ 这里合并成一行，免得界面上出现两条永远同步的规则。
+          <b>名单型</b>规则（黑名单）不在本表 —— 它有独立的录入与核对入口，
+          把它塞进数值表会长出一个「黑名单当前值 = ?」的怪格子。
+          本表只画结构；<b>具体有哪些规则、值的域是什么，以仓库里的风控契约与 DDL 为准</b>，
+          不要拿这张图去核对规则条数。</p>
         <div class="bar" style="margin-top:8px; max-width:220px"><i style="width:60%"></i><b>今日用量</b></div>
       </section>
 
@@ -928,6 +982,9 @@
     <li><b>Kill Switch 一经触发，所有下单路径都停</b> —— Agent 与策略都绕不过。
         所以它的影响面写在卡片上，让人看得见代价。</li>
     <li><b>拒绝原因必须带「命中哪条规则」</b>，只给一个自由文本的原因，事后无法统计。</li>
+    <li><b>数值型规则与名单型规则分表画。</b>黑名单是「一串标的」，不是「一个数」 ——
+        它的操作形态是增删条目，不是改一个阈值。两者混在一张表里，
+        会让人以为黑名单也有一个「当前值」。</li>
     <li><b>依赖标注</b>：本屏的数据来自决策留痕。本线框<b>不主张</b>它已经有产品写入者 ——
         接线状态看仓库现状，不要看这张图。</li>
   </ol>
@@ -957,10 +1014,13 @@
           <tr><td>[策略ID]</td><td>均值回归</td><td class="num">[vN]</td><td>模拟盘</td><td class="num">[n]</td><td class="num">[0-100]</td><td class="num">[值]</td></tr>
           <tr><td>[策略ID]</td><td>基本面量化</td><td class="num">[vN]</td><td>样本外</td><td class="num">[n]</td><td class="num">[0-100]</td><td class="num">[值]</td></tr>
           <tr><td>[策略ID]</td><td>事件驱动</td><td class="num">[vN]</td><td>孵化</td><td class="num">[n]</td><td class="num">[0-100]</td><td class="num">—</td></tr>
+          <tr><td>[策略ID]</td><td>机器学习</td><td class="num">[vN]</td><td>孵化</td><td class="num">[n]</td><td class="num">[0-100]</td><td class="num">—</td></tr>
         </tbody>
       </table>
       <p class="hint" style="margin-top:8px">点一行 → 右侧详情抽屉。<b>同一套策略代码服务三种环境</b>，
-        所以这一屏不出现「回测版 / 实盘版」这种分叉。</p>
+        所以这一屏不出现「回测版 / 实盘版」这种分叉。
+        「类别」一列按需求里的分类<b>全列举</b>（含机器学习）；行是示意行 ——
+        <b>不是说这些策略都已经存在</b>。</p>
     </section>
 
     <section class="region" data-wf-region="策略详情">
@@ -1028,9 +1088,10 @@
 
     <section class="region" data-wf-region="市场状态">
       <h4><span class="n">1</span>市场状态（概率输出，不是绝对分类）</h4>
-      <div class="grid g4">
+      <div class="grid g3">
         <div class="kpi"><div class="k">趋势市概率</div><div class="v">[p]%</div><div class="u">基于历史可见数据</div></div>
         <div class="kpi"><div class="k">震荡市概率</div><div class="v">[p]%</div><div class="u">两个概率不必互补到 100</div></div>
+        <div class="kpi"><div class="k">价值 / 成长风格</div><div class="v" style="font-size:14px">[偏价值 / 均衡 / 偏成长]</div><div class="u">含强度 [p]%</div></div>
         <div class="kpi"><div class="k">大小盘风格</div><div class="v" style="font-size:14px">[偏大 / 均衡 / 偏小]</div><div class="u">含强度 [p]%</div></div>
         <div class="kpi"><div class="k">流动性</div><div class="v" style="font-size:14px">[充裕 / 正常 / 紧张]</div><div class="u">评分 [0-100]</div></div>
       </div>
@@ -1108,6 +1169,9 @@
           <tr><td>[委托号]</td><td>[标的]</td><td>已取消</td><td class="num">[价]</td><td>—</td><td>—</td></tr>
         </tbody>
       </table>
+      <p class="hint" style="margin-top:6px">本区只画<b>成交回报</b>这一面。执行层还有订单拆分、智能路由、
+        持仓同步、模拟盘 / 实盘切换等结构，本稿<b>没有画</b> —— 缺失是刻意的，见
+        <a href="#s6">6 追溯表</a> 末尾的清单。组合调度的<b>再平衡触发</b>（定期 / 阈值 / 事件）同样没有画。</p>
     </section>
   </div>
   <ol class="notes">
@@ -1168,10 +1232,17 @@
     </tbody>
   </table>
 
-  <h4 style="margin-top:18px">没有画进来的三件事（记住它们的缺失是刻意的）</h4>
+  <h4 style="margin-top:18px">没有画进来的几件事（记住它们的缺失是刻意的）</h4>
   <ul>
     <li><b>收益归因的三张表</b>（资产配置 / 风格 / 策略贡献）：它们应该是 F5 的一级标签页，
-        而不是新的一屏；本稿没画，是因为 F5 已经交付而现有页面没有这一层 —— 属于「已交付屏的待扩展项」。</li>
+        而不是新的一屏；本稿没画，是因为 F5 已经交付而现有页面没有这一层 —— 属于「已交付屏的待扩展项」。
+        （第 2 节信息架构里「收益归因」按同一个判断写法画。）</li>
+    <li><b>执行层的其余结构</b>：订单拆分、智能路由、持仓同步、模拟盘 / 实盘切换。
+        F8 只画了「成交回报 + 滑点」这一面，因为那一面是成本分析的输入；其余几面是执行引擎自己的事。</li>
+    <li><b>组合调度的再平衡触发</b>：本稿只画了手动覆盖，没有画「定期 / 阈值 / 事件」这三类自动触发
+        在界面上怎么呈现、怎么看得见。少了它，「多久动一次仓」这个问题在界面上没有落点。</li>
+    <li><b>以「模拟环境」为主语的那一屏</b>：环境徽标有三种取值，本稿用到研究（多数帧）、
+        生产（F6）与跨环境总览（F1）；模拟盘只出现在 F7 的生命周期阶段里，没有单独一屏。</li>
     <li><b>多用户 / 权限 / 计费</b>：PRD 明确第一版完全自用、不做这些。所以本稿里没有登录页、没有角色管理。</li>
     <li><b>视觉与品牌</b>：低保真刻意不涉及，见下一节。</li>
   </ul>
