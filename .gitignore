@@ -40,7 +40,10 @@ Desktop.ini
 # 打印出的串，Java 侧用例由上面那条 `mvn test` 跑）与 `platform-web-parity`（页面静态可判那部分）
 # —— 见 docs/智能量化交易平台.md 附录C §C.8/C.9/C.11/C.12/C.13 与 platform/README.md。
 # 但**布局 / 视觉仍无判据**（jsdom 里没有布局引擎，几何断言恒真是假绿；**页面渲染**自 2026-10-01
-# 晚起归 `platform-runtime` 的第二步 `npm test`）⇒ 忽略规则还得自己写准：
+# 晚起归 `platform-runtime` 的第二步 `npm test`）—— 2026-10-01 晚另给这一格补了一支**可复跑的探针**
+# （`platform/probe_layout.js`）与它那一次取证的快照（`platform/layout-probe-report.txt`），
+# 但探针要一个活着的 JVM + 真浏览器 ⇒ **判据依赖环境就是判据的缺陷** ⇒ 上面那句「仍无判据」
+# **仍然成立**（追加块见 docs/智能量化交易平台.md 附录C §C.14）。⇒ 忽略规则还得自己写准：
 # 漏一条就会让构建产物混进工作树，而**门禁不会替你发现** —— run_all_gates.py 的
 # 指纹守卫只比「跑门禁那一小段时间里多了/少了/改了什么」，不看「工作树里本来多不多」。
 #
@@ -51,6 +54,9 @@ platform/api/src/main/resources/static/
 # 注意 `platform/api/pom.xml`、`platform/web/package.json`、`platform/web/package-lock.json`
 # **刻意不忽略** —— 它们是这一层的源码（没有 lock 文件，构建就不是可复现的）。
 # `platform/web/test/` 同样**刻意不忽略** —— 渲染用例与它吃的夹具是 `platform-runtime` 第二步的输入。
+# `platform/probe_layout.js`（布局 / 视觉探针）与 `platform/layout-probe-report.txt`（它那一次
+# 的快照）**同样刻意不忽略** —— 前者是源码，后者是 2026-10-01 晚那次取证的证据文件；
+# ⚠️ 后者是**快照**（过期不会报警），不是门禁产出，harness 也不读它。
 
 # ── 一次性探针（`.rounds/_*`，按 `_` 前缀约定）──────────────────────
 # 某一次调试落盘的**过程回显**：红/绿那一次的输出、行尾形态探针、重录日志。

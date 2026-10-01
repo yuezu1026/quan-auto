@@ -243,20 +243,25 @@ export default function App() {
           本层有自建门禁了（<code>platform-spec-parity</code> 管声明层、
           <code>platform-runtime</code> 管运行层、
           <code>platform-text-parity</code> 管两侧显示规则、{" "}
-          <code>platform-web-parity</code> 管这一页读了哪些字段、谁在格式化数字，
-          四条都在 CI 里跑）—— 它们自己都<b>不起服务、不开浏览器</b>；而页面
+          <code>platform-web-parity</code>{" "}
+          管这一页读了哪些字段、谁在格式化数字， 四条都在 CI 里跑）—— 它们自己都
+          <b>不起服务、不开浏览器</b>；而页面
           <b>渲染</b>已由运行层那条门禁的第二步（<code>npm test</code>：vitest +
-          jsdom 里真的把这几个组件挂起来，输入是一份由真实回测报告投影出来的夹具）
+          jsdom
+          里真的把这几个组件挂起来，输入是一份由真实回测报告投影出来的夹具）
           覆盖 ⇒ 仍然是零覆盖的只剩 <b>布局 / 视觉</b>（jsdom 没有布局引擎，
-          几何量恒为 0 ⇒ 那条测试里<b>故意不写</b>几何断言，写了也只是恒真的假绿）。 ⚠️ 订正（2026-10-01）：
+          几何量恒为 0 ⇒ 那条测试里<b>故意不写</b>
+          几何断言，写了也只是恒真的假绿）。 ⚠️ 订正（2026-10-01）：
           <b>两侧展示文本是否一致</b>已不是零覆盖项（那是{" "}
-          <code>platform-text-parity</code> 的活）；<b>页面读的字段名、以及页脚这份自报清单
-          本身</b>也不再是零覆盖项（那是 <code>platform-web-parity</code> 的活，它只读源码、
+          <code>platform-text-parity</code> 的活）；
+          <b>页面读的字段名、以及页脚这份自报清单 本身</b>也不再是零覆盖项（那是{" "}
+          <code>platform-web-parity</code> 的活，它只读源码、
           不起服务、不开浏览器）；仍然只有手动脚本{" "}
           <code>platform/check_text_parity.py</code>（需要活着的 JVM ⇒
           不能当门禁）的是
           <b>活着的服务端到底下发了什么</b>。 见{" "}
-          <code>docs/智能量化交易平台.md</code> 附录C §C.8 / §C.9 / §C.11 / §C.12。
+          <code>docs/智能量化交易平台.md</code> 附录C §C.8 / §C.9 / §C.11 /
+          §C.12。
         </p>
       </footer>
     </main>

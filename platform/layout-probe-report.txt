@@ -1,0 +1,98 @@
+SCOPE: 平台层「布局 / 视觉」一次性取证的快照 —— 由 platform/probe_layout.js 在真浏览器里对一个活着的后端托管的那一页量出来的
+DATE: 2026-10-01 晚
+HEAD: 1c58744
+工作树: **脏**（.github/copilot-instructions.md 与 platform/web/src/App.jsx 被外部编辑器重排过；本快照量的是**这份工作树**构建出来的页面，
+        不是 1c58744 里的那一版 —— 两者渲染出的文字内容逐字相同，但字节不同）
+SERVED: http://localhost:8080/ 「回测绩效看板 · 平台层 P0 切片」
+后端: Spring Boot 3.5.16 / Tomcat 10.1.55，报告目录 .rounds/i1（存在），端口 8080
+前端: 先 `npm run build`（vite 8.3.1，17 modules，assets/index-BVJOXJxo.js 225.89 kB，built in 157ms），再起后端
+      ⚠️ 顺序反了就 served 旧包：产物写进 api/src/main/resources/static/，而 Spring 从 target/classes/static/ 托管
+浏览器: VS Code 集成浏览器（CDP/Playwright）。本仓库的 e2e 规矩是**只做 DOM 测量、不截图**，本快照遵守。
+执行: page.addScriptTag({ path: 'platform/probe_layout.js' }) → page.evaluate(() => probeLayout())
+
+⚠️ 这不是门禁，也不构成常驻证据。它**没有**跑在 CI 里（要一个活着的 JVM + 一个真浏览器
+   ⇒ 判据依赖环境就是判据的缺陷）。所以本文件只能读成「**这一次**、**这几档视口**、**这三份报告**下没量到问题」，
+   不能读成「布局没问题」。这一格在门禁意义上**仍然零覆盖**。
+
+────────────────────────────────────────────────────────────────────────────────
+A. 真量（报告 / 视口 / 结果）—— 12 个检查码全部沉默
+
+取样：三份真报告（下拉框里全部三个）× 三档视口（1280 / 800 / 375）。
+每档下 extracted 都是同一组非零值 ⇒ **空转守卫（LP-EMPTY）是通过的，沉默才有意义**：
+    groups=4  metricCells=14  rowHeaders=14  svg=true  polyline=true  selects=1
+
+报告              视口      doc.scrollWidth  doc.scrollHeight  problems
+report-seed7-a    1280      1265             1019              []
+report-seed7-a     800       785             1169              []
+report-seed7-a     375       360             1742              []
+report-seed7-b    1280      1265             1019              []
+report-seed8       1280      1265             1019              []
+
+逐项计数（三档视口全都是 0）：outside=0（没有元素横向越出视口）、overlaps=0（没有兄弟元素压在一起）、
+clipped=0（没有被截断的文本容器）、zeroSized=0（svg / polyline / 4 个分组 / 14 个指标格 / 下拉框都有非零几何）。
+整页横向滚动条：三档都没有（scrollWidth 都比 innerWidth 小 15px，那是滚动条自身的宽度）。
+
+与「服务端下发的那份」逐字对拍（页面只许原样呈现，前端不许再格式化一次）：
+    14 个指标格的文本 == metrics[].text（累计收益 -3.2043% / 年化收益 -12.9863% / 期末净值 96795.65 /
+      最大回撤 5.4043% / 夏普比率 -1.5102 / 索提诺比率 -1.7471 / 卡玛比率 -2.4029 / 胜率 0.0000% /
+      盈亏比（总额） 0.0000 / 盈亏比（均额） 0.0000 / 最大连续亏损 1 / 平均持仓天数 2.00 /
+      成交笔数 1 / 累计佣金 182.75）
+    14 个行头（th）的标签 == metrics[].label（累计收益 / 年化收益 / 期末净值 / 最大回撤 / 夏普比率 /
+      索提诺比率 / 卡玛比率 / 胜率 / 盈亏比（总额） / 盈亏比（均额） / 最大连续亏损 / 平均持仓天数 /
+      成交笔数 / 累计佣金）
+    折线点数 60 == 报告 curve.length 60 == counts.equityCurve 60（三份报告都是 60 点 / 3 笔 / 3 条）。
+
+────────────────────────────────────────────────────────────────────────────────
+B. 触发测试（证明这 12 个码不是摆设）—— 12/12 全部打到，且**报出来的正是预期那个码**
+
+做法：在**真页面**上改 DOM 或拦截那一次 fetch，再跑一遍探针。每条之前都 reload 一次拿干净页面
+（除了被标注的），最后一条是「什么都不改」的对照。
+
+变异的对象 / 手段                                        实际报出的码与文本
+① 删掉 <main>                                            LP-EMPTY :: 页面里没有 <main> —— 提取失败时后面每个探测器都在空转，拒绝给结论
+② 往 main 里塞一个 3000px 宽的 div                       LP-OVERFLOW :: 1 个元素横向越出视口（宽 1280）：div {left:132,width:3000,right:3132}
+                                                         LP-SCROLL :: 整页横向可滚动：scrollWidth=3133 > innerWidth=1280
+③ svg 设 display:none                                    LP-ZERO :: 2 个应当可见的元素几何为 0：svg 0×0 | polyline 0×0
+④ 指标格 overflow:hidden + display:block + width:20px    LP-CLIP :: 1 个元素把内容截掉了：td.value clientWidth=20 scrollWidth=55 文本="-3.2043%"
+⑤ section.curve 设 margin-bottom:-200px                  LP-OVERLAP :: 1 处兄弟重叠：main 下 section.curve ∩ div.groups 相交 1000×200px
+⑥ polyline 的 points 改成 "0,0"                          LP-ZERO :: polyline 0×0
+                                                         LP-CURVE-POINTS :: 折线上 1 个点，报告里 60 个点
+⑦ 一个 th 的文本改成 "XX"                                LP-LABEL :: 1 个指标标签不是原样呈现：0：页面印 "XX"，服务端下发 "累计收益"
+⑧ 删掉一个 td                                            LP-TEXT-COUNT :: 页面印了 13 格，服务端下发 14 条
+⑨ 一个 td 的文本改成 "999"                               LP-TEXT :: 1 格不是原样呈现：0：页面印 "999"，服务端下发 "-3.2043%"
+⑩ 详情接口被拦成 text/html（不是 JSON）                   LP-API :: 取服务端下发的那份报告失败（report-seed7-a）：SyntaxError: Unexpected token '<'
+⑪ 详情 payload 里 counts.equityCurve 改成 61             LP-CURVE-COUNT :: curve.length=60，counts.equityCurve=61
+⑫ 什么都不改（对照）                                      无（[]）
+
+⚠️ 一条**没打到靶子**的变异，记在这里当方法学注记（这正是「变异没打到分支」与「探测器没写」
+   在报告里长得一模一样的那种坑）：
+   第一版写的是 `document.querySelector('main').style.width = '3000px'` —— **什么都没报**。
+   原因不是探测器坏了，而是 main 有 max-width（760px），内联 width 被它封顶 ⇒ 那条变异**根本没造出溢出**。
+   换成 ②「往 main 里塞一个宽 div」才打到。⇒ 结论：**变异要打在判据真正读取的那一侧**，
+   报不出来时先怀疑变异，不要先怀疑判据（也不要顺手把判据放宽）。
+
+────────────────────────────────────────────────────────────────────────────────
+C. 它量得到什么、量不到什么（边界，别读多）
+
+量得到（就是上面 12 条）：横向越界 / 整页横向滚动 / 兄弟重叠 / 文本截断 / 该可见的东西塌成 0×0 /
+  页面印的串与服务端下发的串逐字一致 / 行头标签一致 / 折线点数与报告曲线点数一致。
+量不到：
+  ① **好不好看**。没有设计稿可比（本仓库没有高保真稿），所以「像不像设计」「字号/色值/间距对不对」
+     一条都没判 —— 那需要一份设计稿，属于另一个话题。
+  ② 纵向排布是否合理（垂直方向只做「兄弟重叠」这一件事；元素之间空太多、顺序怪，它不报）。
+  ③ 键盘可达性 / 焦点顺序 / 对比度 / 无障碍。这些 `getBoundingClientRect` 看不见。
+  ④ **只在这一档宽度下成立**。三档是手挑的（375 / 800 / 1280），不是穷举；换一档可能不同。
+  ⑤ 服务端**算得对不对**。它只对拍「页面印的 == 服务端下发的」，两侧同时错它看不出（那是
+     platform-text-parity 与 I4 看板的活）。
+
+────────────────────────────────────────────────────────────────────────────────
+D. 怎么复跑（改了前端或后端之后重跑这一次取证）
+
+  1) cd platform/web && npm run build          # 必须在起后端**之前**（顺序反了 served 旧包）
+  2) set "JAVA_HOME=C:\Program Files\Zulu\zulu-21" & mvn -B -f platform/pom.xml -pl api spring-boot:run
+     ⚠️ JAVA_HOME 必须带引号那对（`set "VAR=值"`）；写成 `set VAR=值` 会带上尾随空格
+        ⇒ Maven 报「JAVA_HOME 未正确定义」，看起来像代码坏了（历史上有一次就被记成了「spring-boot:run 退出 1」）。
+  3) 浏览器打开 http://localhost:8080/，在 Console 里粘 platform/probe_layout.js 整段，
+     再敲 `probeLayout().then(console.log, console.error)`；或 Playwright 里
+     `page.addScriptTag({ path: 'platform/probe_layout.js' })` → `page.evaluate(() => probeLayout())`。
+  4) 看 `problems`：空 = 这一次没量到问题；非空 = 逐条贴进本文件的新一行（连同视口与报告名）。
