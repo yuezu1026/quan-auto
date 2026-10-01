@@ -1518,8 +1518,12 @@ def selftest():
         # **自身就含那个 needle** ⇒ 判据恒真、样本空转（覆盖类判据被「名字出现过」
         # 满足，和「约束名出现在清单里」是同一族）。改用 `startswith` 后那一行以
         # `PROBLEM: ` 开头，满足不了；同时数一下行数并禁掉 PROBLEM 行，三条一起判。
-        # 注意标题比 needle 长（真实行 = `CONTEXT.md :: 6. 当前状态（一句话版）   L243-308`），
+        # 注意标题比 needle 长（真实行 = `CONTEXT.md :: 6. 当前状态（一句话版）   L281-382`），
         # 所以只能拿 needle 当**前缀**比对。
+        # ⚠️ 上面那串 `L<起>-<止>` 是**会漂的引用**：2026-10-01 实测它早已从 `L243-308`
+        # 漂成 `L281-382`（CONTEXT.md 前文插过行），而**没有任何门禁会因此变红**。
+        # 这里只拿它示范那一行的**形状** —— 这条自测一个数字都没用到，所以它再漂也不影响判据。
+        # 要拿现值的办法是现取：`dev.py outline CONTEXT.md --depth=2 | Select-String 当前状态`。
         expected = ['%s :: %s' % (rel, n)
                     for rel, needles in BRIEF_PLAN for n in needles]
         text_lines = text.splitlines()

@@ -249,7 +249,7 @@ export default function App() {
           <code>platform/check_text_parity.py</code>（需要活着的 JVM ⇒
           不能当门禁）的是
           <b>活着的服务端到底下发了什么</b>。 见{" "}
-          <code>docs/智能量化交易平台.md</code> 附录C §C.8 / §C.9。
+          <code>docs/智能量化交易平台.md</code> 附录C §C.8 / §C.9 / §C.11。
         </p>
       </footer>
     </main>

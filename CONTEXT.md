@@ -59,7 +59,7 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 |---|---|
 | `pyproject.toml` | 包元数据 / pytest 配置。依赖**由真正用它的模块带进来**，禁预置「以后大概会用」的包：现在是 `pandas>=2.0`（使用者 `quanauto/datasources.py`），源 SDK 走 `[datasources]` extra（I0/I1 当时是空数组，因为那时的竖切只用标准库），数据库驱动走 `[postgres]` extra（2026-09-25 裁决：`psycopg[binary]>=3.1`，使用者 `quanauto/pgstore.py`；**extra 是 opt-in，CI 只装 `.[dev]`**） |
 | `quanauto/__init__.py` | 包入口，只有 `__version__` 与 `__all__`（其它模块下的实现不在此 re-export：否则「实现在那里」与「一 import 就全拉起来」长得一样） |
-| `quanauto/*.py`（**16 个模块**：15 个实现 + 入口 `cli.py`；条目数现取 `quanauto/*.py`） | I1 的产物：`models` / `enums` / `errors` / `events` / `datafeed` / `strategies` / `broker` / `engine` / `performance` / `cli`；**I2 S1 追加 `datacenter.py`**（PIT / `as_of` 边界层）、**I2 S2 追加 `datasources.py`**（采集侧适配器：源列名/取值 → 标准 schema + `ValidationReport`）、**I2 S3 追加 `pgstore.py`**（落库侧：`PgBarStore` 读 / `PgBarIngestor` 幂等 upsert / `PsycopgConnection` 惰性驱动适配）、**I3 追加 `risk.py`**（风控引擎：四层作用域优先级 + `KillSwitch` 熔断 + 阈值收紧/放宽与 LKG 回退，由 `tests/test_risk_engine.py` 守），**I3b 小步在 `risk.py` 里真接上存储层**（`DbRiskRuleStore` 三个读写方法 + 四个运行态方法 + `RiskInterceptLogWriter` 拦截留痕；写入方是**调用方** `BacktestEngine._record_risk_block()` 而不是 `RiskEngine`，偏离与理由见风控契约 §七），**I4 追加 `dashboard.py`**（绩效看板：读一份 `BacktestResult` → 按固定 14 行清单摆指标表 + 资金曲线，**纯读数**，一个指标都不重算；口径登记在核心契约 §F，由 `tools/verify_dashboard.py` 与 `tests/test_dashboard.py` 守），**I2 收口 ①ⓑ 追加 `ingest.py`**（采集 → 落库的编排层，见 DC 契约附录 H）。守门门禁 = `contract-signature`（签名不许偏离契约）+ `data-center-pit` + `data-center-adapter` + `dashboard-consistency` |
+| `quanauto/*.py`（**17 条**：16 个模块（15 个实现 + 入口 `cli.py`）+ 上一行的 `__init__.py`；**条目数现取** `quanauto/*.py`） | I1 的产物：`models` / `enums` / `errors` / `events` / `datafeed` / `strategies` / `broker` / `engine` / `performance` / `cli`；**I2 S1 追加 `datacenter.py`**（PIT / `as_of` 边界层）、**I2 S2 追加 `datasources.py`**（采集侧适配器：源列名/取值 → 标准 schema + `ValidationReport`）、**I2 S3 追加 `pgstore.py`**（落库侧：`PgBarStore` 读 / `PgBarIngestor` 幂等 upsert / `PsycopgConnection` 惰性驱动适配）、**I3 追加 `risk.py`**（风控引擎：四层作用域优先级 + `KillSwitch` 熔断 + 阈值收紧/放宽与 LKG 回退，由 `tests/test_risk_engine.py` 守），**I3b 小步在 `risk.py` 里真接上存储层**（`DbRiskRuleStore` 三个读写方法 + 四个运行态方法 + `RiskInterceptLogWriter` 拦截留痕；写入方是**调用方** `BacktestEngine._record_risk_block()` 而不是 `RiskEngine`，偏离与理由见风控契约 §七），**I4 追加 `dashboard.py`**（绩效看板：读一份 `BacktestResult` → 按固定 14 行清单摆指标表 + 资金曲线，**纯读数**，一个指标都不重算；口径登记在核心契约 §F，由 `tools/verify_dashboard.py` 与 `tests/test_dashboard.py` 守），**I2 收口 ①ⓑ 追加 `ingest.py`**（采集 → 落库的编排层，见 DC 契约附录 H）。守门门禁 = `contract-signature`（签名不许偏离契约）+ `data-center-pit` + `data-center-adapter` + `dashboard-consistency` |
 | `tests/test_skeleton.py` | 骨架自检 3 条：版本与 `pyproject.toml` 一致 / import 不把重依赖拉进来 / 测试数不为 0 |
 | `tests/test_backtest_slice.py` | I1 的回归测试（**I1 当时 22 条**；**2026-09-29 晚 Ⅲ 现取 25 条** —— 新增 CSV 侧复权口径 3 条）：竖切的不变量（同种子可复现、成交价取下一根 K 线开盘价、拒单不抛异常…）。它**没有**红→绿的 git 证据（实现先于测试），替代证据是 `tools/pytest_mutation_check.py` |
 | `tests/test_data_center_pit.py` | I2 S1 的 PIT 回归测试（**S1 收工时 18 条，2026-10-01 现取 34 条**）：预取未来数据必须抛 `FutureDataAccessError`、窗口越界必须抛而**不是**裁剪、回测会话下 `QFQ`/`BFILL` 必须被拒。含 I2 DoD 点名的那条**触发测试**（让 store 无视窗口，确认取数真的被拒）。⚠️ 那里曾有**两条故意断言已知缺口**的用例（HFQ 因子衡等 / 分红衡 `0.0`）：它们的规矩是「**缺口真的关闭时**要**删掉**而不是改期望值」（原写「`S3` 落地后」；S3 已交付而缺口仍在 ⇒ 触发条件与「哪一步交付」解耦，订正记录见 DC 契约附录 A6）—— **2026-09-29 因子那条、2026-10-01 分红那条，都按这条规矩删掉了** |
@@ -177,7 +177,7 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 > 仍然只有手动脚本 `platform/check_text_parity.py` 的是**另一件事**：一个**活着的服务端**
 > 真实下发了什么（它要一个活着的 JVM ⇒ 不能当门禁）。
 > 「这一层真的零覆盖」那句在 2026-09-30 之前是对的，**现在不成立了** —— 订正块在附录C **§C.9**
-> （声明那层是 §C.8）；③ 那层的两个成因与量级写在 `platform/README.md`，不在这里复制。
+> （声明那层是 §C.8、显示规则那层是 **§C.11**）；③ 那层的两个成因与量级写在 `platform/README.md`，不在这里复制。
 > 三个已知的操作坑（构建顺序、`JAVA_HOME` 与 PATH 里不是同一个 Java、展示串只许在服务端算）
 > 写在 `platform/README.md` 与附录C 里，不在这里复制；其中**构建顺序那个坑现在有机器判据**。
 
@@ -312,7 +312,7 @@ I3 风控真正介入下单路径（**默认关闭**）、I3b 风控存储层与
 `464 passed`（晚 Ⅱ）、`456 passed`（A6 收口，PIT 23 / 端到端接线 10 条）、`436 passed`、`414 passed`）、
 `pyproject.toml`（`dependencies = ["pandas>=2.0"]` —— S2 起**不再是空数组**，理由见 §1；源 SDK 在 `[datasources]` extra 里；
 **`psycopg` 声明在 `[postgres]` extra 里**（2026-09-25 裁决，同 [datasources] 的 opt-in 口径）：`pgstore.py` 里**惰性导入**，本机 `.venv` 是**手工装**的 3.3.6、CI 只装 `.[dev]` ⇒ 那条「驱动改成顶层导入」的变异在 CI 上仍是 `ENV-LIMIT`）、
-`quanauto/` 包（**16 个模块**：15 个实现 + 入口 `quanauto.cli`；条目数现取 `quanauto/*.py`）、
+`quanauto/` 包（**17 条**：16 个模块（15 个实现 + 入口 `quanauto.cli`）+ `__init__.py`；**条目数现取** `quanauto/*.py`）、
 `tests/`（骨架自检 3 条 + 竖切回归 **25** 条 + PIT 回归 **34** 条 + 适配器回归 **136** 条 + 采集凭证环境变量回归 **11** 条 + 落库侧回归 **67** 条 + 端到端接线回归 **11** 条 + 风控引擎回归 67 条 + 风控闸门回归 **19** 条 + 风控存储回归 **79** 条 + 看板回归 **36** 条 + 采集编排回归 **51** 条）、`.github/workflows/ci.yml`。
 
 **I2 仍未收口** —— 但开着的只剩**收口条件 ②**（**收口条件 ① 已于 2026-10-01 全关**；明细见下，交付记录见 `docs/迭代计划.md` 的「十一、I2 收口 ①ⓑ」与「十二、I2 收口 ①ⓐ：分红」那两节、以及 DC 契约附录 **B22** / **H**）：
@@ -367,7 +367,8 @@ tier-A 全绿；`core-contract-refs` 是仅剩的 tier-B 欠账，基线 **2**�
   两侧实现在 **6887 / 73929（≈9.3%）**组输入上打印出不同的串，而当时两侧已有的用例**全绿**。
   **仍然零覆盖**的只剩**页面本身**（渲染 / 布局 / 视觉）；仍然只有手动脚本的只剩
   「一个**活着的服务端**真实下发了什么」（那脚本要一个活着的 JVM，不能当门禁）。
-  这三句的分工与 2026-09-30 / 2026-10-01 两次订正写在附录C §C.8 / §C.9 与 `platform/README.md`。
+  这三句的分工与两次订正写在附录C **§C.8 / §C.9**（2026-09-30：声明那层 / 运行那层）与
+  **§C.11**（2026-10-01：显示规则那层，= C.5 第 3 条的订正）以及 `platform/README.md`。
 其他能力缺口的编号**分两套登记处**，别找错地方：**开工前**那一批（B1~B10 与 Q1~Q7 裁决）在 `docs/开工前缺口清单.md`；**I2 施工期间**发现的那一批（复权因子 / 分红 / 未确认清单等）在**数据中心契约附录**（**A6** / **B7** / **B21** 系列，逐条见 **B14 / B16 / B17 / B21.6**）。两处都只标「去哪取」，不要把内容复制到本文件里。
 
 **数据库侧已不再是「运行时未证实」**：两份触发测试 2026-09-23 先在容器 `postgres:17`（17.11）上
