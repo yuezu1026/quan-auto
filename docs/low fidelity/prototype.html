@@ -1,0 +1,5210 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>可交互低保真原型 · 智能量化交易平台</title>
+    <!--
+      ============================================================================
+      可交互低保真原型（clickable low-fidelity prototype）
+
+      与同目录的 index.html 的分工：
+        * index.html   = 静态线框板：一屏一帧、全部摊开、给评审用（无 JS）
+        * prototype.html = 本文件：同样八屏，但**可以点**——屏可切、表单可填、
+                           风控可试算、阈值可改、生命周期可推进、状态可强制。
+        两份都是**设计产物，没有牙**。仓库里的判据只有 tools/run_all_gates.py
+        跑的那组门禁与 pytest；这两个文件都不被任何门禁读取。
+
+      硬约束（写这份文件时给自己立的）：
+        * 单文件、零依赖：没有 CDN、没有外链字体/图标、没有图片、没有构建步骤，
+          file:// 直接打开即可用。
+        * 不发任何网络请求。所有「数据」都是页内常量里的示意值。
+        * 不用颜色：只有灰阶 + 反白（反白 = 危险动作）。
+        * 不做视觉规格：不写品牌色、不写动效时长、不写圆角精确值。
+
+      本文件的事实来源（凡是数字都从这里来，不是设计稿发明的）：
+        * 风控 6 条规则 + 阈值 + unit  -> db/risk_control.sql 的种子数据
+        * 每条规则的 action/severity  -> quanauto/risk.py 的 RULE_DECISION
+        * 只拦开仓的那 5 条            -> quanauto/risk.py 的 OPEN_ONLY_RULE_IDS
+        * 裁决排序 PASS<REDUCE<REJECT<HALT
+        * 阈值校验（RATIO/COUNT/精度） -> quanauto/risk.py 的 validate_threshold
+        * 绩效 14 条指标 + 分组 3/4/6/1 -> quanauto/dashboard.py 的 METRIC_SPECS
+        * 报告抬头 7 项                -> platform/web/src/App.jsx 的 Meta（7 个 <dt>）
+        * validate_frame 认五张 schema -> quanauto/datasources.py
+        但这些**只在写这一版时对过一次**。数字随仓库变，引用一律按现值取。
+      ============================================================================
+    -->
+    <style>
+      :root {
+        --paper: #ffffff;
+        --wash: #f5f5f5;
+        --wash2: #ebebeb;
+        --line: #c8c8c8;
+        --line2: #e3e3e3;
+        --ink: #111111;
+        --ink2: #3d3d3d;
+        --ink3: #6c6c6c;
+        --ink4: #9b9b9b;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      [hidden] {
+        display: none !important;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        background: var(--wash2);
+        color: var(--ink);
+        font-family:
+          "Segoe UI",
+          system-ui,
+          -apple-system,
+          "Microsoft YaHei",
+          sans-serif;
+        font-size: 13px;
+        line-height: 1.6;
+      }
+
+      code,
+      kbd,
+      samp,
+      .mono {
+        font-family: ui-monospace, Consolas, "Courier New", monospace;
+        font-size: 0.94em;
+      }
+
+      a {
+        color: var(--ink);
+      }
+
+      /* 键盘可达：焦点必须是可见的（低保真只要求「有这一条」） */
+      :focus-visible {
+        outline: 2px dashed var(--ink);
+        outline-offset: 1px;
+      }
+
+      .skip {
+        position: absolute;
+        left: -9999px;
+      }
+      .skip:focus {
+        left: 8px;
+        top: 8px;
+        background: var(--paper);
+        border: 1px solid var(--ink);
+        padding: 4px 8px;
+        z-index: 50;
+      }
+
+      /* ============================ 常驻顶栏 ============================ */
+      header.chrome {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        background: var(--paper);
+        border-bottom: 2px solid var(--line);
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 14px;
+      }
+      header.chrome .brand {
+        font-weight: 700;
+        margin: 0 auto 0 0;
+        font-size: 16px;
+        line-height: 1.2;
+      }
+      header.chrome .brand small {
+        font-weight: 400;
+        color: var(--ink3);
+      }
+      .chip {
+        border: 1px solid var(--line);
+        background: var(--wash);
+        padding: 2px 8px;
+        font-size: 12px;
+        color: var(--ink2);
+      }
+      button.chip {
+        cursor: pointer;
+        font: inherit;
+        font-size: 12px;
+      }
+      .chip.on {
+        background: var(--ink);
+        color: var(--paper);
+        border-color: var(--ink);
+      }
+      .chip.ghost {
+        border-style: dashed;
+        color: var(--ink3);
+      }
+
+      /* 危险动作 = 反白块（低保真用反白代替颜色） */
+      .inv,
+      button.inv {
+        background: var(--ink);
+        color: var(--paper);
+        border: 1px solid var(--ink);
+        padding: 2px 8px;
+        font: inherit;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      button.inv[aria-pressed="true"] {
+        box-shadow: inset 0 0 0 2px var(--paper);
+      }
+
+      div.haltbar {
+        background: var(--ink);
+        color: var(--paper);
+        padding: 6px 14px;
+        font-size: 12.5px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      div.haltbar b {
+        letter-spacing: 0.08em;
+      }
+      div.haltbar button {
+        background: var(--paper);
+        color: var(--ink);
+        border: 1px solid var(--paper);
+        font: inherit;
+        font-size: 12px;
+        cursor: pointer;
+        padding: 1px 8px;
+      }
+
+      /* ============================== 布局 ============================== */
+      .layout {
+        display: grid;
+        grid-template-columns: 214px minmax(0, 1fr);
+        gap: 14px;
+        align-items: start;
+        padding: 14px;
+        max-width: 1500px;
+        margin: 0 auto;
+      }
+      @media (max-width: 860px) {
+        .layout {
+          grid-template-columns: minmax(0, 1fr);
+        }
+      }
+
+      nav.sidenav {
+        position: sticky;
+        top: 54px;
+        background: var(--paper);
+        border: 1px solid var(--line);
+        padding: 10px;
+      }
+      nav.sidenav h2 {
+        font-size: 12px;
+        margin: 0 0 6px;
+        color: var(--ink3);
+        font-weight: 600;
+        letter-spacing: 0.04em;
+      }
+      nav.sidenav ol {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      nav.sidenav li {
+        margin-bottom: 2px;
+      }
+      nav.sidenav a {
+        display: block;
+        text-decoration: none;
+        padding: 3px 6px;
+        border-left: 3px solid transparent;
+        font-size: 12.5px;
+      }
+      nav.sidenav a:hover {
+        background: var(--wash);
+      }
+      nav.sidenav a[aria-current="page"] {
+        border-left-color: var(--ink);
+        background: var(--wash);
+        font-weight: 700;
+      }
+      nav.sidenav .zone {
+        font-size: 11px;
+        color: var(--ink4);
+        padding: 6px 6px 2px;
+        letter-spacing: 0.06em;
+      }
+      fieldset.statepick {
+        border: 1px dashed var(--line);
+        margin: 12px 0 0;
+        padding: 6px 8px 8px;
+      }
+      fieldset.statepick legend {
+        font-size: 11px;
+        color: var(--ink3);
+        padding: 0 4px;
+      }
+      fieldset.statepick label {
+        display: block;
+        font-size: 12px;
+        cursor: pointer;
+      }
+
+      main#stage {
+        min-width: 0;
+      }
+
+      section.screen {
+        display: none;
+      }
+      section.screen.on {
+        display: block;
+      }
+
+      /* ============================ 通用组件 ============================ */
+      .screen-head {
+        background: var(--paper);
+        border: 1px solid var(--line);
+        border-left: 6px solid var(--ink);
+        padding: 8px 12px;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 10px;
+        margin-bottom: 12px;
+      }
+      .screen-head .fid {
+        background: var(--ink);
+        color: var(--paper);
+        padding: 1px 7px;
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .screen-head h2 {
+        font-size: 15px;
+        margin: 0;
+      }
+      .screen-head .trace {
+        margin-left: auto;
+        font-size: 11.5px;
+        color: var(--ink3);
+      }
+      .badge {
+        border: 1px solid var(--line);
+        padding: 0 6px;
+        font-size: 11px;
+        color: var(--ink3);
+      }
+      .badge.dash {
+        border-style: dashed;
+      }
+      .badge.solid {
+        border-color: var(--ink);
+        color: var(--ink);
+      }
+
+      .card {
+        background: var(--paper);
+        border: 1px solid var(--line);
+        padding: 10px 12px 12px;
+        margin-bottom: 12px;
+      }
+      .card > h3 {
+        font-size: 13px;
+        margin: 0 0 8px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .card > h3 .n {
+        border: 1px solid var(--ink);
+        border-radius: 50%;
+        width: 18px;
+        height: 18px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 11px;
+      }
+      .card p.hint,
+      p.hint {
+        color: var(--ink3);
+        font-size: 12px;
+        margin: 6px 0;
+      }
+
+      .grid {
+        display: grid;
+        gap: 8px;
+      }
+      .grid.g2 {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .grid.g3 {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+      .grid.g4 {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+      @media (max-width: 860px) {
+        .grid.g2,
+        .grid.g3,
+        .grid.g4 {
+          grid-template-columns: minmax(0, 1fr);
+        }
+      }
+
+      .kpi {
+        border: 1px solid var(--line2);
+        background: var(--wash);
+        padding: 6px 8px;
+      }
+      .kpi .k {
+        font-size: 11px;
+        color: var(--ink3);
+      }
+      .kpi .v {
+        font-size: 17px;
+        font-weight: 700;
+      }
+      .kpi .u {
+        font-size: 11px;
+        color: var(--ink3);
+      }
+      button.kpi {
+        text-align: left;
+        font: inherit;
+        cursor: pointer;
+        border-color: var(--line);
+      }
+      button.kpi:hover {
+        background: var(--wash2);
+      }
+
+      table.tbl {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12.5px;
+      }
+      table.tbl caption {
+        text-align: left;
+        font-size: 11.5px;
+        color: var(--ink3);
+        padding-bottom: 4px;
+      }
+      table.tbl th,
+      table.tbl td {
+        border: 1px solid var(--line2);
+        padding: 4px 7px;
+        text-align: left;
+        vertical-align: top;
+      }
+      table.tbl thead th {
+        background: var(--wash);
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      table.tbl tbody tr:hover {
+        background: var(--wash);
+      }
+      table.tbl td.num,
+      table.tbl th.num {
+        text-align: right;
+        font-family: ui-monospace, Consolas, monospace;
+      }
+      table.tbl tr.sel td {
+        background: var(--wash2);
+        font-weight: 600;
+      }
+      .ellipsis {
+        color: var(--ink3);
+      }
+
+      .pillrow {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      button.pill {
+        border: 1px solid var(--line);
+        background: var(--paper);
+        font: inherit;
+        font-size: 12px;
+        padding: 2px 9px;
+        cursor: pointer;
+      }
+      button.pill[aria-pressed="true"] {
+        background: var(--ink);
+        color: var(--paper);
+        border-color: var(--ink);
+      }
+
+      .flow {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 4px;
+      }
+      .flow .arrow {
+        color: var(--ink3);
+      }
+      button.node {
+        border: 1px solid var(--line);
+        background: var(--paper);
+        font: inherit;
+        font-size: 12px;
+        padding: 5px 8px;
+        cursor: pointer;
+        min-width: 84px;
+        text-align: left;
+      }
+      button.node[data-done="1"] {
+        background: var(--wash2);
+        border-color: var(--ink);
+      }
+      button.node[data-busy="1"] {
+        border-style: dashed;
+        border-width: 2px;
+      }
+      button.node:disabled {
+        cursor: default;
+        color: var(--ink4);
+      }
+
+      .frame-inv {
+        background: var(--ink);
+        color: var(--paper);
+        border: 1px solid var(--ink);
+        font: inherit;
+        font-size: 12px;
+        padding: 5px 8px;
+        cursor: pointer;
+      }
+
+      .field {
+        display: grid;
+        grid-template-columns: 108px minmax(0, 1fr);
+        gap: 6px;
+        align-items: center;
+        margin-bottom: 6px;
+      }
+      .field > label {
+        color: var(--ink2);
+        font-size: 12.5px;
+      }
+      input[type="text"],
+      input[type="number"],
+      input[type="date"],
+      select,
+      textarea {
+        font: inherit;
+        font-size: 12.5px;
+        border: 1px solid var(--line);
+        background: var(--paper);
+        padding: 2px 6px;
+        width: 100%;
+        font-family: ui-monospace, Consolas, monospace;
+      }
+      textarea {
+        min-height: 52px;
+      }
+      input[aria-invalid="true"],
+      select[aria-invalid="true"],
+      textarea[aria-invalid="true"] {
+        border: 2px solid var(--ink);
+        outline: 1px dashed var(--ink);
+        outline-offset: 1px;
+      }
+
+      .rowbtns {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        align-items: center;
+        margin-top: 8px;
+      }
+      button.btn {
+        border: 1px solid var(--line);
+        background: var(--paper);
+        font: inherit;
+        font-size: 12.5px;
+        padding: 3px 10px;
+        cursor: pointer;
+      }
+      button.btn:hover {
+        background: var(--wash);
+      }
+      button.btn[disabled] {
+        color: var(--ink4);
+        cursor: default;
+        background: var(--wash);
+      }
+      button.btn.primary {
+        background: var(--ink);
+        color: var(--paper);
+        border-color: var(--ink);
+      }
+      button.btn.small {
+        font-size: 11.5px;
+        padding: 1px 7px;
+      }
+
+      .note {
+        border-left: 3px solid var(--ink);
+        background: var(--wash);
+        padding: 6px 9px;
+        font-size: 12px;
+        color: var(--ink2);
+        margin: 8px 0;
+      }
+      .note.warn {
+        border-left-style: dashed;
+      }
+      .note b {
+        color: var(--ink);
+      }
+
+      .dashbox {
+        border: 1px dashed var(--line);
+        padding: 8px 10px;
+        color: var(--ink3);
+        font-size: 12px;
+      }
+
+      .hatch {
+        background-image: repeating-linear-gradient(
+          45deg,
+          var(--wash2) 0,
+          var(--wash2) 5px,
+          var(--paper) 5px,
+          var(--paper) 10px
+        );
+        border: 1px solid var(--line2);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--ink3);
+        font-size: 12px;
+        min-height: 90px;
+      }
+
+      /* 状态演示：空 / 加载 / 错误 / 锁定 */
+      .statebox {
+        border: 2px dashed var(--line);
+        background: var(--paper);
+        padding: 10px 12px;
+        margin-bottom: 12px;
+      }
+      .statebox h3 {
+        margin: 0 0 4px;
+        font-size: 13px;
+      }
+      .statebox .next {
+        font-size: 12px;
+        color: var(--ink3);
+      }
+      .skel {
+        height: 12px;
+        background: var(--wash2);
+        margin: 5px 0;
+      }
+      .skel.w40 {
+        width: 40%;
+      }
+      .skel.w70 {
+        width: 70%;
+      }
+      .skel.w90 {
+        width: 90%;
+      }
+
+      .verdict {
+        border: 2px solid var(--ink);
+        padding: 8px 10px;
+        background: var(--wash);
+      }
+      .verdict .action {
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+      }
+      .verdict.HALT {
+        background: var(--ink);
+        color: var(--paper);
+      }
+      .verdict.HALT a {
+        color: var(--paper);
+      }
+
+      .bar {
+        border: 1px solid var(--line);
+        height: 12px;
+        background: var(--wash);
+        position: relative;
+      }
+      .bar > span {
+        display: block;
+        height: 100%;
+        background: var(--ink);
+      }
+
+      dialog {
+        border: 2px solid var(--ink);
+        background: var(--paper);
+        padding: 0;
+        max-width: 620px;
+        width: 92%;
+        color: var(--ink);
+        font: inherit;
+      }
+      dialog::backdrop {
+        background: rgba(17, 17, 17, 0.35);
+      }
+      dialog .dlghead {
+        background: var(--ink);
+        color: var(--paper);
+        padding: 6px 10px;
+        font-weight: 700;
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+      }
+      dialog .dlgbody {
+        padding: 10px 12px 12px;
+      }
+      .errlist {
+        margin: 6px 0 0;
+        padding-left: 18px;
+        font-size: 12px;
+      }
+      .errlist li {
+        color: var(--ink);
+      }
+
+      footer.doc-foot {
+        max-width: 1500px;
+        margin: 0 auto;
+        padding: 6px 14px 30px;
+        color: var(--ink3);
+        font-size: 12px;
+      }
+      footer.doc-foot .card {
+        margin-bottom: 10px;
+      }
+
+      ol.notes,
+      ul.notes {
+        margin: 6px 0;
+        padding-left: 20px;
+        font-size: 12.5px;
+      }
+      ol.notes li,
+      ul.notes li {
+        margin-bottom: 3px;
+      }
+      ol.notes b,
+      ul.notes b {
+        color: var(--ink);
+      }
+
+      .probe-result {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+      .probe-result th,
+      .probe-result td {
+        border: 1px solid var(--line2);
+        padding: 2px 6px;
+        text-align: left;
+      }
+      .probe-result td.code {
+        font-family: ui-monospace, Consolas, monospace;
+      }
+      .probe-result tr[data-bad="1"] td {
+        background: var(--wash2);
+        font-weight: 700;
+      }
+      .probe-verdict {
+        font-weight: 700;
+        margin-top: 6px;
+      }
+    </style>
+    <noscript>
+      <style>
+        /* 关掉 JS 时的降级：八屏纵向堆开，变成一块静态板（等于 index.html 的用法）。
+           导航与交互控件隐藏 —— 它们在没有 JS 时不会有任何反应，留着只会骗人。 */
+        section.screen {
+          display: block !important;
+        }
+        nav.sidenav fieldset.statepick,
+        div#js-only,
+        header.chrome button.chrome-btn {
+          display: none !important;
+        }
+        .layout {
+          grid-template-columns: minmax(0, 1fr);
+        }
+      </style>
+    </noscript>
+  </head>
+  <!-- 全局状态刻意用 data-ui-* 而不是 data-proto-*：后者是「可点钩子」的命名空间，
+       挂到 <body> 上会让 $("[data-proto-kill]") / closest("[data-proto-kill]") 先命中
+       <body>（body 在文档序里最靠前）⇒ 钩子选择器与状态选择器互相污染。
+       实测后果：Kill Switch 按钮的 aria-pressed 一直被写到 body 上；确认框关不掉。 -->
+  <body
+    data-ui-env="research"
+    data-ui-kill="off"
+    data-ui-state="default"
+  >
+    <a class="skip" href="#stage">跳到主区</a>
+
+    <!-- ============================== 常驻顶栏 ============================== -->
+    <header class="chrome">
+      <h1 class="brand">
+        可交互低保真原型 · 智能量化交易平台
+        <small>（结构层 + 交互层｜无 JS 时降级成静态堆叠，见页脚）</small>
+      </h1>
+
+      <div
+        class="pillrow"
+        role="group"
+        aria-label="环境徽标切换（研究 / 模拟 / 生产）"
+      >
+        <button
+          class="chip chrome-btn"
+          type="button"
+          data-proto-env="research"
+          aria-pressed="true"
+        >
+          环境：研究
+        </button>
+        <button
+          class="chip chrome-btn"
+          type="button"
+          data-proto-env="simulation"
+          aria-pressed="false"
+        >
+          环境：模拟
+        </button>
+        <button
+          class="chip chrome-btn"
+          type="button"
+          data-proto-env="production"
+          aria-pressed="false"
+        >
+          环境：生产
+        </button>
+      </div>
+
+      <span class="chip">交易日 <b class="mono">[YYYY-MM-DD]</b></span>
+      <span class="chip">数据版本 <b class="mono">[数据版本]</b></span>
+
+      <button
+        class="inv"
+        type="button"
+        data-proto-kill
+        aria-pressed="false"
+        aria-describedby="kill-hint"
+      >
+        ■ 全局 KILL SWITCH
+      </button>
+      <span id="kill-hint" hidden>点击后需要二次确认</span>
+    </header>
+
+    <div class="haltbar" id="haltbar" hidden role="status">
+      <b>■ HALT</b>
+      <span
+        >全局 Kill Switch 已合上：新开仓被拦（<b>只拦开仓</b> ——
+        任何情况下都留出货的路，D5）。</span
+      >
+      <button type="button" data-proto-kill-off>解除（需二次确认）</button>
+    </div>
+
+    <!-- ================================ 主体 ================================ -->
+    <div class="layout">
+      <!-- ------------------------------- 侧栏 ------------------------------- -->
+      <nav class="sidenav" aria-labelledby="nav-h">
+        <h2 id="nav-h">屏（8 帧 + 状态矩阵）</h2>
+        <ol>
+          <li class="zone">总览 Overview</li>
+          <li>
+            <a href="#/f1" data-proto-nav="F1">F1 平台总览 · 驾驶舱</a>
+          </li>
+          <li class="zone">数据 Data</li>
+          <li><a href="#/f2" data-proto-nav="F2">F2 数据中心</a></li>
+          <li><a href="#/f3" data-proto-nav="F3">F3 股票池管理</a></li>
+          <li class="zone">研究 Research</li>
+          <li><a href="#/f4" data-proto-nav="F4">F4 回测实验室</a></li>
+          <li>
+            <a href="#/f7" data-proto-nav="F7">F7 策略中心 · 生命周期</a>
+          </li>
+          <li class="zone">交易 Trading</li>
+          <li>
+            <a href="#/f6" data-proto-nav="F6">F6 风控控制台</a>
+          </li>
+          <li>
+            <a href="#/f8" data-proto-nav="F8">F8 调度 · Agent · 执行</a>
+          </li>
+          <li class="zone">绩效 Performance</li>
+          <li><a href="#/f5" data-proto-nav="F5">F5 绩效看板</a></li>
+          <li class="zone">其它</li>
+          <li>
+            <a href="#/states" data-proto-nav="STATES">状态矩阵演示</a>
+          </li>
+        </ol>
+
+        <fieldset class="statepick">
+          <legend>状态演示（套在当前屏上）</legend>
+          <label
+            ><input
+              type="radio"
+              name="pstate"
+              value="default"
+              data-proto-state="default"
+              checked
+            />
+            默认</label
+          >
+          <label
+            ><input
+              type="radio"
+              name="pstate"
+              value="empty"
+              data-proto-state="empty"
+            />
+            空</label
+          >
+          <label
+            ><input
+              type="radio"
+              name="pstate"
+              value="loading"
+              data-proto-state="loading"
+            />
+            加载中</label
+          >
+          <label
+            ><input
+              type="radio"
+              name="pstate"
+              value="error"
+              data-proto-state="error"
+            />
+            错误</label
+          >
+          <label
+            ><input
+              type="radio"
+              name="pstate"
+              value="locked"
+              data-proto-state="locked"
+            />
+            锁定（只读）</label
+          >
+        </fieldset>
+
+        <div class="rowbtns" id="js-only">
+          <button class="btn small" type="button" data-proto-selftest>
+            跑一次页内自检
+          </button>
+          <button class="btn small" type="button" data-proto-reset>
+            重置演示数据
+          </button>
+        </div>
+
+        <div class="card" style="margin: 10px 0 0">
+          <table class="probe-result" id="probe-out">
+            <caption class="hint" style="text-align: left">
+              自检还没跑。它检查的是<b>本页的交互与其中写死的口径</b>，
+              不是仓库里的实现 —— 那不是本文件能主张的事。
+            </caption>
+            <thead>
+              <tr>
+                <th>码</th>
+                <th>期望</th>
+                <th>结果</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+          <div class="probe-verdict" id="probe-verdict"></div>
+        </div>
+      </nav>
+
+      <!-- ------------------------------ 主舞台 ------------------------------ -->
+      <main id="stage" tabindex="-1">
+        <!-- 每屏共用的状态插槽：JS 把「空 / 加载 / 错误 / 锁定」渲染到这里 -->
+        <div class="statebox" data-proto-statebox hidden></div>
+
+        <!-- ============================ F1 总览 ============================ -->
+        <section
+          class="screen"
+          id="scr-f1"
+          data-proto-screen="F1"
+          aria-labelledby="h-f1"
+        >
+          <div class="screen-head">
+            <span class="fid">F1</span>
+            <h2 id="h-f1">平台总览 · 驾驶舱</h2>
+            <span class="badge dash">提案</span>
+            <span class="trace"
+              >PRD §一 双循环 · §四 4.1 · 路线图 MVP P1 / 完善版 P0</span
+            >
+          </div>
+
+          <div class="card">
+            <h3><span class="n">1</span>双循环状态：点任意一盏灯进对应屏</h3>
+            <p class="hint">
+              上面一行是 <b>交易循环的全十步</b>；下面一行是策略进化循环里
+              <b>Agent 流水线</b>那一段（前七步压成「验证」一格）——
+              落地阶段（模拟盘 / 灰度）不在这里点灯，它归 F7 的状态机。
+              两行不是两份互相独立的状态表。
+            </p>
+
+            <div
+              class="flow"
+              data-proto="loop-trading"
+              style="margin: 6px 0"
+            ></div>
+            <div class="flow" data-proto="loop-evolve"></div>
+
+            <div class="rowbtns">
+              <button
+                class="btn primary"
+                type="button"
+                data-proto="run-inspect"
+              >
+                ▶ 运行今日巡检（逐灯点亮）
+              </button>
+              <button class="btn" type="button" data-proto="step-inspect">
+                单步推进
+              </button>
+              <span class="hint" data-proto="inspect-readout" role="status"
+                >第 0 / 10 步</span
+              >
+            </div>
+          </div>
+
+          <div class="card">
+            <h3><span class="n">2</span>风控摘要（点格子进决策留痕）</h3>
+            <div class="grid g3" data-proto="risk-summary"></div>
+            <p class="hint">
+              低保真只画三类判定（PASS / REDUCE+REJECT / HALT）—— 与 §2
+              信息架构里写的分类一致。真实取值集合是
+              <code>PASS / REDUCE / REJECT / HALT</code>，第四项 HALT 来自熔断与
+              Kill Switch。
+            </p>
+          </div>
+
+          <div class="card">
+            <h3><span class="n">3</span>今日巡检清单（另一种粒度）</h3>
+            <table class="tbl">
+              <caption>
+                当日任务书：几点跑、产出什么、卡在哪。合并了十步里的几步 ⇒
+                格数少于灯数，别拿格数对灯数。
+              </caption>
+              <thead>
+                <tr>
+                  <th>时点</th>
+                  <th>任务</th>
+                  <th>产出</th>
+                  <th>状态</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td class="mono">[HH:MM]</td>
+                  <td>日线采集与落库</td>
+                  <td>帧校验报告 + <code>dc_ingest_run</code> 批次</td>
+                  <td>已完成</td>
+                </tr>
+                <tr>
+                  <td class="mono">[HH:MM]</td>
+                  <td>股票池生成</td>
+                  <td>[股票池版本]</td>
+                  <td>已完成</td>
+                </tr>
+                <tr>
+                  <td class="mono">[HH:MM]</td>
+                  <td>市场状态识别</td>
+                  <td>[市场状态]</td>
+                  <td>进行中</td>
+                </tr>
+                <tr>
+                  <td class="mono">[HH:MM]</td>
+                  <td>信号与组合调度</td>
+                  <td>[信号数] · [委托数]</td>
+                  <td>未开始</td>
+                </tr>
+                <tr>
+                  <td class="mono">[HH:MM]</td>
+                  <td>风控校验与下单</td>
+                  <td>[裁决数] · [拦截数]</td>
+                  <td>未开始</td>
+                </tr>
+                <tr>
+                  <td class="mono">[HH:MM]</td>
+                  <td>绩效与归因</td>
+                  <td>[报告ID]</td>
+                  <td>未开始</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="card">
+            <h3><span class="n">4</span>待人工决策（两条循环的出口）</h3>
+            <table class="tbl">
+              <thead>
+                <tr>
+                  <th>来源</th>
+                  <th>待办</th>
+                  <th>最早可决时点</th>
+                  <th>去哪</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>策略进化循环</td>
+                  <td>晋级提案 [提案ID]（已跑完压力测试）</td>
+                  <td class="mono">[YYYY-MM-DD]</td>
+                  <td><a href="#/f8" data-proto-jump="F8">F8 提案流</a></td>
+                </tr>
+                <tr>
+                  <td>风控</td>
+                  <td>阈值变更请求 [变更ID]（待 operator 确认）</td>
+                  <td class="mono">[YYYY-MM-DD]</td>
+                  <td><a href="#/f6" data-proto-jump="F6">F6 规则与阈值</a></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- =========================== F2 数据中心 =========================== -->
+        <section
+          class="screen"
+          id="scr-f2"
+          data-proto-screen="F2"
+          aria-labelledby="h-f2"
+        >
+          <div class="screen-head">
+            <span class="fid">F2</span>
+            <h2 id="h-f2">数据中心</h2>
+            <span class="badge dash">提案</span>
+            <span class="trace">PRD 模块 2 · 路线图 MVP P0 · 环境：研究</span>
+          </div>
+
+          <div class="card">
+            <h3>
+              <span class="n">1</span>采集批次（<code>dc_ingest_run</code>）
+            </h3>
+            <div class="rowbtns" style="margin-top: 0">
+              <label class="hint" for="f2-schema">schema 筛选</label>
+              <select
+                id="f2-schema"
+                data-proto="f2-schema"
+                style="width: 160px"
+              >
+                <option value="">全部</option>
+              </select>
+              <label class="hint" for="f2-status">状态筛选</label>
+              <select
+                id="f2-status"
+                data-proto="f2-status"
+                style="width: 140px"
+              >
+                <option value="">全部</option>
+                <option value="PASS">通过（is_valid）</option>
+                <option value="REJECT">拒绝（is_valid=false）</option>
+              </select>
+              <button class="btn primary" type="button" data-proto="f2-run">
+                ▶ 跑一次采集（示意）
+              </button>
+            </div>
+
+            <div class="bar" style="margin: 8px 0" data-proto="f2-progress">
+              <span style="width: 0%"></span>
+            </div>
+
+            <table class="tbl" data-proto="f2-table">
+              <caption>
+                <b>五张</b
+                >标准 schema：日线 / 财务 / 指数成分 / 复权因子 /
+                分红。点一行展开它的
+                <code>ValidationReport</code
+                >。
+              </caption>
+              <thead>
+                <tr>
+                  <th>批次</th>
+                  <th>schema</th>
+                  <th class="num">行数</th>
+                  <th>数据版本</th>
+                  <th>校验</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+
+            <div class="dashbox" data-proto="f2-detail" style="margin-top: 8px">
+              选中一行看明细。（示意值，不是真库读数。）
+            </div>
+          </div>
+
+          <div class="card">
+            <h3><span class="n">2</span>质量提示（缺什么、下一步做什么）</h3>
+            <ul class="notes" data-proto="f2-notes">
+              <li>
+                <b>空帧不是通过</b>：<code>validate_frame</code> 对 0 行帧直接
+                <code>is_valid=false</code> —— 「提取为空却打印 PASS」
+                正是这类假绿的形状。
+              </li>
+              <li>
+                <b>缺失率是 warning 不是 error</b>：列缺失率 &gt; 5% 会进
+                <code>warnings</code>，不改变 <code>is_valid</code>。
+              </li>
+              <li>
+                <b>帧层面不判覆盖率</b>：只给缺失率 warning —— 这一条别读成
+                「覆盖率已经有人管」。
+              </li>
+            </ul>
+          </div>
+        </section>
+
+        <!-- ========================== F3 股票池管理 ========================== -->
+        <section
+          class="screen"
+          id="scr-f3"
+          data-proto-screen="F3"
+          aria-labelledby="h-f3"
+        >
+          <div class="screen-head">
+            <span class="fid">F3</span>
+            <h2 id="h-f3">股票池管理</h2>
+            <span class="badge dash">提案</span>
+            <span class="trace">PRD 模块 3 · 路线图 MVP P1 · 环境：研究</span>
+          </div>
+
+          <div class="card">
+            <h3><span class="n">1</span>选池规则（选一个，条数实时重算）</h3>
+            <div class="pillrow" data-proto="f3-rules"></div>
+            <div class="rowbtns">
+              <button class="btn primary" type="button" data-proto="f3-build">
+                ▶ 生成股票池
+              </button>
+              <span class="hint" data-proto="f3-readout" role="status"
+                >示意命中 0 只</span
+              >
+            </div>
+            <p class="hint">
+              条数<b>只是示意</b>：它由页内一个假公式算出来，用来演示 「改规则 ⇒
+              条数变」。真实条数以数据为准。
+            </p>
+            <table class="tbl" data-proto="f3-table" style="margin-top: 8px">
+              <thead>
+                <tr>
+                  <th>标的</th>
+                  <th>行业</th>
+                  <th class="num">近 20 日均额</th>
+                  <th>入选理由</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td colspan="4" class="ellipsis">还没生成。</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="card">
+            <h3><span class="n">2</span>黑名单（名单型，不是阈值）</h3>
+            <p class="hint">
+              黑名单住在 <code>risk_blacklist</code>，<b>不在</b>
+              风控的数值阈值表里 —— 它的操作形态是增删条目。
+            </p>
+            <div class="field">
+              <label for="f3-bl-sym">标的代码</label>
+              <input
+                id="f3-bl-sym"
+                type="text"
+                data-proto="f3-bl-input"
+                placeholder="如 [标的代码]"
+              />
+            </div>
+            <div class="field">
+              <label for="f3-bl-reason">加入理由</label>
+              <input
+                id="f3-bl-reason"
+                type="text"
+                data-proto="f3-bl-reason"
+                placeholder="必填（审计要能解释）"
+              />
+            </div>
+            <div class="rowbtns">
+              <button class="btn" type="button" data-proto="f3-bl-add">
+                加入黑名单
+              </button>
+              <span class="hint" data-proto="f3-bl-msg" role="status"></span>
+            </div>
+            <table class="tbl" data-proto="f3-bl-table" style="margin-top: 8px">
+              <thead>
+                <tr>
+                  <th>标的</th>
+                  <th>理由</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- ========================== F4 回测实验室 ========================== -->
+        <section
+          class="screen"
+          id="scr-f4"
+          data-proto-screen="F4"
+          aria-labelledby="h-f4"
+        >
+          <div class="screen-head">
+            <span class="fid">F4</span>
+            <h2 id="h-f4">回测实验室</h2>
+            <span class="badge dash">提案</span>
+            <span class="trace">PRD 模块 4 · 路线图 MVP P0 · 环境：研究</span>
+          </div>
+
+          <div class="card">
+            <h3><span class="n">1</span>配置（表单校验是真的）</h3>
+            <div class="grid g2">
+              <div>
+                <div class="field">
+                  <label for="f4-sym">标的</label>
+                  <input
+                    id="f4-sym"
+                    type="text"
+                    data-proto="f4-symbol"
+                    value="[标的代码]"
+                  />
+                </div>
+                <div class="field">
+                  <label for="f4-start">窗口起</label>
+                  <input
+                    id="f4-start"
+                    type="date"
+                    data-proto="f4-start"
+                    value="2024-01-01"
+                  />
+                </div>
+                <div class="field">
+                  <label for="f4-end">窗口止</label>
+                  <input
+                    id="f4-end"
+                    type="date"
+                    data-proto="f4-end"
+                    value="2024-06-30"
+                  />
+                </div>
+                <div class="field">
+                  <label for="f4-strategy">策略</label>
+                  <select id="f4-strategy" data-proto="f4-strategy">
+                    <option value="">（请选择）</option>
+                    <option value="ma_cross">双均线交叉</option>
+                    <option value="breakout">突破</option>
+                    <option value="mean_revert">均值回归</option>
+                    <option value="ml">机器学习</option>
+                    <option value="value_growth">价值 / 成长</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <div class="field">
+                  <label for="f4-fast">参数 fast</label>
+                  <input
+                    id="f4-fast"
+                    type="number"
+                    data-proto="f4-fast"
+                    value="5"
+                  />
+                </div>
+                <div class="field">
+                  <label for="f4-slow">参数 slow</label>
+                  <input
+                    id="f4-slow"
+                    type="number"
+                    data-proto="f4-slow"
+                    value="20"
+                  />
+                </div>
+                <div class="field">
+                  <label for="f4-cash">初始资金</label>
+                  <input
+                    id="f4-cash"
+                    type="number"
+                    data-proto="f4-cash"
+                    value="1000000"
+                  />
+                </div>
+                <div class="field">
+                  <label for="f4-seed">随机种子</label>
+                  <input
+                    id="f4-seed"
+                    type="number"
+                    data-proto="f4-seed"
+                    value="42"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div class="rowbtns">
+              <button class="btn primary" type="button" data-proto="f4-run">
+                ▶ 运行回测（示意）
+              </button>
+              <button class="btn" type="button" data-proto="f4-clear-seed">
+                故意清空种子（看缺项提示）
+              </button>
+              <span class="hint" data-proto="f4-readout" role="status"></span>
+            </div>
+            <ul class="errlist" data-proto="f4-errors"></ul>
+
+            <div class="bar" style="margin-top: 8px" data-proto="f4-progress">
+              <span style="width: 0%"></span>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3><span class="n">2</span>可复现凭据（四项，一项都不能少）</h3>
+            <table class="tbl" data-proto="f4-credentials">
+              <thead>
+                <tr>
+                  <th>凭据</th>
+                  <th>值</th>
+                  <th>状态</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+            <div class="note warn" data-proto="f4-gap-note" hidden>
+              <b>已知缺口（刻意照抄现实，不是笔误）：</b>F4 要求四项齐备，而
+              <b>F5 的报告抬头只画了两项</b>（数据版本、策略），因为它
+              <b>照抄的是已交付页面</b
+              >。少一项，报告就从证据退化成一张好看的图。
+              <b>要修就修产品侧，不要改 F5 抬头</b>
+              —— 那 7 项与 <code>platform/web/src/App.jsx</code> 的
+              <code>Meta</code> 逐项一致，四条平台层门禁拿它当比对对象。
+            </div>
+          </div>
+
+          <div class="card">
+            <h3><span class="n">3</span>结果摘要（示意）</h3>
+            <div class="dashbox" data-proto="f4-result">
+              还没跑。跑出来的数字会写进 F5 的看板 —— 看板是纯读数，
+              一个指标都不重算。
+            </div>
+          </div>
+        </section>
+
+        <!-- =========================== F5 绩效看板 =========================== -->
+        <section
+          class="screen"
+          id="scr-f5"
+          data-proto-screen="F5"
+          aria-labelledby="h-f5"
+        >
+          <div class="screen-head">
+            <span class="fid">F5</span>
+            <h2 id="h-f5">绩效看板</h2>
+            <span class="badge solid">已交付</span>
+            <span class="trace"
+              >PRD 模块 6 / 8 · 路线图 MVP P0 · 环境：研究 · 对应物
+              platform/web/src/App.jsx</span
+            >
+          </div>
+
+          <div class="card">
+            <h3>
+              <span class="n">1</span>报告抬头（7 项，与已交付页面逐项一致）
+            </h3>
+            <div class="dashbox" data-proto="f5-meta"></div>
+            <p class="hint">
+              这 7 项<b>不可改</b>：它们与
+              <code>platform/web/src/App.jsx</code> 里 <code>Meta</code> 的 7 个
+              <code>&lt;dt&gt;</code> 逐项一致，四条平台层门禁拿它当比对对象。
+              抬头里<b>没有</b>参数与随机种子 —— 那是产品侧的待补项（见 F4）。
+            </p>
+          </div>
+
+          <div class="card">
+            <h3><span class="n">2</span>指标（14 条，按服务端规格表分组）</h3>
+            <div class="pillrow" data-proto="f5-groups"></div>
+            <table class="tbl" data-proto="f5-table" style="margin-top: 8px">
+              <thead>
+                <tr>
+                  <th>键</th>
+                  <th>标签</th>
+                  <th class="num">显示串</th>
+                  <th>量纲</th>
+                  <th class="num">小数位</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+            <p class="hint">
+              行序、分组、量纲、小数位都来自<b>服务端规格表</b>
+              —— 页面不手抄、不重排、不换算量纲、不决定小数位。
+              「两侧各算一套」就是 bug。
+            </p>
+            <p class="hint">
+              「显示串」这一列写的是<b>服务端算好的原样</b>，它同时钉住一条容易被设计稿画错的口径：
+              量纲码只有 <code>percent / ratio / count / money / days</code> 五种，
+              <b>只有 <code>percent</code> 会乘 100 并带 <code>%</code></b>，
+              <code>count</code> 必须是不带小数点的整数，
+              其余（<code>ratio / money / days</code>）<b>不带任何后缀</b>
+              —— 所以「夏普 1.2345 倍」「佣金 1234.56 元」这种写法在实现里是不存在的。
+            </p>
+          </div>
+
+          <div class="card">
+            <h3><span class="n">3</span>资金曲线（斜线块 = 图表占位）</h3>
+            <div class="hatch" data-proto="f5-curve">
+              <svg
+                viewBox="0 0 400 110"
+                preserveAspectRatio="none"
+                width="100%"
+                height="110"
+                role="img"
+                aria-label="资金曲线占位：折线示意，不是真实读数"
+              >
+                <polyline
+                  points="0,92 30,88 60,94 90,80 120,76 150,84 180,66 210,70 240,54 270,58 300,40 330,46 360,30 400,26"
+                  fill="none"
+                  stroke="#111111"
+                  stroke-width="1.5"
+                />
+                <line x1="0" y1="109" x2="400" y2="109" stroke="#c8c8c8" />
+                <line x1="0" y1="0" x2="0" y2="109" stroke="#c8c8c8" />
+              </svg>
+            </div>
+            <p class="hint">
+              结构计数（不进指标表）：
+              <span class="mono" data-proto="f5-structure"></span>
+            </p>
+          </div>
+
+          <div class="card">
+            <h3><span class="n">4</span>口径提示（容易读错的三处）</h3>
+            <ul class="notes">
+              <li>
+                <b>读侧已实施复权价</b>（读取时现算）：<code>NONE</code> ⇒ 倍数
+                1.0 且不查库；<code>HFQ</code> ⇒ 该日累计因子；<code>QFQ</code>
+                ⇒ 该日因子 ÷ 视图末日因子。 <code>volume</code> /
+                <code>amount</code> <b>刻意不乘</b>。
+              </li>
+              <li>
+                <b>分红</b>：可见性用<b>公告日</b>、取值与窗口用<b>事件日</b>
+                —— 这两个日期不是同一个，别在一个地方混用。
+              </li>
+              <li>
+                <b>余额 = 期末净值</b>，单位是元；「累计收益」与「年化收益」是
+                百分数量纲 —— 三个都在同一个「收益」分组里，量纲不同。
+              </li>
+            </ul>
+          </div>
+        </section>
+
+        <!-- ========================= F6 风控控制台 ========================= -->
+        <section
+          class="screen"
+          id="scr-f6"
+          data-proto-screen="F6"
+          aria-labelledby="h-f6"
+        >
+          <div class="screen-head">
+            <span class="fid">F6</span>
+            <h2 id="h-f6">风控控制台</h2>
+            <span class="badge dash">提案</span>
+            <span class="trace"
+              >PRD 模块 3 / 7 · 路线图 MVP P0 · 环境：生产</span
+            >
+          </div>
+
+          <div class="card">
+            <h3><span class="n">0</span>本屏的四个标签页</h3>
+            <div class="pillrow" data-proto="f6-tabs">
+              <button
+                class="pill"
+                type="button"
+                data-f6-tab="rules"
+                aria-pressed="true"
+              >
+                规则与阈值
+              </button>
+              <button
+                class="pill"
+                type="button"
+                data-f6-tab="sim"
+                aria-pressed="false"
+              >
+                风控试算
+              </button>
+              <button
+                class="pill"
+                type="button"
+                data-f6-tab="log"
+                aria-pressed="false"
+              >
+                决策留痕
+              </button>
+              <button
+                class="pill"
+                type="button"
+                data-f6-tab="black"
+                aria-pressed="false"
+              >
+                黑名单
+              </button>
+            </div>
+          </div>
+
+          <!-- 规则与阈值 -->
+          <div class="card" data-f6-panel="rules">
+            <h3><span class="n">1</span>规则与阈值（6 条 = DDL 的种子条数）</h3>
+            <table class="tbl" data-proto="f6-rules">
+              <caption>
+                阈值取自
+                <code>db/risk_control.sql</code>
+                的种子数据；每条规则的 裁决与级别取自
+                <code>quanauto/risk.py</code>
+                的
+                <code>RULE_DECISION</code
+                >。
+                <b>不要拿这张图去核对规则条数</b>
+                —— 需求里「单票买入上限」与
+                「单票集中度」是两条，落到实现是同一条口径，这里合并成一行。
+              </caption>
+              <thead>
+                <tr>
+                  <th>rule_id</th>
+                  <th>口径</th>
+                  <th>unit</th>
+                  <th class="num">阈值</th>
+                  <th>越界裁决</th>
+                  <th>级别</th>
+                  <th>只拦开仓</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+            <div class="note" data-proto="f6-change-log-box">
+              <b>本次改动记录（页内示意）：</b>
+              <ul class="notes" data-proto="f6-change-log">
+                <li>还没有改动。</li>
+              </ul>
+            </div>
+          </div>
+
+          <!-- 风控试算 -->
+          <div class="card" data-f6-panel="sim" hidden>
+            <h3><span class="n">2</span>风控试算（改输入 ⇒ 逐条重算）</h3>
+            <div class="grid g2">
+              <div>
+                <div class="field">
+                  <label for="f6-side">方向</label>
+                  <select id="f6-side" data-proto="sim-side">
+                    <option value="BUY">买入（开仓）</option>
+                    <option value="SELL">卖出（平仓）</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="f6-qty">数量</label>
+                  <input
+                    id="f6-qty"
+                    type="number"
+                    data-proto="sim-qty"
+                    value="3000"
+                  />
+                </div>
+                <div class="field">
+                  <label for="f6-price">价格</label>
+                  <input
+                    id="f6-price"
+                    type="number"
+                    data-proto="sim-price"
+                    value="10"
+                  />
+                </div>
+                <div class="field">
+                  <label for="f6-hold">该标的现有持仓市值</label>
+                  <input
+                    id="f6-hold"
+                    type="number"
+                    data-proto="sim-holding"
+                    value="20000"
+                  />
+                </div>
+              </div>
+              <div>
+                <div class="field">
+                  <label for="f6-account">账户总资产</label>
+                  <input
+                    id="f6-account"
+                    type="number"
+                    data-proto="sim-account"
+                    value="1000000"
+                  />
+                </div>
+                <div class="field">
+                  <label for="f6-adv">标的当日日均成交额</label>
+                  <input
+                    id="f6-adv"
+                    type="number"
+                    data-proto="sim-adv"
+                    value="50000000"
+                  />
+                </div>
+                <div class="field">
+                  <label for="f6-trades">当日同标的已成交笔数</label>
+                  <input
+                    id="f6-trades"
+                    type="number"
+                    data-proto="sim-trades"
+                    value="0"
+                  />
+                </div>
+                <div class="field">
+                  <label for="f6-sector">该行业现有持仓市值</label>
+                  <input
+                    id="f6-sector"
+                    type="number"
+                    data-proto="sim-sector"
+                    value="100000"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div class="grid g3">
+              <div class="field" style="grid-template-columns: 1fr">
+                <label for="f6-dd-st">策略当前回撤（小数，0.20 = 20%）</label>
+                <input
+                  id="f6-dd-st"
+                  type="number"
+                  step="0.01"
+                  data-proto="sim-dd-strategy"
+                  value="0.05"
+                />
+              </div>
+              <div class="field" style="grid-template-columns: 1fr">
+                <label for="f6-dd-acc">账户当前回撤（小数）</label>
+                <input
+                  id="f6-dd-acc"
+                  type="number"
+                  step="0.01"
+                  data-proto="sim-dd-account"
+                  value="0.05"
+                />
+              </div>
+              <div class="field" style="grid-template-columns: 1fr">
+                <label>Kill Switch</label>
+                <div>
+                  <span class="chip" data-proto="sim-kill">跟随顶栏：关</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="rowbtns">
+              <button class="btn primary" type="button" data-proto="sim-run">
+                ▶ 试算
+              </button>
+              <button
+                class="btn small"
+                type="button"
+                data-proto="sim-preset-over"
+              >
+                载入「超上限」样本
+              </button>
+              <button
+                class="btn small"
+                type="button"
+                data-proto="sim-preset-halt"
+              >
+                载入「触发熔断」样本
+              </button>
+            </div>
+
+            <div
+              class="verdict"
+              data-proto="sim-verdict"
+              style="margin-top: 10px"
+            >
+              <div class="hint">
+                裁决（PASS &lt; REDUCE &lt; REJECT &lt; HALT）
+              </div>
+              <div class="action" data-proto="sim-action">—</div>
+              <div class="hint" data-proto="sim-note">
+                还没试算。按「试算」跑一遍。
+              </div>
+            </div>
+
+            <table class="tbl" data-proto="sim-detail" style="margin-top: 8px">
+              <thead>
+                <tr>
+                  <th>规则</th>
+                  <th>判据</th>
+                  <th class="num">本次值</th>
+                  <th class="num">阈值</th>
+                  <th>本次是否触发</th>
+                  <th>该规则给的裁决</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+
+          <!-- 决策留痕 -->
+          <div class="card" data-f6-panel="log" hidden>
+            <h3><span class="n">3</span>决策留痕</h3>
+            <div class="rowbtns" style="margin-top: 0">
+              <label class="hint" for="f6-log-filter">按裁决筛选</label>
+              <select
+                id="f6-log-filter"
+                data-proto="log-filter"
+                style="width: 160px"
+              >
+                <option value="">全部</option>
+                <option value="PASS">PASS</option>
+                <option value="REDUCE">REDUCE</option>
+                <option value="REJECT">REJECT</option>
+                <option value="HALT">HALT</option>
+              </select>
+              <span class="hint" data-proto="log-readout" role="status"></span>
+            </div>
+            <table class="tbl" data-proto="log-table" style="margin-top: 8px">
+              <caption>
+                拦截留痕（<code>risk_intercept_log</code>）<b>只收</b>
+                REDUCE / REJECT / HALT —— 没有 PASS。PASS 的行属于决策日志。
+              </caption>
+              <thead>
+                <tr>
+                  <th>决策</th>
+                  <th>标的</th>
+                  <th>方向</th>
+                  <th>请求数量</th>
+                  <th>裁决</th>
+                  <th>触发规则</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+            <div
+              class="dashbox"
+              data-proto="log-detail"
+              style="margin-top: 8px"
+            >
+              点一行的「看理由」看明细。
+            </div>
+          </div>
+
+          <!-- 黑名单 -->
+          <div class="card" data-f6-panel="black" hidden>
+            <h3><span class="n">4</span>黑名单（与 F3 是同一份名单）</h3>
+            <p class="hint">
+              这里和 F3 操作的是同一份<code>risk_blacklist</code>
+              示意数据 —— 在一边加，另一边也会看到。
+            </p>
+            <table class="tbl" data-proto="f6-bl-table">
+              <thead>
+                <tr>
+                  <th>标的</th>
+                  <th>理由</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- ========================== F7 策略中心 ========================== -->
+        <section
+          class="screen"
+          id="scr-f7"
+          data-proto-screen="F7"
+          aria-labelledby="h-f7"
+        >
+          <div class="screen-head">
+            <span class="fid">F7</span>
+            <h2 id="h-f7">策略中心 · 适配矩阵 · 生命周期</h2>
+            <span class="badge dash">提案</span>
+            <span class="trace"
+              >PRD 模块 4 / 5 · 路线图 完善版 P0 / 进化版 P0 · 环境：研究</span
+            >
+          </div>
+
+          <div class="card">
+            <h3><span class="n">1</span>策略库（点一行选中）</h3>
+            <table class="tbl" data-proto="f7-table">
+              <thead>
+                <tr>
+                  <th>策略</th>
+                  <th>类别</th>
+                  <th>当前阶段</th>
+                  <th>最近回测</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+
+          <div class="card">
+            <h3><span class="n">2</span>生命周期状态机（推进有守卫）</h3>
+            <div class="flow" data-proto="f7-stages"></div>
+            <div class="rowbtns">
+              <button class="btn primary" type="button" data-proto="f7-advance">
+                ▶ 推进到下一阶段
+              </button>
+              <button class="btn inv" type="button" data-proto="f7-retire">
+                退休（危险动作）
+              </button>
+              <span class="hint" data-proto="f7-readout" role="status"></span>
+            </div>
+            <div class="note" data-proto="f7-guard"></div>
+            <ul class="notes" data-proto="f7-history">
+              <li>还没有阶段迁移。</li>
+            </ul>
+            <p class="hint">
+              守卫口径（示意）：
+              <b>没跑过样本外验证不能进模拟盘</b>；没经过模拟盘 /
+              灰度不能正式服役； 退休是危险动作，需要二次确认。环境徽标里的
+              <b>「模拟」只在这个状态机里出现</b> —— 它没有独立的一屏。
+            </p>
+          </div>
+        </section>
+
+        <!-- ==================== F8 调度 · Agent · 执行 ==================== -->
+        <section
+          class="screen"
+          id="scr-f8"
+          data-proto-screen="F8"
+          aria-labelledby="h-f8"
+        >
+          <div class="screen-head">
+            <span class="fid">F8</span>
+            <h2 id="h-f8">组合调度 · 研究 Agent · 执行监控</h2>
+            <span class="badge dash">提案</span>
+            <span class="trace"
+              >PRD 模块 1 / 9 · 路线图 完善版 P0 / 进化版 P0 · 环境：研究</span
+            >
+          </div>
+
+          <div class="card">
+            <h3><span class="n">1</span>市场状态与再平衡触发</h3>
+            <div class="pillrow" data-proto="f8-regime"></div>
+            <div class="rowbtns">
+              <button
+                class="btn primary"
+                type="button"
+                data-proto="f8-rebalance"
+              >
+                ▶ 触发再平衡（拆单）
+              </button>
+              <span class="hint" data-proto="f8-readout" role="status"
+                >还没有订单。</span
+              >
+            </div>
+            <table class="tbl" data-proto="f8-orders" style="margin-top: 8px">
+              <caption>
+                订单拆分：按流动性把一笔大单拆成 N 笔小额。模型 9 的「订单拆分 /
+                智能路由 / 成交回报 / 持仓同步 /
+                模拟盘实盘切换」在这一屏上只有前三项有落点。
+              </caption>
+              <thead>
+                <tr>
+                  <th>子单</th>
+                  <th>标的</th>
+                  <th class="num">数量</th>
+                  <th class="num">占日均额</th>
+                  <th>状态</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td colspan="6" class="ellipsis">还没触发再平衡。</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="card">
+            <h3>
+              <span class="n">2</span>研究 Agent 提案流（七步，可逐步推进）
+            </h3>
+            <div class="flow" data-proto="f8-agent"></div>
+            <div class="rowbtns">
+              <button
+                class="btn primary"
+                type="button"
+                data-proto="f8-agent-step"
+              >
+                ▶ 推进一步
+              </button>
+              <button
+                class="btn inv"
+                type="button"
+                data-proto="f8-agent-approve"
+              >
+                人工晋级决策（危险动作）
+              </button>
+              <span class="hint" data-proto="f8-agent-readout" role="status"
+                >第 0 / 7 步</span
+              >
+            </div>
+            <div class="note" data-proto="f8-agent-evidence">
+              <b>每一步都产出一份可审计的中间物</b>（诊断报告 / diff / 回测结论
+              / 样本外结论 / 压力测试结论）。这里数出的是 <b>七步</b>：前七步是
+              Agent 流水线，<b>第八步「人工晋级决策」之后是落地阶段</b>
+              （模拟盘 / 灰度 → 正式服役），它属于 F7 的状态机 ⇒ 所以 §3.2
+              里数出九步。那是数的<b>范围</b>不同。
+            </div>
+          </div>
+        </section>
+
+        <!-- ========================= 状态矩阵演示 ========================= -->
+        <section
+          class="screen"
+          id="scr-states"
+          data-proto-screen="STATES"
+          aria-labelledby="h-states"
+        >
+          <div class="screen-head">
+            <span class="fid">§5</span>
+            <h2 id="h-states">状态矩阵演示</h2>
+            <span class="badge">通用</span>
+            <span class="trace"
+              >每屏 × 五态：默认 / 空 / 加载 / 错误 / 锁定</span
+            >
+          </div>
+
+          <div class="card">
+            <h3><span class="n">1</span>怎么用</h3>
+            <p>
+              左侧「状态演示」把五态套在<b>当前屏</b>上。换一屏状态会重置为默认
+              —— 状态属于屏，不是全局开关。
+            </p>
+            <table class="tbl">
+              <thead>
+                <tr>
+                  <th>状态</th>
+                  <th>这一屏要回答的问题</th>
+                  <th>低保真画到哪</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>默认</td>
+                  <td>正常时看到什么</td>
+                  <td>完整结构</td>
+                </tr>
+                <tr>
+                  <td>空</td>
+                  <td>为什么空？下一步做什么？</td>
+                  <td>一句原因 + 一个动作入口；<b>空白页不是答案</b></td>
+                </tr>
+                <tr>
+                  <td>加载中</td>
+                  <td>慢的时候能不能不闪、不跳、不假装有数</td>
+                  <td>骨架块 + <code>aria-busy</code>，不显示旧数字</td>
+                </tr>
+                <tr>
+                  <td>错误</td>
+                  <td>谁错了、能不能重试、旧数据还显不显示</td>
+                  <td>错误码 + 重试；<b>不把旧数据留在屏幕上</b></td>
+                </tr>
+                <tr>
+                  <td>锁定</td>
+                  <td>为什么不能操作、要谁来解锁</td>
+                  <td>只读横幅 + 动作按钮 disabled，<b>不隐藏按钮</b></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="card">
+            <h3><span class="n">2</span>这一屏自己不主张什么</h3>
+            <ul class="notes">
+              <li>
+                它<b>不</b>主张任何一屏已经实现了这些状态 —— 它只是一份
+                「得有这么几种状态」的检查表。
+              </li>
+              <li>
+                「锁定」这一态在真实产品里跟<b>环境 / 权限</b
+                >有关；低保真不画权限矩阵。
+              </li>
+              <li>
+                加载与错误的具体文案属于实现，这里画的是<b>位置与优先级</b>。
+              </li>
+            </ul>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <!-- ============================== 页脚 ============================== -->
+    <footer class="doc-foot">
+      <div class="card">
+        <h3>这份原型的自我约束（与 <code>index.html</code> 同一套）</h3>
+        <ul class="notes">
+          <li>
+            <b>没有牙</b
+            >：它是设计产物，不是规格、不是契约、不是门禁。说得再对也不构成证据。
+            仓库里的判据只有 <code>tools/run_all_gates.py</code> 跑的那组门禁与
+            pytest。
+          </li>
+          <li>
+            <b>不主张「页面受控」</b>：本仓库的<b>布局 / 视觉</b>
+            那一格<b>仍然零覆盖</b>。加上交互也不会让那一格变成有判据的 ——
+            可点不等于被验证。
+          </li>
+          <li>
+            <b>不放真数据、不发请求</b>：全部数字是页内常量里的示意值，
+            连「采集进度」都是本地定时器；页面<b>不访问网络</b>， 也没有 CDN /
+            外链字体 / 图片 / 构建步骤，<code>file://</code> 直接打开即可用。
+          </li>
+          <li>
+            <b>不用颜色</b>（只有灰阶 + 反白）、<b>不写视觉规格</b>
+            （不写品牌色 / 动效时长 / 精确圆角）。低保真的目的是让人讨论结构，
+            引入观感会让人开始讨论观感。
+          </li>
+          <li>
+            <b>交互细节只画到「有这一条」</b>：键盘焦点可见有、<code
+              >aria-*</code
+            >
+            标签有、空/加载/错误/锁定四态有；具体的动效曲线、快捷键表、
+            无障碍规范的落地属于实现。
+          </li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h3>关掉 JS 会怎样</h3>
+        <p>
+          八屏 + 状态矩阵会<b>纵向堆开</b>，退化成一块静态线框板（也就是
+          <code>index.html</code> 的用法）；导航与状态控件会被隐藏，
+          因为它们在没有 JS 时不会有反应，留着只会骗人。
+          <b>降级不是「功能少一点」，而是「不假装还能点」。</b>
+        </p>
+      </div>
+
+      <div class="card">
+        <h3>页内自检检的是什么</h3>
+        <p>
+          左上角那支「跑一次页内自检」逐项检查<b>本页自己的口径</b>
+          —— 8 屏 + 状态矩阵都在、14 条指标的分组是 3/4/6/1、风控 6 条规则不重名、
+          只拦开仓的是 5 条、显示串里只有 <code>percent</code> 带 <code>%</code>、
+          示例串的小数位与规格表一致、试算的四个样本（干净 / 超限 / 熔断 /
+          卖出不熔断）落在预期裁决上、
+          阈值校验对四种坏值与一种好值给出预期结论、生命周期守卫拦得住越级。
+          另有一组盯的是<b>交互底座本身</b>：
+          <code>&lt;body&gt;</code> 上不挂 <code>data-proto-*</code>
+          钩子属性（挂上去会让钩子选择器先命中 body，后面的分支静默变死代码）、
+          全局状态住在 <code>data-ui-*</code> 且与内存里的 state 一致、
+          Kill Switch 的 <code>aria-pressed</code> 必须落在按钮上、
+          确认框「关闭 / 取消 / 确认」三条出口都得关得掉（且取消不动 kill）、
+          状态单选组与当前状态一一对应、F2 的 schema 下拉真的能筛（选项数对齐 +
+          筛后与数据一致）、F1 十盏灯都指向真实存在的屏、
+          F3 黑名单的三条分支（空标的拒 / 新标的收 / 重复标的拒）与两张表同步。
+          <b>一个探测器一个样本，且带一个期望 0 报错的干净控制组。</b>
+          它检的<b>不是</b>仓库实现 —— 那不是这个文件能主张的事。
+        </p>
+      </div>
+
+      <p>
+        同目录另有
+        <code>README.md</code>（两份文件的分工与「已知的内部张力」）与
+        <code>index.html</code>（静态线框板）。
+      </p>
+    </footer>
+
+    <!-- ============================== 对话框 ============================== -->
+    <dialog id="dlg" aria-labelledby="dlg-title">
+      <div class="dlghead">
+        <span id="dlg-title">—</span>
+        <button class="btn small" type="button" data-proto-dlg-close>
+          关闭
+        </button>
+      </div>
+      <div class="dlgbody" data-proto-dlg-body></div>
+    </dialog>
+
+    <script>
+      (function () {
+        "use strict";
+
+        /* ==================================================================
+           0. 页内示意数据（全部是示意值 / 页内常量，不是仓库真值）
+           ================================================================== */
+
+        var SCREENS = [
+          "F1",
+          "F2",
+          "F3",
+          "F4",
+          "F5",
+          "F6",
+          "F7",
+          "F8",
+          "STATES",
+        ];
+
+        var SCREEN_TITLE = {
+          F1: "平台总览 · 驾驶舱",
+          F2: "数据中心",
+          F3: "股票池管理",
+          F4: "回测实验室",
+          F5: "绩效看板",
+          F6: "风控控制台",
+          F7: "策略中心 · 适配矩阵 · 生命周期",
+          F8: "组合调度 · 研究 Agent · 执行监控",
+          STATES: "状态矩阵演示",
+        };
+
+        // 交易循环十步（每一步落到哪一屏）
+        var TRADING_LOOP = [
+          { n: "①", label: "数据采集", screen: "F2" },
+          { n: "②", label: "校验落库", screen: "F2" },
+          { n: "③", label: "股票池", screen: "F3" },
+          { n: "④", label: "市场状态", screen: "F8" },
+          { n: "⑤", label: "信号", screen: "F4" },
+          { n: "⑥", label: "调度", screen: "F8" },
+          { n: "⑦", label: "风控", screen: "F6" },
+          { n: "⑧", label: "执行", screen: "F8" },
+          { n: "⑨", label: "归因", screen: "F5" },
+          { n: "⑩", label: "反馈回池", screen: "F3" },
+        ];
+
+        // 策略进化循环里 Agent 流水线那一段（七步，落地阶段不在这里）
+        var AGENT_STEPS = [
+          "失效检测",
+          "失效诊断",
+          "假设生成",
+          "代码生成",
+          "回测验证",
+          "样本外验证",
+          "压力测试",
+        ];
+
+        // 风控注册表：阈值取自 db/risk_control.sql 的种子，裁决取自 quanauto/risk.py
+        var RULES = [
+          {
+            id: "max_position_pct",
+            label: "单票仓位上限（= 单票集中度）",
+            unit: "RATIO",
+            thr: 0.1,
+            action: "REDUCE",
+            sev: "ERROR",
+            openOnly: true,
+            express: "该标的持仓市值 / 账户总资产",
+          },
+          {
+            id: "max_daily_trades",
+            label: "单日交易次数上限",
+            unit: "COUNT",
+            thr: 3,
+            action: "REJECT",
+            sev: "ERROR",
+            openOnly: true,
+            express: "同一交易日同一标的买卖笔数合计",
+          },
+          {
+            id: "strategy_drawdown_pct",
+            label: "单策略回撤熔断",
+            unit: "RATIO",
+            thr: 0.15,
+            action: "HALT",
+            sev: "CRITICAL",
+            openOnly: true,
+            express: "(策略权益峰值 − 当前) / 峰值",
+          },
+          {
+            id: "account_drawdown_pct",
+            label: "全账户回撤熔断",
+            unit: "RATIO",
+            thr: 0.2,
+            action: "HALT",
+            sev: "CRITICAL",
+            openOnly: true,
+            express: "(账户总资产峰值 − 当前) / 峰值",
+          },
+          {
+            id: "max_order_amount_pct",
+            label: "单笔委托成交额占比上限",
+            unit: "RATIO",
+            thr: 0.1,
+            action: "REDUCE",
+            sev: "WARNING",
+            openOnly: false,
+            express: "委托金额 / 标的当日日均成交额",
+          },
+          {
+            id: "max_sector_pct",
+            label: "单行业集中度上限",
+            unit: "RATIO",
+            thr: 0.3,
+            action: "REDUCE",
+            sev: "ERROR",
+            openOnly: true,
+            express: "单行业持仓市值 / 账户总资产",
+          },
+        ];
+
+        // 裁决排序：PASS < REDUCE < REJECT < HALT
+        var ACTION_RANK = { PASS: 0, REDUCE: 1, REJECT: 2, HALT: 3 };
+
+        // 绩效规格表（14 条，分组 3/4/6/1）—— 与 quanauto/dashboard.py 的 METRIC_SPECS 同形
+        var METRICS = [
+          {
+            key: "total_return",
+            group: "收益",
+            label: "累计收益",
+            unit: "percent",
+            dp: 4,
+            sample: "12.3456%",
+          },
+          {
+            key: "annual_return",
+            group: "收益",
+            label: "年化收益",
+            unit: "percent",
+            dp: 4,
+            sample: "24.6912%",
+          },
+          {
+            key: "final_equity",
+            group: "收益",
+            label: "期末净值",
+            unit: "money",
+            dp: 2,
+            sample: "1123456.78",
+          },
+          {
+            key: "max_drawdown",
+            group: "风险",
+            label: "最大回撤",
+            unit: "percent",
+            dp: 4,
+            sample: "-8.7654%",
+          },
+          {
+            key: "sharpe_ratio",
+            group: "风险",
+            label: "夏普比率",
+            unit: "ratio",
+            dp: 4,
+            sample: "1.2345",
+          },
+          {
+            key: "sortino_ratio",
+            group: "风险",
+            label: "索提诺比率",
+            unit: "ratio",
+            dp: 4,
+            sample: "1.8765",
+          },
+          {
+            key: "calmar_ratio",
+            group: "风险",
+            label: "卡玛比率",
+            unit: "ratio",
+            dp: 4,
+            sample: "2.8150",
+          },
+          {
+            key: "win_rate",
+            group: "成交",
+            label: "胜率",
+            unit: "percent",
+            dp: 4,
+            sample: "55.5556%",
+          },
+          {
+            key: "profit_factor",
+            group: "成交",
+            label: "盈亏比（总额）",
+            unit: "ratio",
+            dp: 4,
+            sample: "1.6500",
+          },
+          {
+            key: "profit_loss_ratio",
+            group: "成交",
+            label: "盈亏比（均额）",
+            unit: "ratio",
+            dp: 4,
+            sample: "1.2000",
+          },
+          {
+            key: "max_consecutive_losses",
+            group: "成交",
+            label: "最大连续亏损",
+            unit: "count",
+            dp: 0,
+            sample: "4",
+          },
+          {
+            key: "avg_hold_period",
+            group: "成交",
+            label: "平均持仓天数",
+            unit: "days",
+            dp: 2,
+            sample: "7.35",
+          },
+          {
+            key: "total_trades",
+            group: "成交",
+            label: "成交笔数",
+            unit: "count",
+            dp: 0,
+            sample: "36",
+          },
+          {
+            key: "total_commission",
+            group: "成本",
+            label: "累计佣金",
+            unit: "money",
+            dp: 2,
+            sample: "1234.56",
+          },
+        ];
+
+        // 报告结构计数（不进指标表）—— 与 dashboard.py 的 STRUCTURE_COUNTS 同形
+        var STRUCTURE_COUNTS = [
+          { key: "equity_curve", label: "资金曲线点", n: 122 },
+          { key: "trades", label: "成交", n: 36 },
+          { key: "orders", label: "委托", n: 41 },
+        ];
+
+        // 报告抬头 7 项 —— 与 platform/web/src/App.jsx 的 Meta（7 个 <dt>）一一对应
+        var REPORT_META = [
+          { k: "报告", v: "[报告ID]" },
+          { k: "标的", v: "[标的代码]" },
+          { k: "窗口", v: "[起] → [止]" },
+          { k: "状态", v: "[已完成 / 失败]" },
+          { k: "策略", v: "[策略ID] · [策略版本]" },
+          { k: "数据版本", v: "[数据版本]" },
+          { k: "结构", v: "[曲线点数] / [成交数] / [委托数]" },
+        ];
+
+        // 五张标准 schema（validate_frame 认的五张）
+        var SCHEMAS = [
+          { key: "daily", label: "日线" },
+          { key: "financial", label: "财务" },
+          { key: "index", label: "指数成分" },
+          { key: "factor", label: "复权因子" },
+          { key: "dividend", label: "分红" },
+        ];
+
+        var ENV_LABEL = {
+          research: "研究",
+          simulation: "模拟",
+          production: "生产",
+        };
+
+        var STAGE_ORDER = [
+          "候选",
+          "回测中",
+          "样本外",
+          "模拟盘",
+          "灰度",
+          "正式服役",
+        ];
+
+        /* ==================================================================
+           1. 纯函数层（可被页内自检直接调用，不碰 DOM）
+           ================================================================== */
+
+        function maxAction(list) {
+          var best = "PASS";
+          for (var i = 0; i < list.length; i += 1) {
+            if (ACTION_RANK[list[i]] > ACTION_RANK[best]) best = list[i];
+          }
+          return best;
+        }
+
+        /**
+         * 风控试算 —— 语义照抄 quanauto/risk.py：
+         *   * 五条规则只拦开仓（OPEN_ONLY_RULE_IDS），流动性那条双向都管
+         *   * 裁决取最严重的一条（PASS < REDUCE < REJECT < HALT）
+         *   * Kill Switch 合上 ⇒ 直接 HALT
+         * 这不是实现，只是把契约里的口径画成可点的东西。
+         */
+        function evaluateRisk(input, rules, killOn) {
+          var isOpen = input.side === "BUY";
+          var amount = input.qty * input.price;
+          var rows = [];
+          var actions = [];
+
+          function push(rule, value, fired, detail) {
+            rows.push({
+              rule: rule.id,
+              label: rule.label,
+              express: rule.express,
+              value: value,
+              thr: rule.thr,
+              unit: rule.unit,
+              fired: fired,
+              action: fired ? rule.action : "PASS",
+              detail: detail || "",
+            });
+            if (fired) actions.push(rule.action);
+          }
+
+          for (var i = 0; i < rules.length; i += 1) {
+            var r = rules[i];
+            if (r.openOnly && !isOpen) {
+              push(r, null, false, "只拦开仓：本次是平仓，该规则不参与");
+              continue;
+            }
+            if (r.id === "max_position_pct") {
+              var posAfter = isOpen
+                ? (input.holdingValue + amount) / input.accountValue
+                : Math.max(0, input.holdingValue - amount) / input.accountValue;
+              push(
+                r,
+                posAfter,
+                posAfter > r.thr,
+                "成交后单票占比 " + pct(posAfter),
+              );
+            } else if (r.id === "max_daily_trades") {
+              var trades = input.tradesToday + 1;
+              push(
+                r,
+                trades,
+                trades > r.thr,
+                "本次成交后当日第 " + trades + " 笔",
+              );
+            } else if (r.id === "strategy_drawdown_pct") {
+              push(
+                r,
+                input.strategyDrawdown,
+                input.strategyDrawdown > r.thr,
+                "策略当前回撤 " + pct(input.strategyDrawdown),
+              );
+            } else if (r.id === "account_drawdown_pct") {
+              push(
+                r,
+                input.accountDrawdown,
+                input.accountDrawdown > r.thr,
+                "账户当前回撤 " + pct(input.accountDrawdown),
+              );
+            } else if (r.id === "max_order_amount_pct") {
+              var orderPct =
+                input.advValue <= 0 ? Infinity : amount / input.advValue;
+              push(
+                r,
+                orderPct,
+                orderPct > r.thr,
+                "委托金额占标的当日日均成交额 " + pct(orderPct),
+              );
+            } else if (r.id === "max_sector_pct") {
+              var sectorAfter = isOpen
+                ? (input.sectorValue + amount) / input.accountValue
+                : Math.max(0, input.sectorValue - amount) / input.accountValue;
+              push(
+                r,
+                sectorAfter,
+                sectorAfter > r.thr,
+                "成交后行业占比 " + pct(sectorAfter),
+              );
+            }
+          }
+
+          if (killOn) actions.push("HALT");
+          var action = maxAction(actions);
+          var fired = rows.filter(function (x) {
+            return x.fired;
+          });
+          return {
+            action: action,
+            rows: rows,
+            fired: fired.map(function (x) {
+              return x.rule;
+            }),
+            kill: !!killOn,
+          };
+        }
+
+        /**
+         * 阈值校验 —— 语义照抄 quanauto/risk.py 的 validate_threshold：
+         *   * RATIO 必须是 0~1 小数（0.1 与 10 差 100 倍，静默算错最难查）
+         *   * COUNT 必须是非负整数
+         *   * NaN / ±Infinity 先挡（它们对每一支比较都「不大于上限」）
+         * 另外补两条页内规则（真实实现里由「变更请求」的字段约束管）：
+         *   值没变 ⇒ 没有可提交的变更；operator / reason 必填。
+         */
+        function validateChange(rule, nextValue, operator, reason) {
+          var errors = [];
+          if (!rule) {
+            errors.push("没有选中规则");
+            return { ok: false, errors: errors };
+          }
+          if (!isFinite(nextValue)) {
+            errors.push(
+              "阈值必须是有限数（NaN / ±Infinity 到了列那一层只会得到一句「数据库拒绝了」）",
+            );
+          } else if (rule.unit === "RATIO") {
+            if (!(nextValue > 0 && nextValue <= 1)) {
+              errors.push(
+                "规则 " +
+                  rule.id +
+                  " 的单位是 RATIO，阈值必须是 0~1 小数，收到 " +
+                  nextValue +
+                  "（若是百分数请除以 100）",
+              );
+            }
+          } else if (rule.unit === "COUNT") {
+            if (nextValue < 0 || nextValue !== Math.floor(nextValue)) {
+              errors.push(
+                "规则 " +
+                  rule.id +
+                  " 的单位是 COUNT，阈值必须是非负整数，收到 " +
+                  nextValue,
+              );
+            }
+          }
+          if (isFinite(nextValue) && nextValue === rule.thr) {
+            errors.push("新阈值与当前值相同 ⇒ 没有可提交的变更");
+          }
+          if (!operator || !String(operator).replace(/\s/g, "")) {
+            errors.push("阈值变更必须写明 operator（D10：要追到人）");
+          }
+          if (!reason || !String(reason).replace(/\s/g, "")) {
+            errors.push("阈值变更必须写明 reason（D6：审计要能解释）");
+          }
+          return { ok: errors.length === 0, errors: errors };
+        }
+
+        /**
+         * 生命周期守卫（页内示意口径）：
+         *   候选 → 回测中 → 样本外 → 模拟盘 → 灰度 → 正式服役
+         *   「没跑过样本外不能进模拟盘」「没经过模拟盘 / 灰度不能正式服役」
+         */
+        function canAdvance(stage, extra) {
+          if (stage === "已退休") {
+            return {
+              ok: false,
+              reason:
+                "已退休是终态，不能再推进（要恢复必须走人工评审并留下记录）",
+            };
+          }
+          if (stage === "正式服役") {
+            return {
+              ok: false,
+              reason: "已在最后阶段；要下线请走「退休」（危险动作）",
+            };
+          }
+          if (stage === "候选" && !extra.backtested) {
+            return {
+              ok: false,
+              reason: "候选阶段的策略必须先跑一次回测才能进入「回测中」",
+            };
+          }
+          if (stage === "样本外" && !extra.outOfSampleDone) {
+            return {
+              ok: false,
+              reason:
+                "没跑过样本外验证，不能进模拟盘（这是本项目最常被跳过的一步）",
+            };
+          }
+          if (stage === "灰度") {
+            return { ok: true, reason: "灰度通过 ⇒ 可晋级「正式服役」" };
+          }
+          return { ok: true, reason: "" };
+        }
+
+        function pct(x) {
+          if (!isFinite(x)) return "—";
+          return (x * 100).toFixed(2) + "%";
+        }
+
+        function fixed(x, dp) {
+          if (!isFinite(x)) return "—";
+          return Number(x).toFixed(dp);
+        }
+
+        /* ==================================================================
+           2. 页内状态
+           ================================================================== */
+
+        var state = {
+          env: "research",
+          kill: false,
+          screen: "F1",
+          viewState: "default",
+          f2: { schema: "", status: "", detail: null, running: false },
+          f3: { rule: 0, built: false },
+          f4: { running: false, ran: false, errors: [], credentials: null },
+          f5: { group: "收益" },
+          f6: { tab: "rules", sim: null, lastLogAction: null },
+          f7: { selected: 0, stage: {}, history: [], outOfSampleDone: false },
+          f8: { orders: [], agentStep: 0, regime: "震荡" },
+          blacklist: [
+            { sym: "[标的代码]", reason: "[示例理由]：近 20 日均额过低" },
+          ],
+          inspect: 0,
+          changeLog: [],
+        };
+
+        var STRATEGIES = [
+          {
+            id: "[策略ID]-A",
+            cls: "双均线",
+            stage: "正式服役",
+            bt: "[YYYY-MM-DD]",
+          },
+          { id: "[策略ID]-B", cls: "突破", stage: "灰度", bt: "[YYYY-MM-DD]" },
+          {
+            id: "[策略ID]-C",
+            cls: "均值回归",
+            stage: "样本外",
+            bt: "[YYYY-MM-DD]",
+          },
+          {
+            id: "[策略ID]-D",
+            cls: "机器学习",
+            stage: "回测中",
+            bt: "[YYYY-MM-DD]",
+          },
+          { id: "[策略ID]-E", cls: "价值 / 成长", stage: "候选", bt: "—" },
+        ];
+
+        var INGEST_RUNS = [
+          {
+            id: "R-0007",
+            schema: "daily",
+            rows: 4820,
+            ver: "[数据版本]",
+            ok: true,
+          },
+          {
+            id: "R-0006",
+            schema: "financial",
+            rows: 316,
+            ver: "[数据版本]",
+            ok: true,
+          },
+          {
+            id: "R-0005",
+            schema: "factor",
+            rows: 4820,
+            ver: "[数据版本]",
+            ok: true,
+          },
+          {
+            id: "R-0004",
+            schema: "dividend",
+            rows: 42,
+            ver: "[数据版本]",
+            ok: false,
+          },
+          {
+            id: "R-0003",
+            schema: "index",
+            rows: 300,
+            ver: "[数据版本]",
+            ok: true,
+          },
+          {
+            id: "R-0002",
+            schema: "daily",
+            rows: 0,
+            ver: "[数据版本]",
+            ok: false,
+          },
+        ];
+
+        var DECISIONS = [
+          {
+            id: "D-1041",
+            sym: "[标的代码]",
+            side: "BUY",
+            qty: 3000,
+            action: "PASS",
+            rules: [],
+          },
+          {
+            id: "D-1040",
+            sym: "[标的代码]",
+            side: "BUY",
+            qty: 90000,
+            action: "REDUCE",
+            rules: ["max_position_pct"],
+          },
+          {
+            id: "D-1039",
+            sym: "[标的代码]",
+            side: "BUY",
+            qty: 6000,
+            action: "REJECT",
+            rules: ["max_daily_trades"],
+          },
+          {
+            id: "D-1038",
+            sym: "[标的代码]",
+            side: "BUY",
+            qty: 2000,
+            action: "HALT",
+            rules: ["account_drawdown_pct"],
+          },
+          {
+            id: "D-1037",
+            sym: "[标的代码]",
+            side: "SELL",
+            qty: 5000,
+            action: "PASS",
+            rules: [],
+          },
+          {
+            id: "D-1036",
+            sym: "[标的代码]",
+            side: "BUY",
+            qty: 12000,
+            action: "REDUCE",
+            rules: ["max_sector_pct", "max_order_amount_pct"],
+          },
+        ];
+
+        var POOL_RULES = [
+          { name: "近 20 日均额 > [阈值]", base: 320 },
+          { name: "非 ST 且上市 > 60 日", base: 480 },
+          { name: "所属行业不在受限清单", base: 405 },
+          { name: "近 60 日有成交量", base: 512 },
+        ];
+
+        var BALANCE_TRIGGERS = [
+          "定时再平衡",
+          "偏离阈值触发",
+          "市场状态切换",
+          "人工触发",
+        ];
+        var REGIMES = ["趋势", "震荡", "高波动", "风险规避"];
+        var AGENT_EVIDENCE = [
+          "失效检测结论",
+          "失效诊断报告",
+          "假设清单",
+          "代码 diff",
+          "回测结论",
+          "样本外结论",
+          "压力测试结论",
+        ];
+
+        /* ==================================================================
+           3. 小工具
+           ================================================================== */
+
+        function $(sel, root) {
+          return (root || document).querySelector(sel);
+        }
+        function $$(sel, root) {
+          return Array.prototype.slice.call(
+            (root || document).querySelectorAll(sel),
+          );
+        }
+        function el(tag, attrs, text) {
+          var node = document.createElement(tag);
+          if (attrs) {
+            Object.keys(attrs).forEach(function (k) {
+              if (k === "class") node.className = attrs[k];
+              else if (k === "text") node.textContent = attrs[k];
+              else node.setAttribute(k, attrs[k]);
+            });
+          }
+          if (text !== undefined) node.textContent = text;
+          return node;
+        }
+        function clear(node) {
+          while (node && node.firstChild) node.removeChild(node.firstChild);
+        }
+
+        var dialog = $("#dlg");
+
+        function openDialog(title, buildBody) {
+          var body = $("[data-proto-dlg-body]");
+          clear(body);
+          $("#dlg-title").textContent = title;
+          buildBody(body);
+          if (dialog && typeof dialog.showModal === "function") {
+            try {
+              dialog.showModal();
+            } catch (e) {
+              dialog.setAttribute("open", "");
+            }
+          } else if (dialog) {
+            dialog.setAttribute("open", "");
+          }
+        }
+        function closeDialog() {
+          if (!dialog) return;
+          if (typeof dialog.close === "function") {
+            try {
+              dialog.close();
+            } catch (e) {
+              dialog.removeAttribute("open");
+            }
+          } else {
+            dialog.removeAttribute("open");
+          }
+        }
+
+        function confirmDialog(title, question, onYes) {
+          openDialog(title, function (body) {
+            body.appendChild(el("p", { text: question }));
+            body.appendChild(
+              el("p", {
+                class: "hint",
+                text: "低保真：危险动作一律「反白 + 二次确认」，不用颜色表达严重性。",
+              }),
+            );
+            var row = el("div", { class: "rowbtns" });
+            var yes = el(
+              "button",
+              { class: "btn inv", type: "button" },
+              "确认",
+            );
+            var no = el("button", { class: "btn", type: "button" }, "取消");
+            yes.addEventListener("click", function () {
+              closeDialog();
+              onYes();
+            });
+            no.addEventListener("click", closeDialog);
+            row.appendChild(yes);
+            row.appendChild(no);
+            body.appendChild(row);
+          });
+        }
+
+        function setInvalid(node, bad) {
+          if (!node) return;
+          if (bad) node.setAttribute("aria-invalid", "true");
+          else node.removeAttribute("aria-invalid");
+        }
+
+        /* ==================================================================
+           4. 路由与顶栏
+           ================================================================== */
+
+        function screenFromHash() {
+          var h = (location.hash || "").replace(/^#\/?/, "").toUpperCase();
+          var found = SCREENS.filter(function (s) {
+            return s === h;
+          })[0];
+          return found || "F1";
+        }
+
+        function applyRoute(keepState) {
+          var next = screenFromHash();
+          if (!keepState) {
+            state.viewState = "default";
+            var radio = $('input[data-proto-state="default"]');
+            if (radio) radio.checked = true;
+          }
+          state.screen = next;
+          $$("section.screen").forEach(function (sec) {
+            var on = sec.getAttribute("data-proto-screen") === next;
+            sec.classList.toggle("on", on);
+            sec.hidden = !on;
+          });
+          $$("nav.sidenav a[data-proto-nav]").forEach(function (a) {
+            if (a.getAttribute("data-proto-nav") === next)
+              a.setAttribute("aria-current", "page");
+            else a.removeAttribute("aria-current");
+          });
+          // 整块重渲染：换屏后「锁定」态要重新套到新屏的按钮上，
+          // 而 F8 那种「按进度 disabled」的按钮也必须按当前状态重建。
+          renderAll();
+          var stage = $("#stage");
+          if (stage) stage.focus({ preventScroll: true });
+        }
+
+        function go(screen) {
+          location.hash = "#/" + screen.toLowerCase();
+        }
+
+        function setEnv(env) {
+          state.env = env;
+          document.body.setAttribute("data-ui-env", env);
+          $$("header.chrome [data-proto-env]").forEach(function (b) {
+            b.setAttribute(
+              "aria-pressed",
+              b.getAttribute("data-proto-env") === env ? "true" : "false",
+            );
+          });
+          renderF1();
+          renderF2Notes();
+        }
+
+        function setKill(on) {
+          state.kill = !!on;
+          document.body.setAttribute(
+            "data-ui-kill",
+            state.kill ? "on" : "off",
+          );
+          var bar = $("#haltbar");
+          if (bar) bar.hidden = !state.kill;
+          // 必须限定在顶栏里：不加范围时 $("[data-proto-kill]") 会按文档序
+          // 先命中 <body>（它曾经同样带这个属性名）⇒ 按钮的 aria-pressed 永远不更新。
+          var btn = $("header.chrome [data-proto-kill]");
+          if (btn)
+            btn.setAttribute("aria-pressed", state.kill ? "true" : "false");
+          var chip = $('[data-proto="sim-kill"]');
+          if (chip)
+            chip.textContent = "跟随顶栏：" + (state.kill ? "已 HALT" : "关");
+          renderF1();
+        }
+
+        /* ==================================================================
+           5. 屏内渲染
+           ================================================================== */
+
+        function renderScreenState() {
+          var box = $("[data-proto-statebox]");
+          var sec = $(
+            'section.screen[data-proto-screen="' + state.screen + '"]',
+          );
+          if (!box || !sec) return;
+          document.body.setAttribute("data-ui-state", state.viewState);
+          // 单选组是 state.viewState 的显示面：在这里同步，免得「状态改了但
+          // 选中的还是上一个」这种不对称（不限定 input 时选手器会先命中 body）。
+          $$('input[name="pstate"]').forEach(function (r) {
+            r.checked = r.getAttribute("data-proto-state") === state.viewState;
+          });
+
+          var ws = state.viewState;
+          box.hidden = ws === "default";
+          if (ws !== "default") box.setAttribute("data-proto-surface", ws);
+          else box.removeAttribute("data-proto-surface");
+
+          clear(box);
+          $$("section.screen").forEach(function (s) {
+            s.removeAttribute("aria-busy");
+            s.removeAttribute("aria-readonly");
+          });
+          // 解除锁定：把上一态按下去的动作按钮放回来。
+          // renderF8 里「已成交」那种天生就该 disabled 的按钮带 data-proto-keep-disabled，跳过。
+          $$("section.screen button").forEach(function (b) {
+            if (!b.hasAttribute("data-proto-keep-disabled")) b.disabled = false;
+          });
+          if (ws === "default") return;
+
+          var title = SCREEN_TITLE[state.screen] || "";
+          if (ws === "empty") {
+            box.appendChild(el("h3", { text: "空态：这一屏现在没有数据" }));
+            box.appendChild(
+              el("p", {
+                text:
+                  "原因：当前窗口内没有可展示的 " +
+                  title +
+                  " 记录。空态必须回答「为什么空」和「下一步做什么」，空白页不是答案。",
+              }),
+            );
+            box.appendChild(
+              el("p", {
+                class: "next",
+                text: "下一步：换一个时间窗 / 换一个标的 / 先去 F2 跑一次采集把数据补上。",
+              }),
+            );
+          } else if (ws === "loading") {
+            sec.setAttribute("aria-busy", "true");
+            box.appendChild(
+              el("h3", { text: "加载中：不闪、不跳、不假装有数" }),
+            );
+            box.appendChild(el("div", { class: "skel w90" }));
+            box.appendChild(el("div", { class: "skel w70" }));
+            box.appendChild(el("div", { class: "skel w40" }));
+            box.appendChild(
+              el("p", {
+                class: "next",
+                text: "骨架块占住布局；旧数字全部撤掉 —— 显示上一次的读数比显示空白更糟。",
+              }),
+            );
+          } else if (ws === "error") {
+            box.appendChild(
+              el("h3", { text: "错误：谁错了、能不能重试、旧数据还显不显示" }),
+            );
+            box.appendChild(
+              el("p", {
+                text: "错误码 [数据源不可达] / [帧校验未通过] —— 页面上不留任何旧读数。",
+              }),
+            );
+            var row = el("div", { class: "rowbtns" });
+            var retry = el("button", { class: "btn", type: "button" }, "重试");
+            retry.addEventListener("click", function () {
+              state.viewState = "loading";
+              var r = $('input[data-proto-state="loading"]');
+              if (r) r.checked = true;
+              renderScreenState();
+            });
+            row.appendChild(retry);
+            box.appendChild(row);
+          } else if (ws === "locked") {
+            sec.setAttribute("aria-readonly", "true");
+            box.appendChild(el("h3", { text: "锁定态：这一屏只读" }));
+            box.appendChild(
+              el("p", {
+                text:
+                  "原因：环境 = " +
+                  ENV_LABEL[state.env] +
+                  "，当前身份只有读权限。动作按钮保持可见但是 disabled —— 隐藏按钮会让人以为「这个功能不存在」。",
+              }),
+            );
+            $$("section.screen.on button").forEach(function (b) {
+              if (!b.hasAttribute("data-proto-state-keep")) b.disabled = true;
+            });
+          }
+        }
+
+        function renderF1() {
+          var loop = $('[data-proto="loop-trading"]');
+          if (loop) {
+            clear(loop);
+            TRADING_LOOP.forEach(function (step, i) {
+              var b = el("button", {
+                class: "node",
+                type: "button",
+                "data-step": String(i + 1),
+                "data-done": i < state.inspect ? "1" : "0",
+                "aria-label":
+                  "第 " +
+                  (i + 1) +
+                  " 步 " +
+                  step.label +
+                  "，点击进 " +
+                  step.screen,
+              });
+              b.appendChild(el("span", { text: step.n + " " + step.label }));
+              b.addEventListener("click", function () {
+                go(step.screen);
+              });
+              loop.appendChild(b);
+              if (i < TRADING_LOOP.length - 1)
+                loop.appendChild(el("span", { class: "arrow", text: "→" }));
+            });
+          }
+
+          var evolve = $('[data-proto="loop-evolve"]');
+          if (evolve) {
+            clear(evolve);
+            var labels = [
+              "失效检测",
+              "诊断 + 假设",
+              "代码生成",
+              "验证（回测/样本外/压力）",
+            ];
+            labels.forEach(function (t, i) {
+              evolve.appendChild(el("span", { class: "node", text: t }));
+              if (i < labels.length - 1)
+                evolve.appendChild(el("span", { class: "arrow", text: "→" }));
+            });
+            evolve.appendChild(el("span", { class: "arrow", text: "→" }));
+            evolve.appendChild(
+              el("span", { class: "frame-inv", text: "人工晋级决策" }),
+            );
+            evolve.appendChild(el("span", { class: "arrow", text: "→" }));
+            evolve.appendChild(
+              el("span", { class: "node", text: "落地阶段（归 F7）" }),
+            );
+          }
+
+          var out = $('[data-proto="inspect-readout"]');
+          if (out) out.textContent = "第 " + state.inspect + " / 10 步";
+
+          var sum = $('[data-proto="risk-summary"]');
+          if (sum) {
+            clear(sum);
+            var counts = { PASS: 0, BLOCK: 0, HALT: 0 };
+            DECISIONS.forEach(function (d) {
+              if (d.action === "PASS") counts.PASS += 1;
+              else if (d.action === "HALT") counts.HALT += 1;
+              else counts.BLOCK += 1;
+            });
+            var cells = [
+              {
+                k: "通过（PASS）",
+                v: counts.PASS,
+                u: "决策日志",
+                filter: "PASS",
+              },
+              {
+                k: "拦截（REDUCE + REJECT）",
+                v: counts.BLOCK,
+                u: "拦截留痕",
+                filter: "REDUCE",
+              },
+              {
+                k: "HALT（熔断 / Kill Switch）",
+                v: counts.HALT + (state.kill ? 1 : 0),
+                u: "熔断",
+                filter: "HALT",
+              },
+            ];
+            cells.forEach(function (c) {
+              var b = el("button", {
+                class: "kpi",
+                type: "button",
+                "aria-label": c.k + "：" + c.v,
+              });
+              b.appendChild(el("div", { class: "k", text: c.k }));
+              b.appendChild(el("div", { class: "v", text: String(c.v) }));
+              b.appendChild(el("div", { class: "u", text: c.u }));
+              b.addEventListener("click", function () {
+                state.f6.tab = "log";
+                state.f6.lastLogAction = c.filter;
+                go("F6");
+              });
+              sum.appendChild(b);
+            });
+          }
+        }
+
+        function renderF2() {
+          var sel = $('[data-proto="f2-schema"]');
+          // 这里曾经是 `if (sel && !sel.options.length)` —— 而 HTML 里本来就静态放着
+          // 一个「全部」选项 ⇒ 条件恒假 ⇒ 五个 schema 选项**从来没被追加过**，
+          // 下拉里永远只有一个「全部」：点了什么也不筛。改成按「选项数是否对得上」
+          // 判断是否重建，既不白重建（保住用户当前选择），又能自愈。
+          if (sel && sel.options.length !== SCHEMAS.length + 1) {
+            var keepSchema = state.f2.schema;
+            clear(sel);
+            sel.appendChild(el("option", { value: "" }, "全部"));
+            SCHEMAS.forEach(function (s) {
+              sel.appendChild(
+                el("option", { value: s.key }, s.label + "（" + s.key + "）"),
+              );
+            });
+            sel.value = keepSchema || "";
+          }
+          var body = $('[data-proto="f2-table"] tbody');
+          if (!body) return;
+          clear(body);
+          var rows = INGEST_RUNS.filter(function (r) {
+            if (state.f2.schema && r.schema !== state.f2.schema) return false;
+            if (state.f2.status === "PASS" && !r.ok) return false;
+            if (state.f2.status === "REJECT" && r.ok) return false;
+            return true;
+          });
+          if (!rows.length) {
+            var emptyF2 = el("tr");
+            emptyF2.appendChild(
+              el(
+                "td",
+                { colspan: "6", class: "ellipsis" },
+                "当前筛选下没有批次 —— 空态要给出下一步（改筛选 / 去跑一次采集）。",
+              ),
+            );
+            body.appendChild(emptyF2);
+          }
+          rows.forEach(function (r) {
+            var tr = el("tr");
+            tr.appendChild(el("td", { class: "mono", text: r.id }));
+            tr.appendChild(el("td", { text: r.schema }));
+            tr.appendChild(el("td", { class: "num", text: String(r.rows) }));
+            tr.appendChild(el("td", { class: "mono", text: r.ver }));
+            tr.appendChild(
+              el("td", { text: r.ok ? "is_valid=true" : "is_valid=false" }),
+            );
+            var td = el("td");
+            var b = el(
+              "button",
+              { class: "btn small", type: "button" },
+              "看明细",
+            );
+            b.addEventListener("click", function () {
+              state.f2.detail = r;
+              renderF2Detail();
+            });
+            td.appendChild(b);
+            tr.appendChild(td);
+            if (state.f2.detail && state.f2.detail.id === r.id)
+              tr.className = "sel";
+            body.appendChild(tr);
+          });
+          renderF2Detail();
+        }
+
+        function renderF2Detail() {
+          var out = $('[data-proto="f2-detail"]');
+          if (!out) return;
+          clear(out);
+          var r = state.f2.detail;
+          if (!r) {
+            out.appendChild(
+              el("div", { text: "选中一行看明细。（示意值，不是真库读数。）" }),
+            );
+            return;
+          }
+          out.appendChild(
+            el(
+              "b",
+              null,
+              "ValidationReport · " + r.id + "（" + r.schema + "）",
+            ),
+          );
+          var ul = el("ul", { class: "notes" });
+          ul.appendChild(
+            el("li", null, "is_valid = " + (r.ok ? "true" : "false")),
+          );
+          ul.appendChild(el("li", null, "row_count = " + r.rows));
+          ul.appendChild(
+            el(
+              "li",
+              null,
+              "errors = " +
+                (r.ok
+                  ? "[]"
+                  : r.rows === 0
+                    ? '["帧为空：0 行不构成校验通过"]'
+                    : '["ck_dc_dividend_announce_le_ex": 公告日晚于除权除息日"]'),
+            ),
+          );
+          ul.appendChild(
+            el(
+              "li",
+              null,
+              "warnings = " + (r.rows > 0 ? '["列 X 缺失率 6.2%"]' : "[]"),
+            ),
+          );
+          ul.appendChild(
+            el(
+              "li",
+              null,
+              "missing_ratio = " + (r.rows > 0 ? "{X: 0.062}" : "{}"),
+            ),
+          );
+          out.appendChild(ul);
+          out.appendChild(
+            el("p", {
+              class: "hint",
+              text: "空帧 ⇒ is_valid=false：0 行不构成通过。",
+            }),
+          );
+        }
+
+        function renderF2Notes() {
+          var ul = $('[data-proto="f2-notes"]');
+          if (!ul) return;
+          clear(ul);
+          ul.appendChild(
+            el(
+              "li",
+              null,
+              "当前环境 = " +
+                ENV_LABEL[state.env] +
+                "；" +
+                (state.env === "production"
+                  ? "生产环境不允许从这里发起采集（研究侧与生产侧数据隔离）。"
+                  : "研究环境可以发起采集。"),
+            ),
+          );
+          ul.appendChild(
+            el("li", null, "空帧不是通过：0 行帧直接 is_valid=false。"),
+          );
+          ul.appendChild(
+            el("li", null, "缺失率只是 warning（> 5%），不改变 is_valid。"),
+          );
+          ul.appendChild(
+            el("li", null, "帧层面不判覆盖率 —— 别读成「覆盖率已经有人管」。"),
+          );
+        }
+
+        function renderF3() {
+          var box = $('[data-proto="f3-rules"]');
+          if (box) {
+            clear(box);
+            POOL_RULES.forEach(function (r, i) {
+              var b = el(
+                "button",
+                {
+                  class: "pill",
+                  type: "button",
+                  "aria-pressed": i === state.f3.rule ? "true" : "false",
+                },
+                r.name,
+              );
+              b.addEventListener("click", function () {
+                state.f3.rule = i;
+                state.f3.built = false;
+                renderF3();
+              });
+              box.appendChild(b);
+            });
+          }
+          var out = $('[data-proto="f3-readout"]');
+          if (out)
+            out.textContent =
+              "示意命中 " + POOL_RULES[state.f3.rule].base + " 只";
+          var tb = $('[data-proto="f3-table"] tbody');
+          if (tb) {
+            clear(tb);
+            if (!state.f3.built) {
+              var emptyF3 = el("tr");
+              emptyF3.appendChild(
+                el("td", { colspan: "4", class: "ellipsis" }, "还没生成。"),
+              );
+              tb.appendChild(emptyF3);
+            } else {
+              var n = Math.min(5, POOL_RULES[state.f3.rule].base);
+              for (var i = 0; i < n; i += 1) {
+                var tr = el("tr");
+                tr.appendChild(
+                  el("td", { class: "mono", text: "[标的代码]-" + (i + 1) }),
+                );
+                tr.appendChild(el("td", { text: "行业 " + (i + 1) }));
+                tr.appendChild(
+                  el("td", { class: "num", text: 1000 + i * 137 + " 万" }),
+                );
+                tr.appendChild(
+                  el("td", { text: POOL_RULES[state.f3.rule].name }),
+                );
+                tb.appendChild(tr);
+              }
+            }
+          }
+          renderBlacklist();
+        }
+
+        function renderBlacklist() {
+          ["f3-bl-table", "f6-bl-table"].forEach(function (name) {
+            var tb = $('[data-proto="' + name + '"] tbody');
+            if (!tb) return;
+            clear(tb);
+            if (!state.blacklist.length) {
+              var emptyBl = el("tr");
+              emptyBl.appendChild(
+                el("td", { colspan: "3", class: "ellipsis" }, "名单为空。"),
+              );
+              tb.appendChild(emptyBl);
+              return;
+            }
+            state.blacklist.forEach(function (row, i) {
+              var tr = el("tr");
+              tr.appendChild(el("td", { class: "mono", text: row.sym }));
+              tr.appendChild(el("td", { text: row.reason }));
+              var td = el("td");
+              var b = el(
+                "button",
+                { class: "btn small", type: "button" },
+                "移除",
+              );
+              b.addEventListener("click", function () {
+                state.blacklist.splice(i, 1);
+                renderBlacklist();
+              });
+              td.appendChild(b);
+              tr.appendChild(td);
+              tb.appendChild(tr);
+            });
+          });
+        }
+
+        function readF4Input() {
+          return {
+            symbol: $('[data-proto="f4-symbol"]').value,
+            start: $('[data-proto="f4-start"]').value,
+            end: $('[data-proto="f4-end"]').value,
+            strategy: $('[data-proto="f4-strategy"]').value,
+            fast: Number($('[data-proto="f4-fast"]').value),
+            slow: Number($('[data-proto="f4-slow"]').value),
+            cash: Number($('[data-proto="f4-cash"]').value),
+            seed: $('[data-proto="f4-seed"]').value,
+          };
+        }
+
+        function validateBacktestForm(v) {
+          var errors = [];
+          [
+            "f4-symbol",
+            "f4-start",
+            "f4-end",
+            "f4-strategy",
+            "f4-fast",
+            "f4-slow",
+            "f4-cash",
+            "f4-seed",
+          ].forEach(function (n) {
+            setInvalid($('[data-proto="' + n + '"]'), false);
+          });
+          if (!v.symbol || !v.symbol.replace(/\s/g, "")) {
+            errors.push({ f: "f4-symbol", m: "标的不可以为空" });
+          }
+          if (!v.start || !v.end) {
+            errors.push({ f: "f4-start", m: "窗口两个端点都必须填" });
+          } else if (v.start > v.end) {
+            errors.push({ f: "f4-start", m: "窗口起点晚于终点" });
+          }
+          if (!v.strategy)
+            errors.push({ f: "f4-strategy", m: "必须选一个策略（不能留空）" });
+          if (!isFinite(v.fast) || !isFinite(v.slow)) {
+            errors.push({ f: "f4-fast", m: "参数必须是数字" });
+          } else if (v.fast >= v.slow) {
+            errors.push({
+              f: "f4-slow",
+              m: "fast 必须小于 slow（" + v.fast + " >= " + v.slow + "）",
+            });
+          }
+          if (!isFinite(v.cash) || v.cash <= 0) {
+            errors.push({ f: "f4-cash", m: "初始资金必须是正数" });
+          }
+          if (!String(v.seed).replace(/\s/g, "")) {
+            errors.push({
+              f: "f4-seed",
+              m: "随机种子为空 ⇒ 报告不可复现（这一条是硬要求）",
+            });
+          }
+          return errors;
+        }
+
+        function renderF4() {
+          var errs = state.f4.errors || [];
+          var ul = $('[data-proto="f4-errors"]');
+          if (ul) {
+            clear(ul);
+            errs.forEach(function (e) {
+              ul.appendChild(el("li", { text: e.m }));
+              setInvalid($('[data-proto="' + e.f + '"]'), true);
+            });
+          }
+          var out = $('[data-proto="f4-readout"]');
+          if (out)
+            out.textContent = errs.length ? errs.length + " 处校验未通过" : "";
+
+          var tb = $('[data-proto="f4-credentials"] tbody');
+          if (tb) {
+            clear(tb);
+            var v = readF4Input();
+            var creds = [
+              { k: "数据版本", v: "[数据版本]", ok: true },
+              {
+                k: "策略版本",
+                v: v.strategy ? "[策略ID] v[版本]" : "—",
+                ok: !!v.strategy,
+              },
+              {
+                k: "参数",
+                v:
+                  isFinite(v.fast) && isFinite(v.slow)
+                    ? "fast=" + v.fast + ", slow=" + v.slow
+                    : "—",
+                ok: isFinite(v.fast) && isFinite(v.slow),
+              },
+              {
+                k: "随机种子",
+                v: String(v.seed) || "—",
+                ok: !!String(v.seed).replace(/\s/g, ""),
+              },
+            ];
+            creds.forEach(function (c) {
+              var tr = el("tr");
+              tr.appendChild(el("td", { text: c.k }));
+              tr.appendChild(el("td", { class: "mono", text: c.v }));
+              tr.appendChild(el("td", { text: c.ok ? "已填" : "缺失" }));
+              tb.appendChild(tr);
+            });
+            var gap = $('[data-proto="f4-gap-note"]');
+            if (gap)
+              gap.hidden = creds.every(function (c) {
+                return c.ok;
+              });
+          }
+
+          var res = $('[data-proto="f4-result"]');
+          if (res) {
+            clear(res);
+            if (!state.f4.ran) {
+              res.appendChild(
+                el("div", {
+                  text: "还没跑。跑出来的数字会写进 F5 的看板 —— 看板是纯读数，一个指标都不重算。",
+                }),
+              );
+            } else {
+              res.appendChild(el("b", null, "回测完成（示意）"));
+              var ul2 = el("ul", { class: "notes" });
+              ul2.appendChild(
+                el(
+                  "li",
+                  null,
+                  "报告 [报告ID] · 窗口 " +
+                    readF4Input().start +
+                    " → " +
+                    readF4Input().end,
+                ),
+              );
+              ul2.appendChild(
+                el(
+                  "li",
+                  null,
+                  "成交 36 笔 / 委托 41 笔（结构计数，不进指标表）",
+                ),
+              );
+              ul2.appendChild(
+                el("li", null, "去 F5 看 14 条指标 —— 数字由服务端算好下发。"),
+              );
+              res.appendChild(ul2);
+            }
+          }
+        }
+
+        function renderF5() {
+          var meta = $('[data-proto="f5-meta"]');
+          if (meta) {
+            clear(meta);
+            var dl = el("dl");
+            dl.style.margin = "0";
+            dl.style.display = "grid";
+            dl.style.gridTemplateColumns = "auto minmax(0,1fr)";
+            dl.style.gap = "2px 12px";
+            REPORT_META.forEach(function (m) {
+              dl.appendChild(el("dt", { class: "hint", text: m.k }));
+              dl.appendChild(
+                el("dd", { class: "mono", text: m.v, style: "margin:0" }),
+              );
+            });
+            meta.appendChild(dl);
+          }
+
+          var groups = [];
+          METRICS.forEach(function (m) {
+            if (!groups.length || groups[groups.length - 1].name !== m.group)
+              groups.push({ name: m.group, n: 0 });
+            groups[groups.length - 1].n += 1;
+          });
+
+          var pillrow = $('[data-proto="f5-groups"]');
+          if (pillrow) {
+            clear(pillrow);
+            groups.forEach(function (g) {
+              var b = el(
+                "button",
+                {
+                  class: "pill",
+                  type: "button",
+                  "aria-pressed": g.name === state.f5.group ? "true" : "false",
+                },
+                g.name + "（" + g.n + "）",
+              );
+              b.addEventListener("click", function () {
+                state.f5.group = g.name;
+                renderF5();
+              });
+              pillrow.appendChild(b);
+            });
+          }
+
+          var tb = $('[data-proto="f5-table"] tbody');
+          if (tb) {
+            clear(tb);
+            var rows = METRICS.filter(function (m) {
+              return m.group === state.f5.group;
+            });
+            rows.forEach(function (m) {
+              var tr = el("tr");
+              tr.appendChild(el("td", { class: "mono", text: m.key }));
+              tr.appendChild(el("td", { text: m.label }));
+              tr.appendChild(el("td", { class: "num", text: m.sample }));
+              tr.appendChild(el("td", { text: m.unit }));
+              tr.appendChild(el("td", { class: "num", text: String(m.dp) }));
+              tb.appendChild(tr);
+            });
+          }
+
+          var st = $('[data-proto="f5-structure"]');
+          if (st) {
+            st.textContent = STRUCTURE_COUNTS.map(function (c) {
+              return c.label + "=" + c.n;
+            }).join(" / ");
+          }
+        }
+
+        function renderF6() {
+          $$("[data-f6-tab]").forEach(function (b) {
+            b.setAttribute(
+              "aria-pressed",
+              b.getAttribute("data-f6-tab") === state.f6.tab ? "true" : "false",
+            );
+          });
+          $$("[data-f6-panel]").forEach(function (p) {
+            p.hidden = p.getAttribute("data-f6-panel") !== state.f6.tab;
+          });
+
+          var tb = $('[data-proto="f6-rules"] tbody');
+          if (tb) {
+            clear(tb);
+            RULES.forEach(function (r, i) {
+              var tr = el("tr");
+              tr.appendChild(el("td", { class: "mono", text: r.id }));
+              tr.appendChild(
+                el("td", { text: r.label + "（" + r.express + "）" }),
+              );
+              tr.appendChild(el("td", { text: r.unit }));
+              tr.appendChild(
+                el("td", {
+                  class: "num",
+                  text: r.unit === "RATIO" ? r.thr.toFixed(2) : String(r.thr),
+                }),
+              );
+              tr.appendChild(el("td", { text: r.action }));
+              tr.appendChild(el("td", { text: r.sev }));
+              tr.appendChild(
+                el("td", { text: r.openOnly ? "是" : "否（流动性双向都管）" }),
+              );
+              var td = el("td");
+              var b = el(
+                "button",
+                { class: "btn small", type: "button" },
+                "改阈值",
+              );
+              b.addEventListener("click", function () {
+                openThresholdDialog(i);
+              });
+              td.appendChild(b);
+              tr.appendChild(td);
+              tb.appendChild(tr);
+            });
+          }
+
+          var log = $('[data-proto="f6-change-log"]');
+          if (log) {
+            clear(log);
+            if (!state.changeLog.length)
+              log.appendChild(el("li", null, "还没有改动。"));
+            state.changeLog.forEach(function (c) {
+              log.appendChild(
+                el(
+                  "li",
+                  null,
+                  c.id +
+                    " " +
+                    c.rule +
+                    "：" +
+                    c.from +
+                    " → " +
+                    c.to +
+                    "（operator=" +
+                    c.operator +
+                    "，reason=" +
+                    c.reason +
+                    "）",
+                ),
+              );
+            });
+          }
+
+          renderSim();
+          renderLog();
+          renderBlacklist();
+        }
+
+        function openThresholdDialog(index) {
+          var r = RULES[index];
+          openDialog("改阈值 · " + r.id, function (body) {
+            body.appendChild(
+              el("p", {
+                class: "hint",
+                text:
+                  "口径：" +
+                  r.express +
+                  " · unit=" +
+                  r.unit +
+                  " · 越界裁决=" +
+                  r.action +
+                  (r.openOnly ? " · 只拦开仓" : " · 双向都管"),
+              }),
+            );
+            var f1 = el("div", { class: "field" });
+            f1.appendChild(el("label", { for: "dlg-thr" }, "新阈值"));
+            var input = el("input", {
+              id: "dlg-thr",
+              type: "number",
+              step: "0.01",
+              value: String(r.thr),
+            });
+            f1.appendChild(input);
+            body.appendChild(f1);
+
+            var f2 = el("div", { class: "field" });
+            f2.appendChild(el("label", { for: "dlg-op" }, "operator"));
+            var op = el("input", {
+              id: "dlg-op",
+              type: "text",
+              placeholder: "必填（D10：要追到人）",
+            });
+            f2.appendChild(op);
+            body.appendChild(f2);
+
+            var f3 = el("div", { class: "field" });
+            f3.appendChild(el("label", { for: "dlg-rs" }, "reason"));
+            var rs = el("input", {
+              id: "dlg-rs",
+              type: "text",
+              placeholder: "必填（D6：审计要能解释）",
+            });
+            f3.appendChild(rs);
+            body.appendChild(f3);
+
+            var errs = el("ul", { class: "errlist" });
+            body.appendChild(errs);
+
+            var row = el("div", { class: "rowbtns" });
+            var save = el(
+              "button",
+              { class: "btn primary", type: "button" },
+              "提交变更",
+            );
+            var cancel = el("button", { class: "btn", type: "button" }, "取消");
+            cancel.addEventListener("click", closeDialog);
+            save.addEventListener("click", function () {
+              clear(errs);
+              setInvalid(input, false);
+              setInvalid(op, false);
+              setInvalid(rs, false);
+              var result = validateChange(
+                r,
+                Number(input.value),
+                op.value,
+                rs.value,
+              );
+              if (!result.ok) {
+                result.errors.forEach(function (m) {
+                  errs.appendChild(el("li", { text: m }));
+                });
+                setInvalid(input, true);
+                setInvalid(op, true);
+                setInvalid(rs, true);
+                return;
+              }
+              var from = r.unit === "RATIO" ? r.thr.toFixed(2) : String(r.thr);
+              r.thr = Number(input.value);
+              state.changeLog.unshift({
+                id:
+                  "[变更ID]-" +
+                  String(state.changeLog.length + 1).padStart(3, "0"),
+                rule: r.id,
+                from: from,
+                to: r.unit === "RATIO" ? r.thr.toFixed(2) : String(r.thr),
+                operator: op.value,
+                reason: rs.value,
+              });
+              closeDialog();
+              renderF6();
+              renderF1();
+            });
+            row.appendChild(save);
+            row.appendChild(cancel);
+            body.appendChild(row);
+          });
+        }
+
+        function readSimInput() {
+          function num(name) {
+            return Number($('[data-proto="' + name + '"]').value);
+          }
+          return {
+            side: $('[data-proto="sim-side"]').value,
+            qty: num("sim-qty"),
+            price: num("sim-price"),
+            holdingValue: num("sim-holding"),
+            accountValue: num("sim-account"),
+            advValue: num("sim-adv"),
+            tradesToday: num("sim-trades"),
+            sectorValue: num("sim-sector"),
+            strategyDrawdown: num("sim-dd-strategy"),
+            accountDrawdown: num("sim-dd-account"),
+          };
+        }
+
+        function renderSim() {
+          var out = $('[data-proto="sim-action"]');
+          if (!out) return;
+          var v = state.f6.sim;
+          if (!v) {
+            out.textContent = "—";
+            var tb0 = $('[data-proto="sim-detail"] tbody');
+            if (tb0) clear(tb0);
+            return;
+          }
+          out.textContent = v.action;
+          var box = $('[data-proto="sim-verdict"]');
+          if (box) {
+            box.className = "verdict" + (v.action === "HALT" ? " HALT" : "");
+          }
+          var note = $('[data-proto="sim-note"]');
+          if (note) {
+            var parts = [];
+            if (v.kill) parts.push("Kill Switch 已合上 ⇒ 直接 HALT");
+            if (!v.fired.length) parts.push("没有规则被触发（干净样本）");
+            else parts.push("触发的规则：" + v.fired.join(" / "));
+            if (v.action !== "PASS" && v.action !== "HALT") {
+              parts.push("能缩减的用 REDUCE，减不到量才 REJECT");
+            }
+            if (v.action === "HALT")
+              parts.push("熔断只拦开仓 —— 任何情况下都留出货的路（D5）");
+            note.textContent = parts.join(" · ");
+          }
+          var tb = $('[data-proto="sim-detail"] tbody');
+          if (tb) {
+            clear(tb);
+            v.rows.forEach(function (row) {
+              var tr = el("tr");
+              tr.appendChild(el("td", { class: "mono", text: row.rule }));
+              tr.appendChild(el("td", { text: row.express }));
+              tr.appendChild(
+                el("td", {
+                  class: "num",
+                  text:
+                    row.value === null
+                      ? "—"
+                      : row.unit === "RATIO"
+                        ? pct(row.value)
+                        : String(row.value),
+                }),
+              );
+              tr.appendChild(
+                el("td", {
+                  class: "num",
+                  text: row.unit === "RATIO" ? pct(row.thr) : String(row.thr),
+                }),
+              );
+              tr.appendChild(
+                el("td", {
+                  text: row.fired
+                    ? "触发"
+                    : "未触发" + (row.detail ? "（" + row.detail + "）" : ""),
+                }),
+              );
+              tr.appendChild(el("td", { text: row.action }));
+              tb.appendChild(tr);
+            });
+          }
+        }
+
+        function renderLog() {
+          var tb = $('[data-proto="log-table"] tbody');
+          if (!tb) return;
+          clear(tb);
+          var filter = state.f6.lastLogAction;
+          if (filter) {
+            var sel = $('[data-proto="log-filter"]');
+            if (sel) sel.value = filter;
+          }
+          var rows = DECISIONS.filter(function (d) {
+            return !filter || d.action === filter;
+          });
+          rows.forEach(function (d) {
+            var tr = el("tr");
+            tr.appendChild(el("td", { class: "mono", text: d.id }));
+            tr.appendChild(el("td", { class: "mono", text: d.sym }));
+            tr.appendChild(el("td", { text: d.side }));
+            tr.appendChild(el("td", { class: "num", text: String(d.qty) }));
+            tr.appendChild(el("td", { text: d.action }));
+            tr.appendChild(
+              el("td", {
+                class: "mono",
+                text: d.rules.length ? d.rules.join(", ") : "—",
+              }),
+            );
+            var td = el("td");
+            var b = el(
+              "button",
+              { class: "btn small", type: "button" },
+              "看理由",
+            );
+            b.addEventListener("click", function () {
+              renderLogDetail(d);
+            });
+            td.appendChild(b);
+            tr.appendChild(td);
+            tb.appendChild(tr);
+          });
+          var out = $('[data-proto="log-readout"]');
+          if (out) out.textContent = "命中 " + rows.length + " 行";
+        }
+
+        function renderLogDetail(d) {
+          var out = $('[data-proto="log-detail"]');
+          if (!out) return;
+          clear(out);
+          out.appendChild(el("b", null, "决策 " + d.id + " · " + d.action));
+          var ul = el("ul", { class: "notes" });
+          ul.appendChild(
+            el("li", null, "请求：" + d.side + " " + d.qty + " 股 " + d.sym),
+          );
+          ul.appendChild(
+            el(
+              "li",
+              null,
+              "触发规则：" + (d.rules.length ? d.rules.join(" / ") : "无"),
+            ),
+          );
+          if (d.action === "REDUCE") {
+            ul.appendChild(
+              el(
+                "li",
+                null,
+                "adjusted_quantity = 风控允许的最大数量（缩减后的量）",
+              ),
+            );
+          } else if (d.action === "REJECT" || d.action === "HALT") {
+            ul.appendChild(
+              el(
+                "li",
+                null,
+                "adjusted_quantity = 请求数量（照抄请求）—— 这一条在 REJECT / HALT 行里有已知的措辞缺口",
+              ),
+            );
+          }
+          ul.appendChild(
+            el(
+              "li",
+              null,
+              "PASS 的行进决策日志，不进拦截留痕：risk_intercept_log 只收 REDUCE / REJECT / HALT，没有 PASS。",
+            ),
+          );
+          out.appendChild(ul);
+        }
+
+        function renderF7() {
+          var tb = $('[data-proto="f7-table"] tbody');
+          if (tb) {
+            clear(tb);
+            STRATEGIES.forEach(function (s, i) {
+              var stage = state.f7.stage[s.id] || s.stage;
+              var tr = el(
+                "tr",
+                i === state.f7.selected ? { class: "sel" } : null,
+              );
+              tr.appendChild(el("td", { class: "mono", text: s.id }));
+              tr.appendChild(el("td", { text: s.cls }));
+              tr.appendChild(el("td", { text: stage }));
+              tr.appendChild(el("td", { class: "mono", text: s.bt }));
+              var td = el("td");
+              var b = el(
+                "button",
+                { class: "btn small", type: "button" },
+                "选中",
+              );
+              b.addEventListener("click", function () {
+                state.f7.selected = i;
+                renderF7();
+              });
+              td.appendChild(b);
+              tr.appendChild(td);
+              tb.appendChild(tr);
+            });
+          }
+
+          var cur = STRATEGIES[state.f7.selected];
+          var stage = state.f7.stage[cur.id] || cur.stage;
+
+          var flow = $('[data-proto="f7-stages"]');
+          if (flow) {
+            clear(flow);
+            // 终态（如「已退休」）不在 STAGE_ORDER 里。若直接 indexOf，
+            // 拿到 -1 ⇒ 六个灯全灭，看起来像「一步都没走」，
+            // 与左边的「当前阶段：已退休」自相矛盾。终态就接在第 7 格。
+            var shown = STAGE_ORDER.slice();
+            if (shown.indexOf(stage) < 0) shown.push(stage);
+            var idx = shown.indexOf(stage);
+            shown.forEach(function (name, i) {
+              flow.appendChild(
+                el(
+                  "span",
+                  {
+                    class: "node",
+                    "data-done": i <= idx ? "1" : "0",
+                    "aria-current": i === idx ? "step" : "false",
+                  },
+                  name,
+                ),
+              );
+              if (i < shown.length - 1)
+                flow.appendChild(el("span", { class: "arrow", text: "→" }));
+            });
+          }
+
+          var out = $('[data-proto="f7-readout"]');
+          if (out) out.textContent = cur.id + " 当前阶段：" + stage;
+
+          var guard = $('[data-proto="f7-guard"]');
+          if (guard) {
+            clear(guard);
+            guard.appendChild(el("b", null, "守卫："));
+            guard.appendChild(
+              el(
+                "span",
+                null,
+                " " +
+                  (canAdvance(stage, {
+                    outOfSampleDone: state.f7.outOfSampleDone,
+                    backtested: cur.bt !== "—",
+                  }).reason || "可以推进。"),
+              ),
+            );
+          }
+
+          var his = $('[data-proto="f7-history"]');
+          if (his) {
+            clear(his);
+            if (!state.f7.history.length)
+              his.appendChild(el("li", null, "还没有阶段迁移。"));
+            state.f7.history.forEach(function (h) {
+              his.appendChild(el("li", null, h));
+            });
+          }
+        }
+
+        function renderF8() {
+          var reg = $('[data-proto="f8-regime"]');
+          if (reg) {
+            clear(reg);
+            REGIMES.forEach(function (r) {
+              var b = el(
+                "button",
+                {
+                  class: "pill",
+                  type: "button",
+                  "aria-pressed": r === state.f8.regime ? "true" : "false",
+                },
+                r,
+              );
+              b.addEventListener("click", function () {
+                state.f8.regime = r;
+                renderF8();
+              });
+              reg.appendChild(b);
+            });
+          }
+
+          var tb = $('[data-proto="f8-orders"] tbody');
+          if (tb) {
+            clear(tb);
+            if (!state.f8.orders.length) {
+              var tr0 = el("tr");
+              tr0.appendChild(
+                el(
+                  "td",
+                  { colspan: "6", class: "ellipsis" },
+                  "还没触发再平衡。",
+                ),
+              );
+              tb.appendChild(tr0);
+            } else {
+              state.f8.orders.forEach(function (o) {
+                var tr = el("tr");
+                tr.appendChild(el("td", { class: "mono", text: o.id }));
+                tr.appendChild(el("td", { class: "mono", text: o.sym }));
+                tr.appendChild(el("td", { class: "num", text: String(o.qty) }));
+                tr.appendChild(el("td", { class: "num", text: o.pct }));
+                tr.appendChild(
+                  el("td", { text: o.done ? "已成交" : "待成交" }),
+                );
+                var td = el("td");
+                var b = el(
+                  "button",
+                  { class: "btn small", type: "button" },
+                  "推进一笔",
+                );
+                b.disabled = o.done;
+                if (o.done) b.setAttribute("data-proto-keep-disabled", "1");
+                b.addEventListener("click", function () {
+                  o.done = true;
+                  renderF8();
+                });
+                td.appendChild(b);
+                tr.appendChild(td);
+                tb.appendChild(tr);
+              });
+            }
+          }
+
+          var out = $('[data-proto="f8-readout"]');
+          if (out) {
+            var done = state.f8.orders.filter(function (o) {
+              return o.done;
+            }).length;
+            out.textContent = state.f8.orders.length
+              ? "子单 " +
+                done +
+                " / " +
+                state.f8.orders.length +
+                " 已成交 · 触发方式：" +
+                BALANCE_TRIGGERS[1] +
+                " · 市场状态：" +
+                state.f8.regime
+              : "还没有订单。";
+          }
+
+          var flow = $('[data-proto="f8-agent"]');
+          if (flow) {
+            clear(flow);
+            AGENT_STEPS.forEach(function (name, i) {
+              flow.appendChild(
+                el(
+                  "span",
+                  {
+                    class: "node",
+                    "data-done": i < state.f8.agentStep ? "1" : "0",
+                  },
+                  name,
+                ),
+              );
+              if (i < AGENT_STEPS.length - 1)
+                flow.appendChild(el("span", { class: "arrow", text: "→" }));
+            });
+            flow.appendChild(el("span", { class: "arrow", text: "→" }));
+            flow.appendChild(
+              el("span", { class: "frame-inv", text: "人工晋级决策" }),
+            );
+          }
+
+          var aout = $('[data-proto="f8-agent-readout"]');
+          if (aout) aout.textContent = "第 " + state.f8.agentStep + " / 7 步";
+
+          var ev = $('[data-proto="f8-agent-evidence"]');
+          if (ev) {
+            clear(ev);
+            ev.appendChild(el("b", null, "已产出的中间物："));
+            if (!state.f8.agentStep) {
+              ev.appendChild(el("span", null, " 还没有（第 0 步）。"));
+            } else {
+              var ul = el("ul", { class: "notes" });
+              AGENT_EVIDENCE.slice(0, state.f8.agentStep).forEach(function (t) {
+                ul.appendChild(el("li", null, t));
+              });
+              ev.appendChild(ul);
+            }
+          }
+        }
+
+        function renderAll() {
+          renderF1();
+          renderF2();
+          renderF2Notes();
+          renderF3();
+          renderF4();
+          renderF5();
+          renderF6();
+          renderF7();
+          renderF8();
+          renderScreenState();
+        }
+
+        /* ==================================================================
+           6. 事件接线
+           ================================================================== */
+
+        window.addEventListener("hashchange", function () {
+          applyRoute(false);
+        });
+
+        document.addEventListener("click", function (ev) {
+          var t = ev.target;
+          if (!t || !t.closest) return;
+
+          /* 钩子上溯必须停在 <body> 之前。
+             全局状态属性曾经就挂在 <body> 上（现已改成 data-ui-*，与钩子分命名空间），
+             而那时 `t.closest("[data-proto-kill]")` 会让**任何**一次点击都先命中 body
+             ⇒ 排在它后面的分支永远轮不到。实测症状：确认框点「确认 / 取消 / 关闭」
+             都关不掉，点「关闭」反而把确认框重开一次（showModal 二次调用被 try 吞掉）。
+             这条上溯边界是防它重犯的第二道锁 —— 改名字是治根，限定上溯是防复发。 */
+          function hook(sel) {
+            var n = t.closest(sel);
+            return n && n !== document.body ? n : null;
+          }
+
+          var nav = hook("[data-proto-nav]");
+          if (nav) return; // 交给浏览器处理 href
+
+          var jump = hook("[data-proto-jump]");
+          if (jump) {
+            ev.preventDefault();
+            go(jump.getAttribute("data-proto-jump"));
+            return;
+          }
+
+          var env = hook("header.chrome [data-proto-env]");
+          if (env) {
+            setEnv(env.getAttribute("data-proto-env"));
+            return;
+          }
+
+          if (hook("[data-proto-kill-off]")) {
+            confirmDialog(
+              "解除全局 Kill Switch",
+              "确认解除？解除后新开仓恢复。",
+              function () {
+                setKill(false);
+              },
+            );
+            return;
+          }
+          if (hook("[data-proto-kill]")) {
+            confirmDialog(
+              "全局 Kill Switch",
+              "确认合上？合上后所有新开仓被拦（已持仓仍可平）。",
+              function () {
+                setKill(true);
+              },
+            );
+            return;
+          }
+
+          var st = hook("[data-proto-state]");
+          if (st) {
+            state.viewState = st.getAttribute("data-proto-state");
+            renderScreenState();
+            return;
+          }
+
+          var tab = hook("[data-f6-tab]");
+          if (tab) {
+            state.f6.tab = tab.getAttribute("data-f6-tab");
+            renderF6();
+            return;
+          }
+
+          if (hook("[data-proto='run-inspect']")) {
+            state.inspect = 0;
+            renderF1();
+            var timer = setInterval(function () {
+              state.inspect += 1;
+              renderF1();
+              if (state.inspect >= TRADING_LOOP.length) clearInterval(timer);
+            }, 90);
+            return;
+          }
+          if (hook("[data-proto='step-inspect']")) {
+            if (state.inspect < TRADING_LOOP.length) state.inspect += 1;
+            renderF1();
+            return;
+          }
+
+          if (hook("[data-proto='f2-run']")) {
+            if (state.f2.running) return;
+            state.f2.running = true;
+            var bar = $('[data-proto="f2-progress"] > span');
+            var w = 0;
+            var t2 = setInterval(function () {
+              w += 20;
+              if (bar) bar.style.width = Math.min(w, 100) + "%";
+              if (w >= 100) {
+                clearInterval(t2);
+                state.f2.running = false;
+                INGEST_RUNS.unshift({
+                  id: "R-" + String(INGEST_RUNS.length + 8).padStart(4, "0"),
+                  schema: state.f2.schema || "daily",
+                  rows: 4820,
+                  ver: "[数据版本]",
+                  ok: true,
+                });
+                renderF2();
+                if (bar) bar.style.width = "0%";
+              }
+            }, 70);
+            return;
+          }
+
+          if (hook("[data-proto='f3-build']")) {
+            state.f3.built = true;
+            renderF3();
+            return;
+          }
+          if (hook("[data-proto='f3-bl-add']")) {
+            var sym = $('[data-proto="f3-bl-input"]').value;
+            var reason = $('[data-proto="f3-bl-reason"]').value;
+            var msg = $('[data-proto="f3-bl-msg"]');
+            if (!sym.replace(/\s/g, "") || !reason.replace(/\s/g, "")) {
+              if (msg)
+                msg.textContent = "标的与理由都必填（理由缺失 ⇒ 审计解释不了）";
+              setInvalid(
+                $('[data-proto="f3-bl-input"]'),
+                !sym.replace(/\s/g, ""),
+              );
+              setInvalid(
+                $('[data-proto="f3-bl-reason"]'),
+                !reason.replace(/\s/g, ""),
+              );
+              return;
+            }
+            setInvalid($('[data-proto="f3-bl-input"]'), false);
+            setInvalid($('[data-proto="f3-bl-reason"]'), false);
+            // 黑名单是按标的去重的集合（同一标的只该有一条，否则两行长得一模一样、
+            // 而「有几条理由」这种问题就没有唯一答案）。
+            var dup = state.blacklist.some(function (r) {
+              return (
+                String(r.sym).replace(/\s/g, "").toUpperCase() ===
+                sym.replace(/\s/g, "").toUpperCase()
+              );
+            });
+            if (dup) {
+              if (msg)
+                msg.textContent =
+                  "已在黑名单里（同一标的只留一条；要改理由先把旧的那条移除）。";
+              setInvalid($('[data-proto="f3-bl-input"]'), true);
+              return;
+            }
+            state.blacklist.push({ sym: sym, reason: reason });
+            $('[data-proto="f3-bl-input"]').value = "";
+            $('[data-proto="f3-bl-reason"]').value = "";
+            if (msg) msg.textContent = "已加入（F6 的黑名单标签页也看得见）。";
+            renderBlacklist();
+            return;
+          }
+
+          if (hook("[data-proto='f4-clear-seed']")) {
+            $('[data-proto="f4-seed"]').value = "";
+            state.f4.errors = validateBacktestForm(readF4Input());
+            renderF4();
+            return;
+          }
+          if (hook("[data-proto='f4-run']")) {
+            var errors = validateBacktestForm(readF4Input());
+            state.f4.errors = errors;
+            renderF4();
+            if (errors.length) return;
+            var bar4 = $('[data-proto="f4-progress"] > span');
+            var w4 = 0;
+            var t4 = setInterval(function () {
+              w4 += 25;
+              if (bar4) bar4.style.width = Math.min(w4, 100) + "%";
+              if (w4 >= 100) {
+                clearInterval(t4);
+                state.f4.ran = true;
+                renderF4();
+                if (bar4) bar4.style.width = "0%";
+              }
+            }, 80);
+            return;
+          }
+
+          if (hook("[data-proto='sim-run']")) {
+            state.f6.sim = evaluateRisk(readSimInput(), RULES, state.kill);
+            renderSim();
+            return;
+          }
+          if (hook("[data-proto='sim-preset-over']")) {
+            $('[data-proto="sim-qty"]').value = "90000";
+            state.f6.sim = evaluateRisk(readSimInput(), RULES, state.kill);
+            renderSim();
+            return;
+          }
+          if (hook("[data-proto='sim-preset-halt']")) {
+            $('[data-proto="sim-dd-account"]').value = "0.31";
+            state.f6.sim = evaluateRisk(readSimInput(), RULES, state.kill);
+            renderSim();
+            return;
+          }
+
+          if (hook("[data-proto='f7-advance']")) {
+            var cur = STRATEGIES[state.f7.selected];
+            var s = state.f7.stage[cur.id] || cur.stage;
+            var chk = canAdvance(s, {
+              outOfSampleDone: state.f7.outOfSampleDone,
+              backtested: cur.bt !== "—",
+            });
+            var out7 = $('[data-proto="f7-readout"]');
+            if (!chk.ok) {
+              if (out7) out7.textContent = "被守卫拦下：" + chk.reason;
+              return;
+            }
+            var i7 = STAGE_ORDER.indexOf(s);
+            if (i7 < 0 || i7 >= STAGE_ORDER.length - 1) return;
+            var nxt = STAGE_ORDER[i7 + 1];
+            if (nxt === "模拟盘") state.f7.outOfSampleDone = true;
+            state.f7.stage[cur.id] = nxt;
+            state.f7.history.unshift(
+              cur.id + "：" + s + " → " + nxt + "（页内示意）",
+            );
+            renderF7();
+            return;
+          }
+          if (hook("[data-proto='f7-retire']")) {
+            var cur2 = STRATEGIES[state.f7.selected];
+            confirmDialog(
+              "退休策略 " + cur2.id,
+              "确认退休？退休后该策略不再参与调度。",
+              function () {
+                state.f7.stage[cur2.id] = "已退休";
+                state.f7.history.unshift(
+                  cur2.id + "：退休（危险动作，已二次确认）",
+                );
+                renderF7();
+              },
+            );
+            return;
+          }
+
+          if (hook("[data-proto='f8-rebalance']")) {
+            state.f8.orders = [0, 1, 2, 3, 4].map(function (i) {
+              return {
+                id: "C-" + (i + 1),
+                sym: "[标的代码]",
+                qty: 2000,
+                pct: "0.04",
+                done: false,
+              };
+            });
+            renderF8();
+            return;
+          }
+          if (hook("[data-proto='f8-agent-step']")) {
+            if (state.f8.agentStep < AGENT_STEPS.length)
+              state.f8.agentStep += 1;
+            renderF8();
+            return;
+          }
+          if (hook("[data-proto='f8-agent-approve']")) {
+            if (state.f8.agentStep < AGENT_STEPS.length) {
+              var ev2 = $('[data-proto="f8-agent-readout"]');
+              if (ev2)
+                ev2.textContent =
+                  "第 " +
+                  state.f8.agentStep +
+                  " / 7 步 —— 七步没走完就不能晋级（每一步都要有中间物）";
+              return;
+            }
+            confirmDialog(
+              "人工晋级决策",
+              "确认晋级？这一步之后进入落地阶段（模拟盘 / 灰度），归 F7 的状态机。",
+              function () {
+                state.f8.agentStep = 0;
+                renderF8();
+                go("F7");
+              },
+            );
+            return;
+          }
+
+          if (hook("[data-proto-selftest]")) {
+            runSelfTest();
+            return;
+          }
+          if (hook("[data-proto-reset]")) {
+            resetDemo();
+            return;
+          }
+          if (hook("[data-proto-dlg-close]")) {
+            closeDialog();
+            return;
+          }
+        });
+
+        $$("select[data-proto]").forEach(function (s) {
+          s.addEventListener("change", function () {
+            var name = s.getAttribute("data-proto");
+            if (name === "f2-schema") state.f2.schema = s.value;
+            if (name === "f2-status") state.f2.status = s.value;
+            if (name === "log-filter") state.f6.lastLogAction = s.value;
+            renderF2();
+            renderLog();
+          });
+        });
+
+        // 状态单选框走 change（点文字标签时事件的 target 是 label，closest 抓不到 input）
+        $$('input[name="pstate"]').forEach(function (radio) {
+          radio.addEventListener("change", function () {
+            if (!radio.checked) return;
+            state.viewState = radio.getAttribute("data-proto-state");
+            renderAll();
+          });
+        });
+
+        // 表单改动即重算校验（让「可填」这件事看得见）
+        [
+          "f4-symbol",
+          "f4-start",
+          "f4-end",
+          "f4-strategy",
+          "f4-fast",
+          "f4-slow",
+          "f4-cash",
+          "f4-seed",
+        ].forEach(function (n) {
+          var node = $('[data-proto="' + n + '"]');
+          if (!node) return;
+          node.addEventListener("input", function () {
+            state.f4.errors = validateBacktestForm(readF4Input());
+            state.f4.ran = false;
+            renderF4();
+          });
+          node.addEventListener("change", function () {
+            state.f4.errors = validateBacktestForm(readF4Input());
+            renderF4();
+          });
+        });
+
+        function resetDemo() {
+          // 「复位」必须连输入框一起复位：只重置 state 的话，改过的试算输入与
+          // 回测表单会留在页面上，看起来像「复位没生效」（实测：载入预置样本后
+          // 按复位，数量仍是 90000）。回填 HTML 里写的默认值，不另抄一份常量。
+          $$("input[data-proto]").forEach(function (e) {
+            if (e.type === "checkbox" || e.type === "radio")
+              e.checked = e.defaultChecked;
+            else e.value = e.defaultValue;
+          });
+          $$("select[data-proto]").forEach(function (sel) {
+            var d = [].slice.call(sel.options).filter(function (o) {
+              return o.defaultSelected;
+            })[0];
+            sel.value = d ? d.value : (sel.options[0] || { value: "" }).value;
+          });
+          INGEST_RUNS.length = 0;
+          [
+            {
+              id: "R-0007",
+              schema: "daily",
+              rows: 4820,
+              ver: "[数据版本]",
+              ok: true,
+            },
+            {
+              id: "R-0006",
+              schema: "financial",
+              rows: 316,
+              ver: "[数据版本]",
+              ok: true,
+            },
+            {
+              id: "R-0005",
+              schema: "factor",
+              rows: 4820,
+              ver: "[数据版本]",
+              ok: true,
+            },
+            {
+              id: "R-0004",
+              schema: "dividend",
+              rows: 42,
+              ver: "[数据版本]",
+              ok: false,
+            },
+            {
+              id: "R-0003",
+              schema: "index",
+              rows: 300,
+              ver: "[数据版本]",
+              ok: true,
+            },
+            {
+              id: "R-0002",
+              schema: "daily",
+              rows: 0,
+              ver: "[数据版本]",
+              ok: false,
+            },
+          ].forEach(function (r) {
+            INGEST_RUNS.push(r);
+          });
+          state.f2 = { schema: "", status: "", detail: null, running: false };
+          state.f3 = { rule: 0, built: false };
+          state.f4 = {
+            running: false,
+            ran: false,
+            errors: [],
+            credentials: null,
+          };
+          state.f6 = { tab: "rules", sim: null, lastLogAction: null };
+          state.f7 = {
+            selected: 0,
+            stage: {},
+            history: [],
+            outOfSampleDone: false,
+          };
+          state.f8 = { orders: [], agentStep: 0, regime: "震荡" };
+          state.blacklist = [
+            { sym: "[标的代码]", reason: "[示例理由]：近 20 日均额过低" },
+          ];
+          state.inspect = 0;
+          state.changeLog = [];
+          RULES[0].thr = 0.1;
+          RULES[1].thr = 3;
+          RULES[2].thr = 0.15;
+          RULES[3].thr = 0.2;
+          RULES[4].thr = 0.1;
+          RULES[5].thr = 0.3;
+          setKill(false);
+          renderAll();
+        }
+
+        /* ==================================================================
+           7. 页内自检（一个探测器一个样本 + 一个干净控制组）
+           ================================================================== */
+
+        function runSelfTest() {
+          var probes = [];
+          function probe(code, expect, fn) {
+            var got;
+            try {
+              got = fn();
+            } catch (e) {
+              got = "异常：" + e.message;
+            }
+            probes.push({
+              code: code,
+              expect: expect,
+              got: String(got),
+              ok: String(got) === String(expect),
+            });
+          }
+
+          // --- 结构 ---
+          probe("P-01", "9", function () {
+            return $$("section.screen").length;
+          });
+          probe("P-02", "0", function () {
+            var missing = SCREENS.filter(function (s) {
+              return !$('section.screen[data-proto-screen="' + s + '"]');
+            });
+            return missing.length;
+          });
+          probe("P-03", "0", function () {
+            var bad = $$("nav.sidenav a[data-proto-nav]").filter(function (a) {
+              var t = (a.getAttribute("href") || "")
+                .replace(/^#\//, "")
+                .toUpperCase();
+              return SCREENS.indexOf(t) < 0;
+            });
+            return bad.length;
+          });
+          probe("P-04", "0", function () {
+            // 无外链：不许出现 http(s) 绝对地址（file:// 打开时也要成立）
+            var bad = 0;
+            $$("a,img,script,link,iframe").forEach(function (n) {
+              ["href", "src"].forEach(function (a) {
+                var v = n.getAttribute(a) || "";
+                if (/^https?:/i.test(v)) bad += 1;
+              });
+            });
+            return bad;
+          });
+          probe("P-05", "1", function () {
+            // 降级面存在
+            var ns = document.querySelector("noscript");
+            return ns && ns.textContent.indexOf("section.screen") >= 0 ? 1 : 0;
+          });
+
+          // --- 口径：绩效 14 条 / 分组 3-4-6-1 / 抬头 7 项 ---
+          probe("P-06", "14", function () {
+            return METRICS.length;
+          });
+          probe("P-07", "3/4/6/1", function () {
+            var g = [];
+            METRICS.forEach(function (m) {
+              if (!g.length || g[g.length - 1].n !== m.group)
+                g.push({ n: m.group, c: 0 });
+              g[g.length - 1].c += 1;
+            });
+            return g
+              .map(function (x) {
+                return x.c;
+              })
+              .join("/");
+          });
+          probe("P-08", "7", function () {
+            return REPORT_META.length;
+          });
+          probe("P-09", "3", function () {
+            return STRUCTURE_COUNTS.length;
+          });
+
+          // --- 口径：风控 6 条 / 只拦开仓 5 条 / 无重名 ---
+          probe("P-10", "6", function () {
+            return RULES.length;
+          });
+          probe("P-11", "5", function () {
+            return RULES.filter(function (r) {
+              return r.openOnly;
+            }).length;
+          });
+          probe("P-12", "0", function () {
+            var seen = {};
+            var dup = 0;
+            RULES.forEach(function (r) {
+              if (seen[r.id]) dup += 1;
+              seen[r.id] = true;
+            });
+            return dup;
+          });
+
+          // --- 口径：五张 schema 都在采集表里出现过 ---
+          probe("P-13", "0", function () {
+            var missing = SCHEMAS.filter(function (s) {
+              return !INGEST_RUNS.some(function (r) {
+                return r.schema === s.key;
+              });
+            });
+            return missing.length;
+          });
+
+          // --- 口径：显示串只有 percent 带 %；小数位与示例串一致 ---
+          probe("P-28", "0", function () {
+            // 这不是「我们的约定」，是 format_metric（Python）与 formatMetric（Java）
+            // 两侧共同的实现形状 —— 设计稿里画错了就会误导实现。
+            var bad = METRICS.filter(function (m) {
+              var hasPct = /%$/.test(m.sample);
+              return m.unit === "percent" ? !hasPct : hasPct;
+            });
+            return bad.length;
+          });
+          probe("P-29", "0", function () {
+            var bad = METRICS.filter(function (m) {
+              var body = m.sample.replace(/%$/, "");
+              var dot = body.indexOf(".");
+              var d = dot < 0 ? 0 : body.length - dot - 1;
+              return d !== m.dp;
+            });
+            return bad.length;
+          });
+
+          // --- 试算：四个样本 + 一个干净控制组 ---
+          var cleanInput = {
+            side: "BUY",
+            qty: 100,
+            price: 10,
+            holdingValue: 0,
+            accountValue: 1000000,
+            advValue: 50000000,
+            tradesToday: 0,
+            sectorValue: 0,
+            strategyDrawdown: 0.01,
+            accountDrawdown: 0.01,
+          };
+          var overInput = JSON.parse(JSON.stringify(cleanInput));
+          overInput.qty = 90000;
+          var haltInput = JSON.parse(JSON.stringify(cleanInput));
+          haltInput.accountDrawdown = 0.31;
+          // 平仓样本：熔断那两条「只拦开仓」必须不参与，而流动性那条双向都管。
+          // 量级要够大，否则连流动性那条都不触发 ⇒ 样本什么都没测到（假绿）。
+          var sellInput = JSON.parse(JSON.stringify(haltInput));
+          sellInput.side = "SELL";
+          sellInput.qty = 600000;
+
+          probe("P-14", "PASS", function () {
+            return evaluateRisk(cleanInput, RULES, false).action;
+          });
+          probe("P-15", "REDUCE", function () {
+            return evaluateRisk(overInput, RULES, false).action;
+          });
+          probe("P-16", "HALT", function () {
+            return evaluateRisk(haltInput, RULES, false).action;
+          });
+          probe("P-17", "REDUCE", function () {
+            // 卖出：熔断那两条（只拦开仓）不参与，只剩流动性那条可能触发
+            var v = evaluateRisk(sellInput, RULES, false);
+            return v.fired.indexOf("account_drawdown_pct") < 0
+              ? v.action
+              : "熔断错误地拦了平仓";
+          });
+          probe("P-18", "HALT", function () {
+            return evaluateRisk(cleanInput, RULES, true).action;
+          });
+
+          // --- 阈值校验：四种坏值 + 一种好值 ---
+          var r0 = RULES[0]; // RATIO 0.10
+          var r1 = RULES[1]; // COUNT 3
+          probe("P-19", "拒绝", function () {
+            return validateChange(r0, 10, "op", "reason").ok ? "接受" : "拒绝";
+          });
+          probe("P-20", "拒绝", function () {
+            return validateChange(r1, 1.5, "op", "reason").ok ? "接受" : "拒绝";
+          });
+          probe("P-21", "拒绝", function () {
+            return validateChange(r0, 0.2, "", "reason").ok ? "接受" : "拒绝";
+          });
+          probe("P-22", "拒绝", function () {
+            return validateChange(r0, 0.2, "op", "  ").ok ? "接受" : "拒绝";
+          });
+          probe("P-23", "拒绝", function () {
+            return validateChange(r0, 0.1, "op", "reason").ok ? "接受" : "拒绝";
+          });
+          probe("P-24", "接受", function () {
+            return validateChange(r0, 0.2, "op", "reason").ok ? "接受" : "拒绝";
+          });
+
+          // --- 生命周期守卫 ---
+          probe("P-25", "拒绝", function () {
+            return canAdvance("样本外", { outOfSampleDone: false }).ok
+              ? "接受"
+              : "拒绝";
+          });
+          probe("P-26", "接受", function () {
+            return canAdvance("样本外", { outOfSampleDone: true }).ok
+              ? "接受"
+              : "拒绝";
+          });
+          probe("P-27", "拒绝", function () {
+            return canAdvance("正式服役", {}).ok ? "接受" : "拒绝";
+          });
+
+          // --- 交互底座（这一组钉的是一类叫「静默 no-op」的坑） ---
+          probe("P-30", "0", function () {
+            // <body> 一旦自己挂了 data-proto-* 属性，钩子选择器（$("[data-proto-kill]")、
+            // t.closest("[data-proto-state]")）就会按文档序先命中 body ⇒ 排在它
+            // 后面的分支全变成死代码，而且不报错。全局状态住 data-ui-*。
+            var n = 0;
+            [].slice.call(document.body.attributes).forEach(function (a) {
+              if (a.name.indexOf("data-proto") === 0) n++;
+            });
+            return String(n);
+          });
+          probe("P-31", "一致", function () {
+            var b = document.body;
+            var same =
+              b.getAttribute("data-ui-env") === state.env &&
+              b.getAttribute("data-ui-kill") === (state.kill ? "on" : "off") &&
+              b.getAttribute("data-ui-state") === state.viewState;
+            return same ? "一致" : "不一致";
+          });
+          probe("P-32", "落在按钮上·pressed 同步", function () {
+            var b = $("header.chrome [data-proto-kill]");
+            if (!b || b === document.body || b.tagName !== "BUTTON")
+              return "没落在按钮上";
+            return b.getAttribute("aria-pressed") ===
+              (state.kill ? "true" : "false")
+              ? "落在按钮上·pressed 同步"
+              : "落在按钮上·pressed 不同步";
+          });
+          probe("P-33", "4/4 关得掉·取消不改·确认生效", function () {
+            var dlg = $("#dlg");
+            if (!dlg) return "没有 #dlg";
+            function byText(txt) {
+              var all = $$("button", dlg);
+              for (var i = 0; i < all.length; i++)
+                if (all[i].textContent.trim() === txt) return all[i];
+              return null;
+            }
+            var n = 0;
+            var yesRan = false;
+            var kill0 = state.kill;
+            // ① 静态「关闭」按钮 —— 它走的是文档级事件委托，今天坏掉的就是它
+            openDialog("自检", function (b) {
+              b.appendChild(el("p", { text: "探针" }));
+            });
+            var cb = $("[data-proto-dlg-close]", dlg);
+            if (dlg.open && cb) {
+              cb.click();
+              n += dlg.open ? 0 : 1;
+            }
+            // ② 取消：得关掉，且不许把 onYes 跑掉
+            confirmDialog("自检", "探针", function () {
+              yesRan = true;
+            });
+            var no = byText("取消");
+            if (dlg.open && no) {
+              no.click();
+              n += dlg.open ? 0 : 1;
+            }
+            var cancelKept = !yesRan && state.kill === kill0;
+            // ③ 确认：得关掉，且 onYes 真的跑到
+            confirmDialog("自检", "探针", function () {
+              yesRan = true;
+            });
+            var yes = byText("确认");
+            if (dlg.open && yes) {
+              yes.click();
+              n += dlg.open ? 0 : 1;
+            }
+            // ④ 重复关闭幂等：再关一次不许报错、不许把它重新打开
+            closeDialog();
+            n += dlg.open ? 0 : 1;
+            return (
+              n +
+              "/4 关得掉" +
+              (cancelKept ? "·取消不改" : "·取消动了") +
+              (yesRan ? "·确认生效" : "·确认没生效")
+            );
+          });
+          probe("P-34", "1 个选中·与 state 一致", function () {
+            var on = $$('input[name="pstate"]').filter(function (r) {
+              return r.checked;
+            });
+            if (on.length !== 1) return on.length + " 个选中·不唯一";
+            return (
+              "1 个选中·" +
+              (on[0].getAttribute("data-proto-state") === state.viewState
+                ? "与 state 一致"
+                : "与 state 不一致（" + state.viewState + "）")
+            );
+          });
+          probe(
+            "P-35",
+            SCHEMAS.length + 1 + " 选项·筛后与数据一致",
+            function () {
+              var sel = $('[data-proto="f2-schema"]');
+              if (!sel) return "没有 f2-schema";
+              if (sel.options.length !== SCHEMAS.length + 1)
+                return sel.options.length + " 选项·少了下拉项";
+              var keepS = state.f2.schema;
+              var keepT = state.f2.status;
+              var want = {};
+              INGEST_RUNS.forEach(function (r) {
+                if (r.ok) want[r.schema] = (want[r.schema] || 0) + 1;
+              });
+              var bad = [];
+              Object.keys(want).forEach(function (k) {
+                state.f2.schema = k;
+                state.f2.status = "PASS";
+                renderF2();
+                var trs = $$('[data-proto="f2-table"] tbody tr');
+                var ok =
+                  trs.length === want[k] &&
+                  trs.every(function (tr) {
+                    return tr.children[1] && tr.children[1].textContent === k;
+                  });
+                if (!ok) bad.push(k + ":" + trs.length + "/" + want[k]);
+              });
+              state.f2.schema = keepS;
+              state.f2.status = keepT;
+              renderF2();
+              return (
+                SCHEMAS.length +
+                1 +
+                " 选项·" +
+                (bad.length ? "筛错 " + bad.join(",") : "筛后与数据一致")
+              );
+            },
+          );
+          probe("P-36", TRADING_LOOP.length + " 盏灯·都指向真实屏", function () {
+            var nodes = $$('[data-proto="loop-trading"] .node');
+            if (nodes.length !== TRADING_LOOP.length)
+              return nodes.length + " 盏灯·数量不符";
+            var bad = nodes.filter(function (b) {
+              var m = /，点击进 (F[1-8])$/.exec(
+                b.getAttribute("aria-label") || "",
+              );
+              return !m || SCREENS.indexOf(m[1]) < 0;
+            });
+            return (
+              TRADING_LOOP.length +
+              " 盏灯·" +
+              (bad.length ? bad.length + " 盏指向不存在的屏" : "都指向真实屏")
+            );
+          });
+          probe("P-37", "拒空·收新·拒重复·两表同步", function () {
+            var input = $('[data-proto="f3-bl-input"]');
+            var reason = $('[data-proto="f3-bl-reason"]');
+            var addBtn = $('[data-proto="f3-bl-add"]');
+            var msg = $('[data-proto="f3-bl-msg"]');
+            if (!input || !reason || !addBtn) return "F3 黑名单控件缺失";
+            var saved = state.blacklist.map(function (r) {
+              return { sym: r.sym, reason: r.reason };
+            });
+            var savedIn = input.value;
+            var savedRe = reason.value;
+            var savedMsg = msg ? msg.textContent : "";
+            var savedInv = [
+              input.getAttribute("aria-invalid"),
+              reason.getAttribute("aria-invalid"),
+            ];
+            function add(sym, rea) {
+              input.value = sym;
+              reason.value = rea;
+              addBtn.click();
+            }
+            var n0 = state.blacklist.length;
+            add("", "理由"); // 空标的 —— 必须拒
+            var b1 = state.blacklist.length === n0;
+            add("SELFTEST.SZ", "自检探针"); // 新标的 —— 必须收
+            var b2 = state.blacklist.length === n0 + 1;
+            add("SELFTEST.SZ", "自检探针"); // 同一标的再来 —— 必须拒
+            var b3 = state.blacklist.length === n0 + 1;
+            var sync =
+              $$('[data-proto="f3-bl-table"] tbody tr').length ===
+                (state.blacklist.length || 1) &&
+              $$('[data-proto="f6-bl-table"] tbody tr').length ===
+                (state.blacklist.length || 1);
+            // 探针必须自己不留下痕迹
+            state.blacklist = saved;
+            input.value = savedIn;
+            reason.value = savedRe;
+            if (msg) msg.textContent = savedMsg;
+            setInvalid(input, savedInv[0] === "true");
+            setInvalid(reason, savedInv[1] === "true");
+            renderBlacklist();
+            var bad = [];
+            if (!b1) bad.push("空未拒");
+            if (!b2) bad.push("新未收");
+            if (!b3) bad.push("重复未拒");
+            if (!sync) bad.push("两表未同步");
+            return "拒空·收新·拒重复·两表同步" + (bad.length ? "，实际：" + bad.join(",") : "");
+          });
+          probe("P-38", "退休：7 格全亮·多一格「已退休」·再推进被拦", function () {
+            // 「已退休」不在 STAGE_ORDER 里 —— 曾经 indexOf 得 -1 ⇒ 六盏灯全灭
+            // 而左边写着「当前阶段：已退休」，并且守卫还说「可以推进」。
+            var savedStage = {};
+            Object.keys(state.f7.stage).forEach(function (k) {
+              savedStage[k] = state.f7.stage[k];
+            });
+            var savedHist = state.f7.history.slice();
+            var savedSel = state.f7.selected;
+            var target = -1;
+            STRATEGIES.forEach(function (s, j) {
+              var st = state.f7.stage[s.id] || s.stage;
+              if (st === "正式服役" && target < 0) target = j;
+            });
+            var bad = [];
+            if (target < 0) {
+              bad.push("没有可退休的策略");
+            } else {
+              state.f7.selected = target;
+              renderF7();
+              $('[data-proto="f7-retire"]').click();
+              var yes = $$("#dlg .rowbtns button").filter(function (b) {
+                return b.textContent.trim() === "确认";
+              })[0];
+              if (!yes) {
+                bad.push("对话框里找不到「确认」");
+              } else {
+                yes.click();
+                var nodes = $$('[data-proto="f7-stages"] .node');
+                var lit = nodes.filter(function (n) {
+                  return n.getAttribute("data-done") === "1";
+                });
+                var curNode = nodes.filter(function (n) {
+                  return n.getAttribute("aria-current") === "step";
+                });
+                var readout = $('[data-proto="f7-readout"]').textContent;
+                var guardTxt = $('[data-proto="f7-guard"]').textContent;
+                if (readout.indexOf("已退休") < 0) bad.push("读数没写已退休");
+                if (nodes.length !== STAGE_ORDER.length + 1)
+                  bad.push("格子数 " + nodes.length);
+                if (lit.length !== nodes.length)
+                  bad.push("只亮 " + lit.length + " / " + nodes.length);
+                if (curNode.length !== 1 || curNode[0].textContent !== "已退休")
+                  bad.push(
+                    "终态格 " + curNode.map(function (n) { return n.textContent; }).join(""),
+                  );
+                if (guardTxt.indexOf("终态") < 0) bad.push("守卫没提终态");
+                if ($("#dlg").open) bad.push("对话框没关");
+                $('[data-proto="f7-advance"]').click();
+                if (
+                  $('[data-proto="f7-readout"]').textContent.indexOf("已退休") < 0 ||
+                  $('[data-proto="f7-readout"]').textContent.indexOf("被守卫拦下") < 0
+                )
+                  bad.push("退休后还能推进");
+              }
+            }
+            Object.keys(state.f7.stage).forEach(function (k) {
+              delete state.f7.stage[k];
+            });
+            Object.keys(savedStage).forEach(function (k) {
+              state.f7.stage[k] = savedStage[k];
+            });
+            state.f7.history.length = 0;
+            savedHist.forEach(function (h) {
+              state.f7.history.push(h);
+            });
+            state.f7.selected = savedSel;
+            renderF7();
+            return (
+              "退休：7 格全亮·多一格「已退休」·再推进被拦" +
+              (bad.length ? "，实际：" + bad.join(",") : "")
+            );
+          });
+          probe("P-39", "复位：状态与输入都回默认值", function () {
+            // 「复位」曾经只重置 state，改过的试算输入留在页面上
+            // （载入预置样本 ⇒ 按复位 ⇒ 数量还是 90000）。
+            var q = $('[data-proto="sim-qty"]');
+            var seed = $('[data-proto="f4-seed"]');
+            if (!q || !seed) return "试算 / 表单输入缺失";
+            q.value = "12345";
+            seed.value = "";
+            setKill(true);
+            $('[data-proto-reset]').click();
+            var bad = [];
+            if (q.value !== q.defaultValue)
+              bad.push("试算输入 = " + q.value);
+            if (seed.value !== seed.defaultValue)
+              bad.push("表单输入 = " + seed.value);
+            if (state.kill !== false) bad.push("Kill 还合着");
+            if (RULES[0].thr !== 0.1) bad.push("阈值 = " + RULES[0].thr);
+            if (state.viewState !== "default")
+              bad.push("状态位 = " + state.viewState);
+            return (
+              "复位：状态与输入都回默认值" +
+              (bad.length ? "，实际：" + bad.join(",") : "")
+            );
+          });
+
+          var host = $("#probe-out tbody");
+          clear(host);
+          probes.forEach(function (p) {
+            var tr = el("tr", p.ok ? null : { "data-bad": "1" });
+            tr.appendChild(el("td", { class: "code", text: p.code }));
+            tr.appendChild(el("td", { text: p.expect }));
+            tr.appendChild(el("td", { text: p.ok ? "OK" : "得到 " + p.got }));
+            host.appendChild(tr);
+          });
+          var bad = probes.filter(function (p) {
+            return !p.ok;
+          });
+          var verdict = $("#probe-verdict");
+          verdict.textContent =
+            "SELFTEST " +
+            (bad.length
+              ? "FAIL —— " + bad.length + " / " + probes.length + " 项不符"
+              : "OK —— " + probes.length + " / " + probes.length + " 项符合");
+          verdict.setAttribute(
+            "data-proto-verdict",
+            bad.length ? "FAIL" : "OK",
+          );
+          return probes;
+        }
+
+        /* ==================================================================
+           8. 启动
+           ================================================================== */
+
+        window.__proto = {
+          state: state,
+          screens: SCREENS,
+          metrics: METRICS,
+          rules: RULES,
+          evaluateRisk: evaluateRisk,
+          validateChange: validateChange,
+          canAdvance: canAdvance,
+          selfTest: runSelfTest,
+          route: applyRoute,
+          go: go,
+          setKill: setKill,
+          setEnv: setEnv,
+        };
+
+        state.f4.errors = [];
+        setEnv("research");
+        setKill(false);
+        renderAll();
+        applyRoute(true);
+      })();
+    </script>
+  </body>
+</html>

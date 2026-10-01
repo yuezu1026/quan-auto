@@ -9,7 +9,10 @@
 但这**不等于「I2 收口」** —— 收口条件 ① 的三个子项现已**全部收口**：
 ~~分红~~（**2026-10-01 收口**：`DataFeed.get_dividend()` 读真值 —— 落库侧 `dc_dividend` + `PgDividendStore`，
 **可见性用公告日、取值与窗口用事件日**，见 `docs/迭代计划.md`「十二、I2 收口 ①ⓐ：分红」与 DC 契约附录 **B22**）/
-~~两个 ingestor 零产品调用点~~（**复权帧无判据已于 2026-09-29 晩 Ⅳ 收口**：`validate_frame` 现在认四张 schema、对复权帧真判值域与帧级自然键重复，见 `docs/迭代计划.md`「A6 收口 Ⅳ」与 DC 契约附录 B21.5 的 Ⅳ 块）；
+~~两个 ingestor 零产品调用点~~（**复权帧无判据已于 2026-09-29 晩 Ⅳ 收口**：`validate_frame` 真判值域与帧级自然键重复，见 `docs/迭代计划.md`「A6 收口 Ⅳ」与 DC 契约附录 B21.5 的 Ⅳ 块）；
+⚠️ 该句里「现在认**四张** schema」一度为真（Ⅳ 当时是日线 / 财务 / 指数成分 / 复权因子），
+**2026-10-01 分红落地后是五张**（多一张 `dividend`，`_match_schema` 里接在 `factor` 之后）
+⇒ 以 `quanauto/datasources.py` 的 `validate_frame` docstring 与 `_match_schema` 为准，**别在这里抄张数**。
 ⚠️ **2026-09-30**：两个 ingestor 的**产品调用点已接上** —— 新的 `quanauto/ingest.py` 就是那条编排层
 （取数 → `validate_frame` → 盖 `source`/`data_version` → 落库 → 写 `dc_ingest_run` 批次留痕），登记在
 DC 契约**附录 H** ⇒ 收口条件 ① 的三个子项**全关**（分红那条已于 2026-10-01 收口，见上行与 DC 契约附录 **B22**）。
@@ -133,3 +136,7 @@ DC 契约**附录 H** ⇒ 收口条件 ① 的三个子项**全关**（分红那
     `api/src/main/resources/static/`，而 Spring 从 `target/classes/static/` 托管，反了就 served 旧包）；
     ② Maven 用的是 `JAVA_HOME`（本机 21）**不是** PATH 里的 `java`（本机 25）⇒ POM 里钉 `java.version=21`；
     ③ 后端**不做任何统计**，展示串由服务端算好下发，前端**不许**再格式化绩效数字（否则就是「两边各算一套」）。
+- **`docs/low fidelity/` 下有两份低保真设计产物**（2026-10-01 追加）：`index.html` 静态规格板（无脚本）、
+  `prototype.html` 可交互原型（唯一一段内联脚本 + 一段页内自检，条数页面现算）。
+  ⚠️ 它俩**没有牙**：不被任何门禁读取、不解除任何缺口、**不等于**平台层开工（裁决 Q3 仍有效）。
+  现取 `CONTEXT.md` §3.H 与 `docs/low fidelity/README.md`，**不要在本文件里写它是什么样**。

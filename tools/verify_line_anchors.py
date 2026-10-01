@@ -350,6 +350,29 @@ def load_registry(path):
     return data.get('entries', [])
 
 
+def kinds_summary(stats):
+    """The `registry: ... kind=n` tail of the summary line.
+
+    Split out of `main()` so the selftest can exercise it, because it is the one place
+    that can kill the run AFTER every finding has been collected and BEFORE any of them
+    is printed. An entry without a `kind` key puts `None` into `stats['entry_kinds']`,
+    and sorting that against the string kinds raised
+
+        TypeError: '<' not supported between instances of 'NoneType' and 'str'
+
+    (found 2026-10-01 by accident: a registry edit had dropped the `kind` key, and the
+    gate exited 1 with a traceback and no `ISSUE` line -- i.e. a hard failure that the
+    harness recorded as `0 finding(s)`, which is the same "the report hid the red" shape
+    the '↔' incident taught us to harden stdout against.)
+
+    `str(kv[0])` keeps the bucket visible (`None=1`) instead of hiding or dropping it;
+    `LA-KIND` is what actually reports the bad entry.
+    """
+    return ' '.join('%s=%d' % kv
+                    for kv in sorted(stats['entry_kinds'].items(),
+                                     key=lambda kv: str(kv[0])))
+
+
 def main():
     harden_stdout()
     if '--selftest' in sys.argv:
@@ -367,8 +390,7 @@ def main():
           'numbered-verified=%d row-verified=%d'
           % (stats['hits'], stats['distinct'], stats['bound'], stats['registered'],
              stats['numbered_verified'], stats['row_verified']))
-    print('registry: entries=%d %s'
-          % (len(entries), ' '.join('%s=%d' % kv for kv in sorted(stats['entry_kinds'].items()))))
+    print('registry: entries=%d %s' % (len(entries), kinds_summary(stats)))
     for code, msg in issues:
         print('ISSUE [%s] %s' % (code, msg))
     print('verdict: %s (%d issue(s))' % ('PASS' if not issues else 'FAIL', len(issues)))
@@ -513,6 +535,31 @@ def selftest():
         # LA-KIND: a kind nobody defined would otherwise be silently skipped.
         e = [dict(clean_entries[0], kind='expected')]
         scenario('NEG-unknown-kind', clean_files, e, 'LA-KIND')
+
+        # LA-KIND, second cause: the `kind` key is MISSING (not misspelled). Beyond the
+        # code, this sample asserts the summary tail still formats -- `str(kv[0])` is
+        # what stops `None` from sorting against the string kinds, and without it the
+        # run died with a TypeError right before printing the findings, so the harness
+        # saw a crash and wrote `0 finding(s)`. One sample, two assertions, because "the
+        # detector fired" and "the verdict survived being printed" are separate facts.
+        f = dict(clean_files)
+        e = [dict(clean_entries[0])]
+        e[0].pop('kind', None)
+        root = os.path.join(base, 'NEG-missing-kind')
+        build_tree(root, f)
+        issues, stats = check(root, e)
+        codes = sorted(set(k for k, _ in issues))
+        try:
+            tail = kinds_summary(stats)
+        except Exception as exc:          # noqa: BLE001 -- catching is the assertion
+            tail = '%s: %s' % (type(exc).__name__, exc)
+        hit = ('LA-KIND' in codes) and 'None' in tail
+        print('  [NEG-missing-kind] issues=%d codes=%s summary=%r %s'
+              % (len(issues), codes, tail, 'OK' if hit else 'MISSED'))
+        if not hit:
+            for k, m in issues:
+                print('        (was) [%s] %s' % (k, m[:110]))
+        ok = ok and hit
 
         # LA-NO-WHY: quoted / structural entries are the two that can rubber-stamp, so
         # the reason string is mandatory.
