@@ -76,7 +76,8 @@ function Meta({ view }) {
 
 function Metrics({ view }) {
   // 分组顺序**从服务端给的数据里推导**，不在前端另抄一份分组清单 ——
-  // 抄一份就等于多一个会漂的地方（而这一层没有门禁）。
+  // 抄一份就等于多一个会漂的地方。这句话现在有牙了：手抄一份指标键或分组名
+  // 会被 platform-web-parity 报 PW-SPEC-COPY（它拿服务端的规格表当参照物）。
   const groups = useMemo(() => {
     const order = [];
     for (const metric of view.metrics) {
@@ -241,15 +242,18 @@ export default function App() {
         <p className="warn">
           本层有自建门禁了（<code>platform-spec-parity</code> 管声明层、
           <code>platform-runtime</code> 管运行层、
-          <code>platform-text-parity</code> 管两侧显示规则，三条都在 CI 里跑）
-          —— 但它们都<b>不起服务、不渲染页面</b> ⇒ <b>这个页面本身</b>（渲染 /
-          布局 / 视觉） 仍然没有常驻判据。 ⚠️ 订正（2026-10-01）：
+          <code>platform-text-parity</code> 管两侧显示规则、{" "}
+          <code>platform-web-parity</code> 管这一页读了哪些字段、谁在格式化数字，
+          四条都在 CI 里跑）—— 但它们都<b>不起服务、不渲染页面</b> ⇒{" "}
+          <b>这个页面本身</b>（渲染 / 布局 / 视觉） 仍然没有常驻判据。 ⚠️ 订正（2026-10-01）：
           <b>两侧展示文本是否一致</b>已不是零覆盖项（那是{" "}
-          <code>platform-text-parity</code> 的活）；仍然只有手动脚本{" "}
+          <code>platform-text-parity</code> 的活）；<b>页面读的字段名、以及页脚这份自报清单
+          本身</b>也不再是零覆盖项（那是 <code>platform-web-parity</code> 的活，它只读源码、
+          不起服务、不开浏览器）；仍然只有手动脚本{" "}
           <code>platform/check_text_parity.py</code>（需要活着的 JVM ⇒
           不能当门禁）的是
           <b>活着的服务端到底下发了什么</b>。 见{" "}
-          <code>docs/智能量化交易平台.md</code> 附录C §C.8 / §C.9 / §C.11。
+          <code>docs/智能量化交易平台.md</code> 附录C §C.8 / §C.9 / §C.11 / §C.12。
         </p>
       </footer>
     </main>

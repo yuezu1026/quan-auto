@@ -1,0 +1,95 @@
+{
+  "schema": "quanauto.platform-web-bindings/1",
+  "note": "平台层前端（页面）读服务端字段的登记表 —— 见 tools/verify_platform_web.py。每条 jsRoots 必须带 anchor（在 platform/web/src 里恰好出现一次的代码字面量：它既是「这条登记不是空壳」的证明，也是别名被改名时会变红的那根线）与 why（为什么它有/没有 Java 记录可对）。字段本身一律去 Java 侧核对，这里**不抄**字段清单。",
+  "jsRoots": [
+    {
+      "alias": "view",
+      "java": [
+        "ReportView"
+      ],
+      "anchor": [
+        "const [view, setView] = useState(null);"
+      ],
+      "why": "本页的主对象：loadReport(id) 的响应体（ReportView 的 JSON），存进 useState 后作为 prop 传进 Meta / Curve / Metrics 三个组件，字段名与 ReportView 的记录组件一一对应。"
+    },
+    {
+      "alias": "body",
+      "java": [
+        "ReportView",
+        "ReportController.ReportList"
+      ],
+      "anchor": [
+        "const list = body.reports || [];",
+        "body.error"
+      ],
+      "evidence": [
+        {
+          "field": "error",
+          "file": "platform/api/src/main/java/com/quanauto/dashboard/ApiExceptionHandler.java",
+          "literal": "Map.of(\"error\"",
+          "why": "错误响应体的形状不是任何一条记录 —— 它是 @RestControllerAdvice 里现拼的 Map.of(\"error\", …)（404 / 422 / 500 三个分支都用它）⇒ 只能记证据，不能记 Java 记录字段。"
+        }
+      ],
+      "why": "两个 REST 调用的响应体：listReports() 回来的是 ReportList 信封（读 .reports），loadReport() 回来的是 ReportView（随后以 view 这个名字继续读）；失败路径下 api.js 读 .error。"
+    },
+    {
+      "alias": "metric",
+      "java": [
+        "MetricRead"
+      ],
+      "anchor": [
+        "for (const metric of view.metrics) {"
+      ],
+      "why": "view.metrics（List<MetricRead>）的元素：Metrics 组件里循环、.filter() 与 .map() 的参数都是它。屏幕上的数字 = 它的 .text，分组 = 它的 .group（前端不换算量纲、不决定小数位）。"
+    },
+    {
+      "alias": "point",
+      "java": [
+        "CurvePointRead"
+      ],
+      "anchor": [
+        "curve.map((point) => point.equity)"
+      ],
+      "why": "view.curve（List<CurvePointRead>）的元素：curvePoints() 里两个 .map() 回调的参数；只读 .equity（double）当几何输入。"
+    },
+    {
+      "alias": "curve",
+      "java": [],
+      "container": true,
+      "anchor": [
+        "if (!curve || curve.length < 2) {"
+      ],
+      "why": "curvePoints() 的形参（调用点传 view.curve = List<CurvePointRead>）。它不是记录 ⇒ 只允许 JS 内建读（.length / .map）；它身上也**不**带量纲与小数位，所以不许拿它拼屏幕文字。"
+    },
+    {
+      "alias": "item",
+      "java": [
+        "ReportCatalog.ReportSummary"
+      ],
+      "anchor": [
+        "list.find((item) => !item.error)"
+      ],
+      "why": "报告列表的元素（ReportSummary）：<select> 的 option、.find() 与 .map() 的参数；读 .id 与 .error（读不出来的那一份在下拉里带「（读不出来）」）。"
+    },
+    {
+      "alias": "firstReadable",
+      "java": [
+        "ReportCatalog.ReportSummary"
+      ],
+      "anchor": [
+        "const firstReadable = list.find("
+      ],
+      "why": "第一个能读出来的条目（取不到就退回 list[0]）；只读 .id 当默认选中项。"
+    }
+  ],
+  "formatScope": {
+    "functions": [
+      "curvePoints"
+    ],
+    "why": "本页唯一允许出现数字格式化调用的函数：它的产物只进 SVG 的 points 几何属性，不进屏幕上的任何文字。绩效数字的格式化在服务端（Java 算好 text 随 REST 下发）。"
+  },
+  "specCopy": {
+    "exempt": [],
+    "why": "指标键与分组名一律由服务端随报告下发（metric.key / metric.group），前端手抄一份就多一个会漂的地方 —— 所以默认一个都不许抄；确实需要抄时在这里登记并写明为什么。"
+  }
+}

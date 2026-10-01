@@ -495,6 +495,46 @@ GATES = [
         'selftest': ['tools/verify_platform_text_parity.py', '--selftest'],
     },
     {
+        'name': 'platform-web-parity',
+        'tier': 'A',
+        # 上面三条兄弟门禁（`platform-spec-parity` 管声明、`platform-runtime` 管运行、
+        # `platform-text-parity` 管显示规则）在各自 `what` 里**都**写着同一句边界：
+        # 「页面本身仍然零覆盖」—— 理由是「要看页面得有一个活着的 JVM 与端口」。
+        # 那条理由只对**渲染 / 视觉**成立，对下面这几件事**不成立**，而它们正是
+        # 「静态判得动、但此前一条判据都没有」的部分：
+        #   ① 页面读的每一个字段（`view.dataVersion` 这种点链）是不是 Java 记录里真有的
+        #      组件。前端写错一个字段名不会报任何错 —— JSON 反序列化不校验字段名，
+        #      这一层也没上 TypeScript ⇒ 屏幕上是一个**静悄悄的空**，四条门禁没有一条会红。
+        #   ② 页脚那条自报清单（「本层有自建门禁了（…N 条…都在 CI 里跑）」）是不是真的
+        #      —— 加第四条门禁而页脚没跟上、或页脚点了一个不存在的名字，此前无人核对。
+        #      **自报清单本身就是一句会过期的计数句**，而它此前正落在 `skeleton` 的
+        #      `GATE-COUNT` 扫描面之外（那条判据只看 `CONTEXT.md` / `pyproject.toml` /
+        #      `quanauto/__init__.py` / `.github/**/*.md`）。
+        #   ③ 「绩效数字只在服务端格式化」这条自称是不是还成立：前端一旦出现数字格式化
+        #      调用（`toFixed` / `Intl.` / `Number(` …），两侧就各算一套 —— 那正是
+        #      `platform-text-parity` 花力气堵的那条缝的**源头**，而它只堵了服务端那一份。
+        #   ④ 指标键与分组名有没有在前端手抄一份（`Metrics` 组件里那句注释自称没有抄，
+        #      而这条自称此前**没有牙**）。参照物 = `quanauto/dashboard.py` 的规格表，
+        #      经 `tools/verify_platform_specs.py` 的 AST 扫描取得（**不 import** 它，
+        #      免得凭空多出第三份副本）。
+        # 判据是**形状**而不是正确性（与 `line-anchors` 同一哲学）：字段名对不对是形状，
+        # 布局好不好看不是。每条登记别名必须带 `anchor`（在 `platform/web/src` 里**恰好
+        # 出现一次**的代码字面量）—— 改名 ⇒ 登记表变空壳 ⇒ 报 PW-STALE-ROOT，这是
+        # 「只查单向」的补丁（兄弟门禁都用同一个手法）。
+        # 三条空转守卫：扫不到 JS / 解析不出任何 Java 记录 / 登记表为空 ⇒ 一律拒判，
+        # 绝不许打印「0 issue(s) PASS」。
+        # 边界（**这条门禁不解除那个零覆盖项**）：不打开页面 —— 不起服务、不渲染、
+        # 不看布局与视觉，**渲染 / 布局 / 视觉仍然零覆盖**；也不启动 JVM / 不编译 Java
+        # （编译与测试归 `platform-runtime`）；看不见未登记的别名（解构、计算属性名、
+        # 穿出函数参数的字段都在扫描面外）⇒ 别说「前端字段全被钉住了」。
+        # 修法方向：改了页面或 Java 记录 ⇒ 改 JSX / 记录本身；登记表过期 ⇒ 改登记表；
+        # **不许**为了让这条变绿去削 `quanauto/dashboard.py`（它是冻结的参照）。
+        'what': '平台层页面与 Java 声明一致（字段名对得上记录组件 / 前端不做数字格式化 / '
+                '不手抄规格表 / 页脚自报的门禁清单等于注册表）',
+        'runner': ['tools/verify_platform_web.py'],
+        'selftest': ['tools/verify_platform_web.py', '--selftest'],
+    },
+    {
         'name': 'line-anchors',
         'tier': 'A',
         # 上面那些文档侧门禁守的是「引用有没有指向」：附录标签在不在（appendix-refs）、

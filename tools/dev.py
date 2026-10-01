@@ -1521,13 +1521,15 @@ def selftest():
         # **自身就含那个 needle** ⇒ 判据恒真、样本空转（覆盖类判据被「名字出现过」
         # 满足，和「约束名出现在清单里」是同一族）。改用 `startswith` 后那一行以
         # `PROBLEM: ` 开头，满足不了；同时数一下行数并禁掉 PROBLEM 行，三条一起判。
-        # 注意标题比 needle 长（真实行 = `CONTEXT.md :: 6. 当前状态（一句话版）   L281-382`），
+        # 注意标题比 needle 长（真实行 = `CONTEXT.md :: 6. 当前状态（一句话版）   L288-393`），
         # 所以只能拿 needle 当**前缀**比对。
         # ⚠️ 上面那串 `L<起>-<止>` 是**会漂的引用**：2026-10-01 实测它早已从 `L243-308`
-        # 漂成 `L281-382`（CONTEXT.md 前文插过行）。当时跟的那句「**没有任何门禁会因此变红**」
+        # 漂成 `L281-382`（CONTEXT.md 前文插过行），当晚又因 §3.E/§3.G 加 `platform-web-parity`
+        # 与 §5 改写而漂成 **`L288-393`**（现取：`dev.py outline CONTEXT.md --depth=2 | Select-String 当前状态`）。
+        # 当时跟的那句「**没有任何门禁会因此变红**」
         # **已作废**：`line-anchors` 门禁（`tools/verify_line_anchors.py`，2026-10-01 建立）现在把
         # 这一行里起头那个锚点按内容对着 `CONTEXT.md` 核（登记在 `tools/line-anchors.json`，
-        # kind=numbered），漂了就报 `LA-DRIFT`；形如 `L<数字>` 的那半截才算锚点，`-382` 那半截不算。
+        # kind=numbered），漂了就报 `LA-DRIFT`；形如 `L<数字>` 的那半截才算锚点，`-393` 那半截不算。
         # 这里只拿它示范那一行的**形状** —— 这条自测一个数字都没用到，所以它再漂也不影响判据。
         # 要拿现值的办法是现取：`dev.py outline CONTEXT.md --depth=2 | Select-String 当前状态`。
         expected = ['%s :: %s' % (rel, n)

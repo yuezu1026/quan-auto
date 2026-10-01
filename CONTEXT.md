@@ -116,6 +116,7 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 | `tools/verify_error_codes.py` | ★ **新门禁**（`error-codes`，2026-09-25 注册）：三份契约的**错误码表**与 `quanauto/errors.py` 在**码 / 拼写 / 级别 / 类名**四样上对拍（16 个检查码族）。它关的是一个**登记过三次**的洞：数据中心契约的附录 A8 / B10 / C6 都写着「无机器判据，已知缺口」，风控契约 §3.7 那句「两处定义必须保持一致，不得冲突」本身就是一条没有判据的要求。**首跑就报出真冲突**：`RISK_001` 在主契约附录 D 是 `CRITICAL`、在风控契约 §3.7 是 `ERROR`，而那一行还标着「（主契约原有）」。两张登记表（`PENDING` 契约定义而刻意不实现、`IMPL_ONLY` 实现自有）**反向也查**（落地或消失即 `EC-STALE-PENDING` / `EC-IMPL-ONLY-STALE`），拼写分歧（看板码少一个下划线）登记为**显式例外**，一旦不再分歧就报 `EC-SPELLING-STALE`。**边界**：不查描述与建议措施（人写的话不是标识）、不比继承关系（一处已登记的刻意偏差会让 `issubclass` 判据误报）；方向**有意单向**（契约可以定义实现里还没有的码，反向才报 `EC-CODE-INVENTED`）；扫描面 = 三份契约 + `quanauto/*.py`，**不含** `docs/迭代计划.md` 与 `docs/开工前缺口清单.md`（它们是记录，不是契约 —— 拿记录去当判据，等于把过去的自己变成法条）。证伪两条通道：`--selftest` 19 个样本、`--falsify` 在真实产物的逐字节副本上打 7 组变异（含一个不变异的控制组） |
 | `tools/verify_platform_specs.py` | ★ **新门禁**（`platform-spec-parity`，2026-09-30 注册，tier-A）：把 **Java 侧** `platform/api/src/main/java/com/quanauto/dashboard/MetricSpec.java` 的 `METRIC_SPECS` 与 **Python 侧** `quanauto/dashboard.py` 的同一个表**双向**比对 —— 量纲 / 分组两组常量的**取值**、14 行的「键 / 分组 / 标签 / 量纲 / 小数位」**逐行**比、**行序**（只在键集合与条数都相同的前提下才比，否则不乱报漂移）、以及 `STRUCTURE_COUNTS` 的三段名。它关的是 `docs/智能量化交易平台.md` 附录C 里 C.5 第 2 条那条**登记**：「14 条规格表是**手抄副本**、没有任何门禁比对两者」⇒ 两端一旦不一致**当场红**（这正是手动脚本 `platform/check_text_parity.py` 做不到的：那个要一个活着的 JVM）。两侧提取为空、或任一侧行数低于门槛一律 FAIL（空转守卫）。**只解析文本 + Python AST**：不 import 被测代码、不编译、不启动 JVM、不渲染页面。**修复方向永远是改 Java 侧** —— `quanauto/dashboard.py` 是冻结的参照物。**边界**：只证明两侧**声明**一致，证明不了 Java 真的按这张表渲染（见 §3.G） |
 | `tools/verify_platform_build.py` | ★ **新门禁**（`platform-runtime`，2026-09-30 注册，tier-A）：在**一次性沙箱**里按 `npm ci` → `npm run build` → `mvn test` **真跑一遍**平台层切片 —— **三条命令的顺序本身就是判据**。四个判据：① 前端产物真的落进 `platform/api` 下的静态资源目录（src/main/resources/static，**该目录不入库**）；② **接缝**：`mvn test` **之前** Java 侧那份构建产物目录（target/classes/static，同样不入库）必须为空、**之后**必须出现与前端产物逐文件同名的文件（构建顺序反了会让页面 served 旧包，而这个错**不会**让任何一条 Java 测试变红）；③ surefire 的 `Tests run: N, Failures, Errors` 必须与 Java 源码里 `@Test` 的**声明数**对得上（**两个数都现取**：门禁每次运行都会把它自己数出来的声明数与 surefire 汇总行一起印出来，别在文档里抄这个数 —— 它改过一回，抄在文档里就是一句会过期的话），解析不到汇总行（例如编译不过）同样 FAIL；④ 沙箱**不写仓库一个字节**（把 `platform/` 去 `node_modules`/`target`/`dist`/`static` 后连同 `.rounds/i1` 复制到临时目录，另放一个**空的 `.git`** 供 `ReportCatalog.resolve()` 定位报告目录）⇒ harness 的指纹守卫不必为它放开任何跳过目录。**工具链（JDK 21 + Node）探不到时退 3 = SKIPPED**，harness 把 3 记成「**不算绿**」并单独出一条 `NOTE:`（「没装 JDK」与「测试红了」是两种红）。证伪：6 条注入变异全被抓（`PB-MVN-TESTS-RED` / `PB-SUREFIRE-NOT-PARSED` / `PB-NPM-BUILD-FAIL` / `PB-STATIC-EMPTY` ×2 / `PB-STITCH-PREEXISTING` / `PB-NPM-CI-FAIL`），见附录C §C.9。**边界**：不起服务（跑完就退出，没有一个活着的 JVM 在监听端口）、不渲染页面、不比对两侧**显示规则**（那是 `platform-text-parity` 的活）⇒ 「**页面本身**」仍然零覆盖 |
+| `tools/verify_platform_web.py` | ★ **新门禁**（`platform-web-parity`，2026-10-01 注册，tier-A）：平台层**页面**这一侧的静态可判部分 —— 字段名对不对得上 Java 记录 / 前端做不做数字格式化 / 有没有手抄规格表 / 页脚自报的门禁清单等不等于注册表。**只读源码**：不起服务、不打开页面、不启动 JVM、不编译 Java。逐条、边界与修法方向见 §3.G |
 | `tools/verify_data_center.py` | 数据中心契约 §3.6.1 与 DDL 约束清单双向一致（C1~C7）+ 对 `db/data_center.smoke.sql` 的触发测试覆盖核对（C7） |
 | `tools/verify_data_center_pit.py` | ★ **I2 S1 新门禁**：`DataFeed` 取数路径的 `as_of` **两层防线**（显式日期参数越界必须抛 / 经 guard 逐行登记 —— **2026-09-29 晚 Ⅱ 起第二层要求逐条写入口记它自己那个字段**，同一条写入口拿另一条的字段顶包不算接线完成，见 DC 契约 A4）+ 回测会话下 `QFQ`/`BFILL` 必须被拒 + 只有 `DataCenter.as_of()` 能产出 `DataFeed`。「越界＝抛而非裁剪」这条语义的机器判据就在这里。**2026-10-01 追加第 4 条缝**：`DataFeed.get_dividend()` 必须走 store 的 PIT 记账（`= 0.0` 只许在「没有 store」时出现；有 store 而无行也是 `0.0` —— 不许可达矩阵里那种「缺行必抛」的语义混进来；负样本 `NEG3d`/`NEG3e` 守着它）。**只解析 AST，从不执行被检代码、不跑 pytest** |
 | `tools/verify_data_center_adapter.py` | ★ **I2 S2 新门禁**（`data-center-adapter`）：采集侧适配器把源列名/取值翻成标准 schema（A1/A2/A4/A8）、采集层不含数据库驱动（A5）、源 SDK 只能惰性 import（A6）、行对象不暴露源字段名（A7）、新映射表/列名元组未登记即报错（A3/A9）、两个空转守卫（A0/A10）。**只解析源码文本**：不执行适配器、不联网、不 import pandas |
@@ -157,7 +158,7 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 > `GATE-COUNT` 抓的写法。**边界**：skill 是规程，没有牙；它说得再对也不构成证据，
 > 判据只有门禁与测试。
 
-### G. 平台层读取侧切片（2026-09-29 追加；守门门禁 = `platform-spec-parity` + `platform-runtime` + `platform-text-parity`）
+### G. 平台层读取侧切片（2026-09-29 追加；守门门禁 = `platform-spec-parity` + `platform-runtime` + `platform-text-parity` + `platform-web-parity`）
 
 | 文件 | 作用 |
 |---|---|
@@ -165,19 +166,25 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 | `platform/api/src/main/java/com/quanauto/dashboard/MetricSpec.java` | Java 侧的**规格表手抄副本**（14 行）。它与 Python 侧的一致性由 `platform-spec-parity`（见 §3.E）双向核对 ⇒ 「两边各写一套」这件事从此有牙；**不一致时要改的是这里**（Python 侧是冻结的参照物） |
 | `platform/check_text_parity.py` | 一个**活着的服务端**到底下发了什么（含报告列表端点的信封形状 —— 裸数组 vs 带 `reports` 键的对象 —— 与每一格的 `text`）的核对 —— **手动脚本，不是门禁**（需要一个活着的 JVM ⇒ 不能当门禁，也就不构成常驻证据）。它与另外两条门禁查的是**三件事**：① 声明是否一致（`platform-spec-parity`）↔ ② **显示规则**打印出的串是否一致（`platform-text-parity`，2026-10-01 起）↔ ③ **活着的服务端**真实下发了什么（只有它）。⚠️ 2026-10-01 之前它被当成「两侧展示文本一致性」的**唯一**手段，而那个差分实测出来的分歧是 **6887 / 73929（≈9.3%）** —— 它当时是绿的，因为它跑的 3 份真报告**碰巧没踩到边界**（详见 `platform/README.md`「对拍脚本」一节） |
 | `tools/verify_platform_text_parity.py` | ★ **新门禁**（`platform-text-parity`，2026-10-01 注册，tier-A）：比两侧**显示规则打印出的串**。两条腿：① Python 侧核夹具 `platform/text-parity-cases.json`（语料由 Python 现算，逐字段与现算结果比 ⇒ `PARITY-STALE-CASES`）、语料够不够厚（条数 / 量纲×小数位组合 / 每组值域边界）、登记项还在不在；② Java 侧 `FormatParityTest` 拿同一份夹具逐条喂进 `formatMetric` 与 Python 比，由 `platform-runtime` 那条真 `mvn test` 跑 ⇒ 本门禁**不启动 JVM**。它关的是一条被实测出来的真缝：`ReportProjection` 与 `dashboard.format_metric` 在 **6887 / 73929（≈9.3%）**组输入上打印出不同的串（丢负号 4161 / 十进制平局落错边 2726 / 大整数计数一类），而当时两侧已有的用例**全绿**。**修法固定**：改 Java 侧或改本门禁判据，**不许**改 `quanauto/dashboard.py`。**边界**：不打开页面（**渲染 / 布局 / 视觉仍然零覆盖**）、不起服务、不判断显示规则本身对不对 —— 只判两侧**逐字节一致** |
+| `tools/verify_platform_web.py` + `tools/platform-web-bindings.json` | ★ **新门禁**（`platform-web-parity`，2026-10-01 注册，tier-A）：页面这一侧**静态可判**的四件事 —— ① 页面里每个点链（`view.metrics[…]` / `point.equity`）的**字段名**都能在 Java 记录组件上找到（走到非记录类型之后只许点 JS 内建）；② **数字格式化**只许出现在登记的几何函数里（`PW-FORMAT-LEAK` / `PW-FORMAT-SCOPE-READ`）；③ 页面里不许出现**手抄的指标键 / 分组名**（参照物是 `quanauto/dashboard.py` 的规格表，由 `verify_platform_specs` 的 AST 扫描取，**不 import 被测代码**）；④ 页脚**自报的门禁清单**（含「N 条都在 CI 里跑」那个 N）必须等于注册表里那一组、且在 `ci.yml` 里真能找到统一入口。登记表 `tools/platform-web-bindings.json` **只写「别名 ↔ Java 记录 / 锚点 / 理由」，字段清单一律不抄**（字段从 Java 侧现解析）⇒ 加字段不必改登记表、Java 改名会当场红；每条登记必须带一句**在原文件里恰好出现一次**的锚点（`PW-STALE-ROOT` / `PW-WEAK-ANCHOR` / `PW-NO-WHY`），这是防「登记表变成没人验的空壳」的那条补丁。**边界**：**只读源码** —— 不打开页面、不起服务、不启动 JVM、不编译 Java；看不见未登记的别名（解构 / 计算属性名 / 穿过函数参数再点字段）；**不解除**「页面渲染 / 布局 / 视觉仍然零覆盖」那一条。修法方向：改前端或改登记表，**不许**削 `quanauto/dashboard.py` |
 | `platform/api/src/main/java/com/quanauto/dashboard/ApiExceptionHandler.java` | 把异常折成 `{"error": "…"}` 的那一层。**它下发的必须是「不含本机路径」的那一句**（`DashboardException.clientMessage()`），带路径的原话只进 `log.warn` —— 由 `ApiExceptionHandlerTest` 钉住，而 `platform-runtime` **真的跑** `mvn test` ⇒ 这是**常驻牙**而不是手工脚本。⚠️ 2026-09-30 修：它的类注释一直写着「不回内部路径」，**第一版实现没兑现**（把带绝对路径的 `getMessage()` 直接吐给了浏览器）；订正块见附录C **§C.10**，改动只加不减，中文案一个字没动 |
 | `tools/verify_platform_build.py` | ★ **新门禁**（`platform-runtime`，2026-09-30 注册，tier-A）：在沙箱里真跑 `npm ci` → `npm run build` → `mvn test`，并查前端产物有没有真的走到被 Spring 托管的目录（顺序反了报 `PB-STITCH-PREEXISTING`）。它是 §3.E 那张表的同一条目，放在这里是因为它守的正是**这一层**：它关掉了 C.5 里「`mvn test`、`npm run build` 没有任何门禁盯着」那半句。工具链探不到时退 **3 = SKIPPED**，而 harness 把 3 记成「不算绿」 |
 
-> **这一层的覆盖边界（别读多；2026-10-01 订正）**：四层要分清 ——
+> **这一层的覆盖边界（别读多；2026-10-01 订正）**：五层要分清 ——
 > ① **声明**层 = `platform-spec-parity`（两侧规格表双向比）；② **运行**层 = `platform-runtime`
 > （沙箱里真跑 `npm ci` / `npm run build` / `mvn test`，并查前端产物有没有真的走到被服务的目录）；
 > ③ **显示规则**层 = `platform-text-parity`（夹具 + `FormatParityTest`，由②的真 `mvn test` 跑）；
-> ④ **仍然零覆盖**的只剩**页面本身**（渲染 / 布局 / 视觉）。
+> ④ **页面（静态可判部分）** = `platform-web-parity`（字段名 / 数字格式化的落点 / 不手抄规格表 /
+> 页脚自报清单 —— **只读源码**，不起服务、不打开页面）；
+> ⑤ **仍然零覆盖**的只剩**页面渲染 / 布局 / 视觉**（要它就得把页面真的渲染出来）。
 > 「两侧**展示文本**是否一致」在 2026-10-01 之前是零覆盖项（只有手动脚本），**现在不是了**；
+> 「页面这一层一个字都没被机器看过」这半句也在同日④落地后不成立了，但上面那句⑤仍然成立 ——
+> 两个方向都别读。
 > 仍然只有手动脚本 `platform/check_text_parity.py` 的是**另一件事**：一个**活着的服务端**
 > 真实下发了什么（它要一个活着的 JVM ⇒ 不能当门禁）。
 > 「这一层真的零覆盖」那句在 2026-09-30 之前是对的，**现在不成立了** —— 订正块在附录C **§C.9**
-> （声明那层是 §C.8、显示规则那层是 **§C.11**）；③ 那层的两个成因与量级写在 `platform/README.md`，不在这里复制。
+> （声明那层是 §C.8、显示规则那层是 **§C.11**、页面静态那层是 **§C.12**）；③④ 那两层的成因与量级
+> 写在 `platform/README.md`，不在这里复制。
 > 三个已知的操作坑（构建顺序、`JAVA_HOME` 与 PATH 里不是同一个 Java、展示串只许在服务端算）
 > 写在 `platform/README.md` 与附录C 里，不在这里复制；其中**构建顺序那个坑现在有机器判据**。
 
@@ -365,10 +372,14 @@ tier-A 全绿；`core-contract-refs` 是仅剩的 tier-B 欠账，基线 **2**�
 - `platform-text-parity`（2026-10-01 追加）—— 同一层的**显示规则**侧：夹具由 Python 现算、
   Java 侧 `FormatParityTest` 逐条对拍（由上面那条的真 `mvn test` 跑）。它关的是一条实测出来的真缝：
   两侧实现在 **6887 / 73929（≈9.3%）**组输入上打印出不同的串，而当时两侧已有的用例**全绿**。
-  **仍然零覆盖**的只剩**页面本身**（渲染 / 布局 / 视觉）；仍然只有手动脚本的只剩
+- `platform-web-parity`（2026-10-01 追加）—— 同一层的**页面**侧**静态可判**的部分：页面读的字段名
+  对不对得上 Java 记录组件、数字格式化有没有漏到前端、页面里有没有手抄规格表、页脚自报的门禁清单
+  等不等于注册表。**只读源码**（不起服务、不打开页面、不启动 JVM）⇒ 它**不解除**下面这条：
+  **仍然零覆盖**的只剩**页面渲染 / 布局 / 视觉**；仍然只有手动脚本的只剩
   「一个**活着的服务端**真实下发了什么」（那脚本要一个活着的 JVM，不能当门禁）。
-  这三句的分工与两次订正写在附录C **§C.8 / §C.9**（2026-09-30：声明那层 / 运行那层）与
-  **§C.11**（2026-10-01：显示规则那层，= C.5 第 3 条的订正）以及 `platform/README.md`。
+  这四句的分工与**三次**订正写在附录C **§C.8 / §C.9**（2026-09-30：声明那层 / 运行那层）、
+  **§C.11**（2026-10-01：显示规则那层，= C.5 第 3 条的订正）与 **§C.12**
+  （2026-10-01：页面静态可判那层，= C.5 第 4 条的追加登记）以及 `platform/README.md`。
 其他能力缺口的编号**分两套登记处**，别找错地方：**开工前**那一批（B1~B10 与 Q1~Q7 裁决）在 `docs/开工前缺口清单.md`；**I2 施工期间**发现的那一批（复权因子 / 分红 / 未确认清单等）在**数据中心契约附录**（**A6** / **B7** / **B21** 系列，逐条见 **B14 / B16 / B17 / B21.6**）。两处都只标「去哪取」，不要把内容复制到本文件里。
 
 **数据库侧已不再是「运行时未证实」**：两份触发测试 2026-09-23 先在容器 `postgres:17`（17.11）上
