@@ -31,8 +31,10 @@ import org.junit.jupiter.api.Test;
  * —— 它一条都没碰到那些分歧点。7 条手挑的样本证明不了「两侧一致」，
  * 只有一份**按量纲 × 小数位 × 值**铺开的语料加一个自动比对能。
  *
- * <p>⚠️ 边界：本类只比 {@code formatMetric} 这一层。**页面本身**（渲染 / 布局 / 视觉）
- * 仍然零覆盖 —— 分工见 {@code docs/智能量化交易平台.md} 附录C §C.8 / §C.9 / §C.11。
+ * <p>⚠️ 边界：本类只比 {@code formatMetric} 这一层。仍然零覆盖的是 <b>布局 / 视觉</b>
+ * （jsdom 没有布局引擎，几何量恒为 0）—— <b>页面渲染</b>自 2026-10-01 晚起归运行层那条门禁的
+ * 第二步 {@code npm test}（vitest + jsdom 真的把页面挂起来，见附录C §C.13）。
+ * 分工见 {@code docs/智能量化交易平台.md} 附录C §C.8 / §C.9 / §C.11 / §C.12 / §C.13。
  */
 class FormatParityTest {
 

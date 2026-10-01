@@ -40,7 +40,7 @@ jobs:
         with:
           python-version: "3.13"
 
-      # 平台层门禁（`platform-runtime`）要真跑 `mvn test` / `npm ci` / `npm run build`。
+      # 平台层门禁（`platform-runtime`）要真跑 `npm ci` / `npm test` / `npm run build` / `mvn test`。
       # 这两个版本不是随手写的：`platform/pom.xml` 里 `<java.version>21</java.version>`
       # （Maven 用的是 JAVA_HOME，不是 PATH 里的 java）；Node 侧的硬要求写在
       # `platform/web/package-lock.json` 里 —— `node_modules/vite` 8.3.1 的 engines

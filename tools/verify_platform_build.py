@@ -10,10 +10,18 @@
 「展示文本只有手动脚本 (`platform/check_text_parity.py`)，`mvn test`、`npm run build`、
 页面本身**零覆盖**」。挂着的账不会自己消失 —— 只有把它变成机器判据才会。本脚本把
 其中两件（后端用例、前端构建）变成一条能自动跑、会红、也能被证伪的判据；
-**「页面本身」仍然没有门禁**；「两侧展示文本是否一致」这句**也已经不成立**
+「两侧展示文本是否一致」这句**已经不成立**
 （2026-10-01：`platform-text-parity` 门禁 + `FormatParityTest` 把两侧的显示规则逐条对拍
 —— 订正记录见 `platform/README.md`「对拍脚本」一节，那里有差分出来的量级）。
-本脚本仍然**不启动 JVM 之外的任何东西**、**不渲染页面**，所以它照旧证明不了页面印对了。
+
+⚠️ 订正（2026-10-01 晚）：上面那句「**页面本身**仍然没有门禁」也**已经过期**。
+第二步 `npm run test` 在沙箱里用 vitest + jsdom 把 `platform/web/src/App.jsx` **真的挂起来**
+（`platform/web/test/render.test.jsx`），于是「页面上印了什么」第一次有了机器判据。
+**仍然没有判据的是两件**：① **真浏览器里的布局 / 视觉**（jsdom 没有布局引擎，
+任何元素的 rect 恒为 0×0 ⇒ 「没有元素溢出视口」「没有元素重叠」这类断言恒真，是假绿
+—— 所以那条测试文件里**不许**出现矩形判据，它自己带一条 witness 用例写着这件事）；
+② **活着的服务端到底下发了什么**（那仍然只有手动脚本 `platform/check_text_parity.py`）。
+本脚本仍然不启动 JVM 之外的任何进程，也仍然不打开浏览器。
 
 为什么在沙箱里跑，而不是原地跑
 ------------------------------
@@ -42,9 +50,9 @@
 
 判据（每条都配样本，见 `--selftest`）
 ------------------------------------
-* `PB-STEP-NOT-RUN`      三步里有一步没跑（空转守卫：少跑一步不能读成通过）
+* `PB-STEP-NOT-RUN`      四步里有一步没跑（空转守卫：少跑一步不能读成通过）
 * `PB-SANDBOX-EMPTY`     沙箱是空的（复制失败 ⇒ 后面所有断言都在真空里跑）
-* `PB-SANDBOX-MISSING`   沙箱里缺必需文件（pom / package.json / lock / vite 配置）
+* `PB-SANDBOX-MISSING`   沙箱里缺必需文件（pom / package.json / lock / vite 配置 / 渲染夹具）
 * `PB-SUREFIRE-NOT-PARSED`  maven 输出里没有 surefire 汇总行 ⇒ 提取为空，后面的
                              测试计数全部形同虚设（这条必须判 FAIL，不能判「0 个测试」
                              以外的东西，否则「没提取到」与「提取到了 0」长得一样）
@@ -56,6 +64,12 @@
 * `PB-MVN-FAIL`           maven 退出码非 0（与用例红是两件事，分开报）
 * `PB-NPM-CI-FAIL`        `npm ci` 非 0（依赖装不上，后面 build 的绿没有意义）
 * `PB-NPM-BUILD-FAIL`     `npm run build` 非 0
+* `PB-VITEST-NOT-PARSED`  vitest 输出里没有 `Tests` 汇总行 ⇒ 提取为空（与 surefire
+                          那条同形的空转守卫，理由一样）
+* `PB-NPM-TESTS-ZERO`     vitest 报的总用例数是 0
+* `PB-NPM-TESTS-COUNT`    vitest 跑的总数**少于** `platform/web/test` 里声明的 `it(` 个数
+* `PB-JS-DECLARED-UNREADABLE`  数不出 JS 用例 ⇒ 上面那条失去分母，判 FAIL
+* `PB-NPM-TEST-FAIL`      `npm run test` 非 0（渲染测试红了）
 * `PB-STATIC-EMPTY`       构建说成功，却没落下 `index.html` / `assets/` 里的产物
                           （「构建成功」与「产出了东西」是两件事）
 * `PB-STITCH-PREEXISTING`  跑 maven **之前** `target/classes/static/` 就存在 ⇒ 下面那条
@@ -64,8 +78,6 @@
                           （`platform/api/target/classes/static/`）。这一条钉的是
                           `platform/README.md` 与 `platform/web/vite.config.js` 里
                           写着的那个**构建顺序陷阱**：先 `npm run build` 再 `mvn`，
-                          反了 Spring 就托管上一次的旧包。它没有门禁的时候只靠人记得。
-
 退出码：0 = PASS，1 = FAIL（有 ISSUE），**3 = SKIPPED（工具链不全，没跑）**。
 3 与 1 必须分开：`run_all_gates.py` 把 3 读成「这条门禁没跑」，写进报告的汇总结论是
 `INCOMPLETE`、退出码非 0 —— 也就是说 **SKIPPED 不算绿**，只是它不是「判据红了」而已。
@@ -93,13 +105,16 @@ ROUNDS = os.path.join('.rounds', 'i1')
 STATIC_REL = os.path.join('platform', 'api', 'src', 'main', 'resources', 'static')
 SERVED_REL = os.path.join('platform', 'api', 'target', 'classes', 'static')
 JAVA_TEST_REL = os.path.join('platform', 'api', 'src', 'test', 'java')
+JS_TEST_REL = os.path.join('platform', 'web', 'test')
 
 SKIP_RC = 3
 FAIL_RC = 1
 SELFTEST_FAIL_RC = 2
 
 # 顺序是判据的一部分：前端必须先构建，见 PB-STITCH-MISSING。
-STEPS = ('npm-ci', 'npm-build', 'mvn-test')
+# `npm-test` 排在 `npm-build` **之前**：渲染测试（vitest + jsdom）不需要构建产物，
+# 它自己会转译源码 —— 放在前面，一旦红就能立刻看出是「测试挂了」而不是「产物没出来」。
+STEPS = ('npm-ci', 'npm-test', 'npm-build', 'mvn-test')
 
 # 复制沙箱时**故意不带**的东西：它们正是本判据要重新生成的产物。
 # 注意这里只按目录**名**跳过（与 run_all_gates.fingerprint 同一套思路），
@@ -115,6 +130,9 @@ REQUIRED_IN_SANDBOX = (
     os.path.join(WEB, 'package.json'),
     os.path.join(WEB, 'package-lock.json'),
     os.path.join(WEB, 'vite.config.js'),
+    # 渲染测试的输入。缺了它 vitest 会在**解析模块**那一层报一个看不懂的错，
+    # 与「页面印错了」混成一团 —— 所以单独列出来，缺了就报 PB-SANDBOX-MISSING。
+    os.path.join(JS_TEST_REL, 'report-view.fixture.json'),
 )
 
 MIN_JAVA_MAJOR = 21
@@ -130,6 +148,19 @@ NPM_TIMEOUT = 900
 SUREFIRE_RE = re.compile(
     r'Tests run:\s*(\d+),\s*Failures:\s*(\d+),\s*Errors:\s*(\d+),\s*Skipped:\s*(\d+)')
 TEST_ANNOTATION_RE = re.compile(r'^\s*@Test\b', re.M)
+# vitest 的汇总行（前面带缩进，实测形态）：
+#   `      Tests  13 passed (13)`
+#   `      Tests  1 failed | 12 passed (13)`
+#   `      Tests  2 skipped | 11 passed (13)`
+# 另一行 `Test Files  1 passed (1)` **不含** `^\s*Tests ` 前缀，不会被误取。
+VITEST_TESTS_RE = re.compile(r'^[ \t]*Tests[ \t]+(.+)$', re.M)
+VITEST_COUNT_RE = re.compile(r'(\d+)\s+(passed|failed|skipped|todo)')
+VITEST_TOTAL_RE = re.compile(r'\((\d+)\)\s*$')
+# 只在带颜色的终端里出现；非 TTY 时 vitest 自己关掉颜色，但别把结论压在这上面。
+ANSI_RE = re.compile(r'\x1b\[[0-9;]*[A-Za-z]')
+# JS 侧声明的用例：`it(` / `test(`，允许 `it.skip(` / `it.only(` 这类后缀。
+# 数与 vitest 报的**总数**对拍 —— 与 `@Test` 那条同形，防「悄悄只跑了一部分」。
+JS_TEST_CALL_RE = re.compile(r'^\s*(?:it|test)(?:\.\w+)?\s*\(', re.M)
 JAVA_VERSION_RE = re.compile(r'version\s+"([0-9]+)(?:[._]([0-9]+))?')
 NODE_VERSION_RE = re.compile(r'v(\d+)\.')
 # `mvn -v` 第一行：Apache Maven 3.9.16 (...)
@@ -201,6 +232,40 @@ def strip_java_comments(text):
 def count_declared_tests(texts):
     """源码里声明的 `@Test` 个数。分母 —— 没有它，`PB-MVN-TESTS-COUNT` 就无从比较。"""
     return sum(len(TEST_ANNOTATION_RE.findall(strip_java_comments(t))) for t in texts)
+
+
+def strip_ansi(text):
+    """去掉 ANSI 颜色码。提取器不许依赖「调用方没开颜色」这种约定。"""
+    return ANSI_RE.sub('', text or '')
+
+
+def parse_vitest(text):
+    """vitest 输出 -> 汇总计数，或 None（提取为空）。
+
+    与 `parse_surefire` 同一条纪律：None（没提取到）与 `total == 0`（真跑 0 个）
+    是**两件事**，混成一个「0」就是最贵的那类假绿。
+    """
+    last = None
+    for m in VITEST_TESTS_RE.finditer(strip_ansi(text)):
+        last = m
+    if last is None:
+        return None
+    body = last.group(1)
+    out = {'passed': 0, 'failed': 0, 'skipped': 0, 'total': None}
+    for count, word in VITEST_COUNT_RE.findall(body):
+        if word in ('passed', 'failed', 'skipped'):
+            out[word] += int(count)
+    m = VITEST_TOTAL_RE.search(body)
+    out['total'] = int(m.group(1)) if m else (out['passed'] + out['failed']
+                                              + out['skipped'])
+    # 计数放在括号里的是总数（vitest 自己印的 `(N)`）。
+    return out
+
+
+def count_declared_js_tests(texts):
+    """`platform/web/test` 里声明的 `it(` 个数。分母 —— 没有它，
+    `PB-NPM-TESTS-COUNT` 就无从比较。"""
+    return sum(len(JS_TEST_CALL_RE.findall(t)) for t in texts)
 
 
 def toolchain_reasons(tools):
@@ -289,6 +354,35 @@ def judge(obs):
     if obs.get('npm_build_rc') != 0:
         bad('PB-NPM-BUILD-FAIL', 'npm run build exited %s' % obs.get('npm_build_rc'))
 
+    # ---- 渲染测试（vitest + jsdom）。与 surefire 那一段逐条同形 --------------
+    declared_js = obs.get('declared_js_tests')
+    if not declared_js:
+        bad('PB-JS-DECLARED-UNREADABLE',
+            'could not count a single it()/test() in %s (found %s test file(s)): the '
+            'declared-vs-run comparison loses its denominator, and 0 declared tests '
+            'would also mean the render coverage is gone' % (JS_TEST_REL,
+                                                            obs.get('js_test_files')))
+    vt = parse_vitest(obs.get('npm_test_text'))
+    if vt is None:
+        bad('PB-VITEST-NOT-PARSED',
+            'no vitest summary line ("Tests  N passed") in the npm run test output -- '
+            'extraction came back empty, so the counters below would be vacuous; '
+            'refusing to pass on an empty extraction')
+    else:
+        if vt['total'] == 0:
+            bad('PB-NPM-TESTS-ZERO', 'vitest reported 0 test(s) in total -- a green run '
+                'that ran nothing is the shape this project keeps getting bitten by')
+        if declared_js and vt['total'] and vt['total'] < declared_js:
+            bad('PB-NPM-TESTS-COUNT',
+                'vitest ran %d test(s) but %s declares %d it()/test() -- some tests '
+                'were not executed' % (vt['total'], JS_TEST_REL, declared_js))
+    if obs.get('npm_test_rc') != 0:
+        bad('PB-NPM-TEST-FAIL', 'npm run test exited %s (vitest: %s)'
+            % (obs.get('npm_test_rc'),
+               ('passed=%d failed=%d skipped=%d total=%d' % (vt['passed'], vt['failed'],
+                                                             vt['skipped'], vt['total']))
+               if vt else 'no summary line'))
+
     static_files = obs.get('static_files') or []
     names = [n for n, _ in static_files]
     total_bytes = sum(s for _, s in static_files)
@@ -317,6 +411,8 @@ def judge(obs):
         'mvn_declared': declared,
         'mvn_failures': sf['failures'] if sf else None,
         'mvn_errors': sf['errors'] if sf else None,
+        'js_total': vt['total'] if vt else None,
+        'js_declared': declared_js,
         'static_files': len(static_files),
         'static_bytes': total_bytes,
         'served_files': len(served),
@@ -483,6 +579,17 @@ def read_declared_tests(root):
     return count_declared_tests(texts), len(texts)
 
 
+def read_declared_js_tests(root):
+    base = os.path.join(root, JS_TEST_REL)
+    texts = []
+    for b, _d, fs in os.walk(base):
+        for fn in fs:
+            if fn.endswith('.js') or fn.endswith('.jsx'):
+                with open(os.path.join(b, fn), encoding='utf-8', errors='replace') as f:
+                    texts.append(f.read())
+    return count_declared_js_tests(texts), len(texts)
+
+
 def observe(root, tools, keep=False, verbose=True):
     """把三步真跑一遍，返回 obs。**不在仓库里写任何东西。**
 
@@ -491,8 +598,10 @@ def observe(root, tools, keep=False, verbose=True):
     sandbox = tempfile.mkdtemp(prefix='quanauto-platform-build-')
     obs = {'steps_ran': [], 'sandbox_missing': [], 'sandbox_files': 0,
            'maven_rc': None, 'maven_text': '', 'declared_tests': None, 'test_files': 0,
-           'npm_ci_rc': None, 'npm_ci_text': '', 'npm_build_rc': None,
-           'npm_build_text': '', 'static_files': [], 'served_before': False,
+           'npm_ci_rc': None, 'npm_ci_text': '', 'npm_test_rc': None,
+           'npm_test_text': '', 'npm_build_rc': None,
+           'npm_build_text': '', 'declared_js_tests': None, 'js_test_files': 0,
+           'static_files': [], 'served_before': False,
            'served_files': []}
     try:
         obs['sandbox_files'] = build_sandbox(root, sandbox)
@@ -501,6 +610,9 @@ def observe(root, tools, keep=False, verbose=True):
         declared, nfiles = read_declared_tests(root)
         obs['declared_tests'] = declared if (nfiles and declared) else None
         obs['test_files'] = nfiles
+        declared_js, js_files = read_declared_js_tests(root)
+        obs['declared_js_tests'] = declared_js if (js_files and declared_js) else None
+        obs['js_test_files'] = js_files
         if verbose:
             print('SANDBOX %s (%d file(s) copied)' % (sandbox, obs['sandbox_files']))
 
@@ -519,6 +631,11 @@ def observe(root, tools, keep=False, verbose=True):
         out = step('npm-ci', [tools['npm'], 'ci', '--no-audit', '--no-fund'],
                    web_dir, NPM_TIMEOUT)
         obs['npm_ci_rc'], obs['npm_ci_text'] = out['rc'], out['text']
+
+        # 渲染测试：vitest + jsdom，把 App.jsx 真的挂起来。它不需要构建产物，
+        # 所以排在 build 前面（见 STEPS 上方的注释）。
+        out = step('npm-test', [tools['npm'], 'run', 'test'], web_dir, NPM_TIMEOUT)
+        obs['npm_test_rc'], obs['npm_test_text'] = out['rc'], out['text']
 
         out = step('npm-build', [tools['npm'], 'run', 'build'], web_dir, NPM_TIMEOUT)
         obs['npm_build_rc'], obs['npm_build_text'] = out['rc'], out['text']
@@ -543,10 +660,12 @@ def observe(root, tools, keep=False, verbose=True):
 
 def report(obs, issues, stats):
     print('STATS sandbox_files=%s mvn_tests_run=%s mvn_declared=%s mvn_failures=%s '
-          'mvn_errors=%s static_files=%s static_bytes=%s served_files=%s'
+          'mvn_errors=%s js_tests_total=%s js_tests_declared=%s static_files=%s '
+          'static_bytes=%s served_files=%s'
           % (stats['sandbox_files'], stats['mvn_tests_run'], stats['mvn_declared'],
-             stats['mvn_failures'], stats['mvn_errors'], stats['static_files'],
-             stats['static_bytes'], stats['served_files']))
+             stats['mvn_failures'], stats['mvn_errors'], stats['js_total'],
+             stats['js_declared'], stats['static_files'], stats['static_bytes'],
+             stats['served_files']))
     for code, msg in issues:
         print('ISSUE [%s] %s' % (code, msg))
     if issues:
@@ -577,6 +696,10 @@ def selftest():
                'maven_rc': 0, 'maven_text': 'Tests run: 8, Failures: 0, Errors: 0, '
                                             'Skipped: 0\nBUILD SUCCESS\n',
                'npm_ci_rc': 0, 'npm_ci_text': 'added 19 packages\n',
+               'npm_test_rc': 0, 'npm_test_text': ' Test Files  1 passed (1)\n'
+                                                '      Tests  13 passed (13)\n'
+                                                '   Duration  1.57s\n',
+               'declared_js_tests': 13, 'js_test_files': 1,
                'npm_build_rc': 0, 'npm_build_text': 'built in 108ms\n',
                'static_files': [('index.html', 443), ('assets/a.js', 224286)],
                'served_before': False,
@@ -598,10 +721,12 @@ def selftest():
     expect('pb-sandbox-empty', base_obs(sandbox_files=0), ['PB-SANDBOX-EMPTY'])
     expect('pb-sandbox-missing', base_obs(sandbox_missing=['platform/pom.xml']),
            ['PB-SANDBOX-MISSING'])
-    expect('pb-step-not-run', base_obs(steps_ran=['npm-ci', 'npm-build']),
+    expect('pb-step-not-run', base_obs(steps_ran=['npm-ci', 'npm-build', 'mvn-test']),
            ['PB-STEP-NOT-RUN'])
     expect('pb-declared-unreadable', base_obs(declared_tests=None, test_files=0),
            ['PB-DECLARED-UNREADABLE'])
+    expect('pb-js-declared-unreadable', base_obs(declared_js_tests=None, js_test_files=0),
+           ['PB-JS-DECLARED-UNREADABLE'])
     # 空转守卫：maven 输出里没有汇总行 ⇒ 只能报「没提取到」，**不许**报成「跑了 0 个」
     expect('pb-surefire-not-parsed',
            base_obs(maven_text='[INFO] BUILD SUCCESS\n'),
@@ -618,6 +743,23 @@ def selftest():
            ['PB-MVN-TESTS-COUNT'])
     expect('pb-npm-ci-fail', base_obs(npm_ci_rc=1), ['PB-NPM-CI-FAIL'])
     expect('pb-npm-build-fail', base_obs(npm_build_rc=1), ['PB-NPM-BUILD-FAIL'])
+    # 空转守卫（与 surefire 那条同形）：没有汇总行时**只能**报「没提取到」，
+    # 不许报成「跑了 0 个」—— 两者在报告里长得一模一样。
+    expect('pb-vitest-not-parsed',
+           base_obs(npm_test_text='No test files found, exiting with code 1\n'),
+           ['PB-VITEST-NOT-PARSED'])
+    expect('pb-npm-tests-zero',
+           base_obs(npm_test_text='      Tests  0 passed (0)\n'),
+           ['PB-NPM-TESTS-ZERO'])
+    expect('pb-npm-tests-count',
+           base_obs(npm_test_text='      Tests  7 passed (7)\n'),
+           ['PB-NPM-TESTS-COUNT'])
+    # 红了但要报得准：总数仍是 13（与声明一致）⇒ 只报退出码那一条，
+    # 不许连带报 COUNT（那会把「有用例红了」说成「有用例没跑」）。
+    expect('pb-npm-test-fail',
+           base_obs(npm_test_rc=1,
+                    npm_test_text='      Tests  1 failed | 12 passed (13)\n'),
+           ['PB-NPM-TEST-FAIL'])
     expect('pb-static-empty', base_obs(static_files=[]), ['PB-STATIC-EMPTY'])
     expect('pb-stitch-missing', base_obs(served_files=[]), ['PB-STITCH-MISSING'])
     expect('pb-stitch-preexisting', base_obs(served_before=True),
@@ -663,6 +805,32 @@ def selftest():
     check('surefire-none-on-empty', parse_surefire('') is None
           and parse_surefire('Tests run: x') is None)
 
+    # ---- 提取器：vitest 汇总行 -------------------------------------------------
+    vt = parse_vitest(' Test Files  1 passed (1)\n      Tests  13 passed (13)\n'
+                      '   Duration  1.57s\n')
+    check('vitest-parses-all-green',
+          vt == {'passed': 13, 'failed': 0, 'skipped': 0, 'total': 13}, 'got=%s' % vt)
+    vt = parse_vitest('      Tests  1 failed | 12 passed (13)\n')
+    check('vitest-parses-a-red-run',
+          vt == {'passed': 12, 'failed': 1, 'skipped': 0, 'total': 13}, 'got=%s' % vt)
+    vt = parse_vitest('\x1b[32m      Tests  2 skipped | 11 passed (13)\x1b[0m\n')
+    check('vitest-tolerates-ansi-colour',
+          vt == {'passed': 11, 'failed': 0, 'skipped': 2, 'total': 13}, 'got=%s' % vt)
+    # `Test Files` 那一行**不许**被错当成 `Tests` 行（它也是 "N passed (N)" 的形状，
+    # 而且：单文件时两个数相等，错了也看不出来；多文件时会把文件数当成用例数）。
+    vt = parse_vitest(' Test Files  2 passed (2)\n')
+    check('vitest-does-not-read-the-Test-Files-line', vt is None, 'got=%s' % vt)
+    check('vitest-none-on-empty', parse_vitest('') is None
+          and parse_vitest('Tests  no tests\n') is not None)
+
+    # ---- `it(` 计数器 -----------------------------------------------------------
+    js = ('it("a", () => {});\ntest("b", () => {});\n'
+          '  it.skip("c", () => {});\n// it("d", () => {});\n'
+          'expect(limits(1)).toBe(1);\n')
+    check('declared-js-counter', count_declared_js_tests([js]) == 3,
+          'got=%s' % count_declared_js_tests([js]))
+    check('declared-js-counter-empty', count_declared_js_tests(['const x = 1;']) == 0)
+
     # ---- `@Test` 计数器：注释里的不算（裸正则会把它算进去，分母就虚高）--------
     src = ('// @Test\n/* @Test\n*/\n@Test\nvoid a() { String s = "// @Test"; }\n'
            '@Test\nvoid b() {}\n')
@@ -687,6 +855,8 @@ def selftest():
                 (os.path.join(WEB, 'package.json'), '{}'),
                 (os.path.join(WEB, 'package-lock.json'), '{}'),
                 (os.path.join(WEB, 'vite.config.js'), 'export default {};'),
+                (os.path.join(JS_TEST_REL, 'report-view.fixture.json'), '{}'),
+                (os.path.join(JS_TEST_REL, 'render.test.jsx'), 'it("x", () => {});'),
                 (os.path.join(WEB, 'node_modules', 'junk.js'), 'x'),
                 (os.path.join(PLATFORM, 'api', 'target', 'junk.class'), 'x'),
                 (os.path.join(ROUNDS, 'report-x.json'), '{}')):
@@ -707,6 +877,15 @@ def selftest():
         check('sandbox-rounds-i1-copied',
               any(p.startswith(ROUNDS.replace('\\', '/')) for p in names),
               'names=%s' % names)
+        # 渲染测试的输入与用例文件必须跟着进沙箱：少了夹具，vitest 会在**解析模块**那
+        # 一层报一个看不懂的错，与「页面印错了」混成一团。
+        check('sandbox-copies-js-test-inputs',
+              any(p.startswith(JS_TEST_REL.replace('\\', '/')) for p in names),
+              'names=%s' % names)
+        # 分母要能从沙箱形状里数出来，而且 `.json` 夹具**不许**被算成用例文件。
+        check('declared-js-reader-counts-only-code',
+              read_declared_js_tests(fixture) == (1, 1),
+              'got=%s' % (read_declared_js_tests(fixture),))
         check('sandbox-drops-build-outputs',
               not any('node_modules' in p or 'target/' in p for p in names),
               'copied build outputs -> the gate would judge a stale tree: %s' % names)

@@ -8,7 +8,9 @@
 一致：指标规格表）与 `platform-text-parity`（两侧的**显示规则**逐字节一致）。
 但**页面本身**（谁读哪些字段、这些字段 Java 侧有没有、页脚自报的门禁清单对不对）
 一直登记成「零覆盖项」——理由是「打开页面要一个活着的 JVM 与端口」。
-那条理由只对**渲染/视觉**成立，对下面这几件事**不成立**，因为它们都是纯文本可判的：
+那条理由只对**渲染 / 视觉**那一格成立（且其中的**渲染**自 2026-10-01 晚起也归
+`platform-runtime` 的第二步 `npm test` 了，仍然零覆盖的只剩**布局 / 视觉**；见附录C §C.13），
+对下面这几件事**不成立**，因为它们都是纯文本可判的：
 
 * 页面读的每一个字段（`view.dataVersion` 这种**点链**）是不是 Java 记录里真有的组件
   —— 前端写错一个字段名 ⇒ 屏幕上是一个静悄悄的空，四种门禁**没有一条会红**
@@ -39,13 +41,26 @@
 6. `PW-GATE-LIST` / `PW-GATE-COUNT` / `PW-CI-CLAIM`：页脚点名的 `platform-*` 门禁集合
    必须**等于**注册表里的集合；页脚那句「N 条」必须**数得出来**（= 集合大小）；
    页脚说「都在 CI 里跑」时，CI 工作流里必须真的有统一入口。
+7. `PW-FIXTURE-KEYS`：页面渲染那一层的**输入**（`platform/web/test/report-view.fixture.json`）
+   是**派生**文件（真报告 → 服务端投影 → `quanauto.dashboard.format_metric` 现算），
+   而派生文件的漂移是**单向**的 —— 所以两个方向都判：
+   ① 规格列（`key`/`group`/`label`/`unit`/`digits`，**含行序**）必须等于 Python 侧
+   规格表**现在**算出来的那几行；
+   ② 键集合必须等于 Java 记录的组件集合 —— 根类型从登记表的 `view` 别名取
+   （不在这里抄 `ReportView` 这个名字），子对象/子数组的类型从记录自己的组件类型
+   （`CountsRead` / `List<MetricRead>` / `List<CurvePointRead>`）逐层对下去，
+   **少一个/多一个都报**。
+   ⚠️ 它**不**重算 `text`（那要真的调 `format_metric`，那是 `platform-text-parity` 的活）
+   —— 夹具里那些数字串仍然靠 `platform-spec-parity`（规格表两侧一致）
+   与 `platform-text-parity`（显示规则逐字节一致 + 语料新鲜度）**间接**守着。
 
 它**不**比什么（边界，别把这些读进来）
 =====================================
-* 它**不打开页面**：不起服务、不渲染、不看布局与视觉 —— 零覆盖项「页面本身
-  （渲染 / 布局 / 视觉）」**仍然零覆盖**，这条门禁**不解除**它，只把其中
-  「纯文本可判」的部分钉住。判据依赖活着的 JVM/端口就是判据的缺陷
-  （`platform/check_text_parity.py` 因此不是门禁）。
+* 它**不打开页面**：不起服务、不渲染、不看布局与视觉 —— **布局 / 视觉**仍然零覆盖。
+  （2026-10-01 订正：**渲染**这一格自这一日起**不再是**零覆盖 —— `platform-runtime`
+  的第二步 `npm run test` 在 vitest + jsdom 里真的挂载 `App.jsx`
+  （`platform/web/test/render.test.jsx`）。本门禁**不因此**多出渲染能力：
+  它仍然一个组件都不挂，第 7 条也只读那份夹具的文本。）
 * 它**不启动 JVM、不编译 Java**：Java 侧只读文本（记录名/组件名/组件类型），
   编译与测试归 `platform-runtime`。
 * 它**看不见未登记的别名**：解构（`const { text } = metric`）、计算属性名
@@ -85,6 +100,10 @@ GATES_REL = os.path.join('tools', 'run_all_gates.py')
 CI_REL = os.path.join('.github', 'workflows', 'ci.yml')
 PAGE_REL = os.path.join('platform', 'web', 'src', 'App.jsx')
 PY_SPEC_REL = os.path.join('quanauto', 'dashboard.py')
+# 页面渲染测试的输入（**派生**文件：真报告 → 服务端投影 → format_metric 现算）。
+FIXTURE_REL = os.path.join('platform', 'web', 'test', 'report-view.fixture.json')
+# Java 记录组件里出现的容器只有这一种，所以只认这一种（认不出 ⇒ 报）。
+LIST_OF_RE = re.compile(r'^\s*List\s*<\s*([A-Za-z_$][\w.$]*)\s*>\s*$')
 
 SCHEMA = 'quanauto.platform-web-bindings/1'
 MIN_WHY = 16
@@ -305,6 +324,41 @@ def parse_java_record_texts(java_texts):
     return records, findings
 
 
+def list_element(record, field):
+    """`record` 的组件 `field` 若是 `List<X>`，返回 `X`（否则 None）。"""
+    match = LIST_OF_RE.match(record['types'].get(field) or '')
+    return match.group(1) if match else None
+
+
+def align_keys(where, obj, record, label):
+    """`obj` 的键集合 vs Java 记录 `record` 的组件集合 —— **两个方向都报**。
+
+    只查「记录里的组件在不在 obj 里」会漏掉「obj 多了一个键」那一半，而多出来的
+    键恰恰是前端读到一个永远 `undefined` 的字段的成因（JSON 反序列化不校验字段名）。
+    """
+    if not isinstance(obj, dict):
+        return [('PW-FIXTURE-KEYS', '%s 不是对象（%s 的 JSON 形状不对）'
+                 % (where, type(obj).__name__))]
+    declared = [field for field, _type in record['fields']]
+    if not declared:
+        return [('PW-FIXTURE-KEYS',
+                 'Java 记录 %s 的组件一个都没解析出来（%s）—— 键核对会空转，拒绝通过'
+                 % (label, record['file']))]
+    out = []
+    extra = sorted(set(obj) - set(declared))
+    if extra:
+        out.append(('PW-FIXTURE-KEYS',
+                    '%s 里多了 Java 记录 %s 没有的键：%s（组件清单：%s）—— 多出来的字段'
+                    '页面上读到的永远是 undefined'
+                    % (where, label, '、'.join(extra), '、'.join(declared))))
+    missing = [field for field in declared if field not in obj]
+    if missing:
+        out.append(('PW-FIXTURE-KEYS',
+                    '%s 少了 Java 记录 %s 的键：%s —— 夹具没给，页面上就少一块'
+                    % (where, label, '、'.join(missing))))
+    return out
+
+
 def all_fields(records, names):
     seen = []
     for name in names:
@@ -435,7 +489,17 @@ def load_bindings(root):
 
 
 # ── 规格表参照物（不 import quanauto.dashboard：走已有门禁的 AST 扫描） ──
-_SPEC_CACHE = {'tokens': None, 'findings': None}
+_SPEC_CACHE = {'tokens': None, 'findings': None, 'rows': None}
+
+
+def spec_rows():
+    """Python 侧规格表的**有序**行（key/group/label/unit/digits），给夹具核对用。
+
+    与 `spec_tokens()` 共用一次 AST 扫描。取不到时返回 `[]` —— 调用方必须把它
+    当成「空转」报出来，不许当成「没问题」。
+    """
+    spec_tokens()
+    return _SPEC_CACHE['rows'] or []
 
 
 def spec_tokens():
@@ -459,9 +523,11 @@ def spec_tokens():
         return tokens, findings
     for finding in spec_findings:
         findings.append(('PW-SPEC-SOURCE', '参照物自身有问题：%s' % (finding[1],)))
+    resolved = []
     for row in rows:
         if not row.get('resolved'):
             continue
+        resolved.append(row)
         if row.get('key'):
             tokens.append(row['key'])
         if row.get('group'):
@@ -470,7 +536,7 @@ def spec_tokens():
     if not tokens:
         findings.append(('PW-SPEC-SOURCE',
                          '规格表里一个键/分组名都没提取到 —— 手抄检查形同虚设，拒绝通过'))
-    _SPEC_CACHE.update({'tokens': tokens, 'findings': findings})
+    _SPEC_CACHE.update({'tokens': tokens, 'findings': findings, 'rows': resolved})
     return tokens, findings
 
 
@@ -755,6 +821,113 @@ def audit(root):
                              '页脚说「都在 CI 里跑」，而 %s 里没有统一入口 run_all_gates.py'
                              % CI_REL))
 
+    # ⑦ 渲染夹具：页面渲染那一层的**输入**（`platform-runtime` 的第二步拿它挂载页面）。
+    #    为什么必须判：它是**派生**文件（真报告 → 服务端投影 → format_metric 现算），
+    #    而派生文件的漂移是**单向**的 —— 把它整段重新生成，任何「只查有没有少」的判据
+    #    都会更绿。所以两个方向都判：规格列要等于 Python 侧规格表**现在**算出来的那几行
+    #    （含**行序**），键集合要等于 Java 记录组件集合（少一个/多一个都报）。
+    fixture = None
+    try:
+        with open(os.path.join(root, FIXTURE_REL), 'r', encoding='utf-8-sig') as handle:
+            fixture = json.load(handle)
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        findings.append(('PW-FIXTURE-KEYS',
+                         '读不到 %s / 不是合法 JSON：%s —— 页面渲染测试的输入就这一份，'
+                         '读不出来时那条判据会整段空转' % (FIXTURE_REL, exc)))
+    if fixture is not None and not isinstance(fixture, dict):
+        findings.append(('PW-FIXTURE-KEYS',
+                         '%s 顶层不是对象（%s）' % (FIXTURE_REL, type(fixture).__name__)))
+        fixture = None
+    metrics = fixture.get('metrics') if isinstance(fixture, dict) else None
+    if not isinstance(metrics, list) or not metrics:
+        findings.append(('PW-FIXTURE-KEYS',
+                         '%s 里没有非空的 metrics 数组 —— 「指标逐字印服务端给的 text」'
+                         '那条判据会整段空转，拒绝通过' % FIXTURE_REL))
+        metrics = []
+    summary['fixtureMetrics'] = len(metrics)
+
+    # ⑦ⓐ 规格列（key/group/label/unit/digits + 行序）对着 Python 侧规格表现算值
+    rows = spec_rows()
+    if metrics and not rows:
+        findings.append(('PW-FIXTURE-KEYS',
+                         '取不到 Python 侧规格表的有序行（%s）—— 夹具的规格列没法核对，'
+                         '拒绝通过' % PY_SPEC_REL))
+    if rows:
+        if metrics and len(metrics) != len(rows):
+            findings.append(('PW-FIXTURE-KEYS',
+                             '夹具里有 %d 条指标，而 %s 的规格表现在是 %d 条 —— 两边必须'
+                             '一一对应，少印/多印都会让页面上少一行或多一行'
+                             % (len(metrics), PY_SPEC_REL, len(rows))))
+        for index, (row, spec) in enumerate(zip(metrics, rows)):
+            if not isinstance(row, dict):
+                findings.append(('PW-FIXTURE-KEYS',
+                                 '夹具第 %d 条指标不是对象（%s）'
+                                 % (index + 1, type(row).__name__)))
+                continue
+            for field in ('key', 'group', 'label', 'unit', 'digits'):
+                if row.get(field) != spec.get(field):
+                    findings.append(('PW-FIXTURE-KEYS',
+                                     '夹具第 %d 条（%s）的 %s 是 %r，而规格表现在给的是'
+                                     ' %r —— 夹具是派生文件，改完规格表要重跑生成器'
+                                     % (index + 1, spec.get('key'), field,
+                                        row.get(field), spec.get(field))))
+
+    # ⑦ⓑ 键集合对着 Java 记录组件（少一个/多一个都报）。根类型从登记表的 `view` 取，
+    #     不在这里抄 `ReportView` 这个名字 —— 抄一份就多一个会漂的地方。
+    view_types = []
+    for entry in roots:
+        if entry.get('alias') == 'view':
+            view_types = [name for name in (entry.get('java') or [])]
+            break
+    view_label = view_types[0] if view_types else '(未登记)'
+    view_record = records.get(view_label) if view_types else None
+    if not view_types:
+        findings.append(('PW-FIXTURE-KEYS',
+                         '登记表里找不到别名 %r —— 夹具该对齐哪条 Java 记录无从得知，'
+                         '拒绝通过' % 'view'))
+    elif view_record is None:
+        findings.append(('PW-FIXTURE-KEYS',
+                         'Java 侧解析不到记录 %s（登记表 view 指向它）—— 组件集合取不到，'
+                         '键核对会空转，拒绝通过' % view_label))
+    elif fixture is not None:
+        findings.extend(align_keys(FIXTURE_REL, fixture, view_record, view_label))
+        summary['fixtureKeys'] = len(view_record['fields'])
+        # 顶层对象里那几个「对象 / 对象数组」组件：类型从记录自己身上取，逐层对下去。
+        counts = fixture.get('counts')
+        if counts is not None:
+            counts_type = view_record['types'].get('counts')
+            counts_record = records.get(counts_type) if counts_type else None
+            if counts_record is None:
+                findings.append(('PW-FIXTURE-KEYS',
+                                 'view.counts 的类型 %r 不是本扫描认得的 Java 记录 ——'
+                                 '它的键没法核对，拒绝通过' % (counts_type,)))
+            else:
+                findings.extend(align_keys(FIXTURE_REL + ' 的 counts', counts, counts_record,
+                                           counts_type))
+        for field in ('metrics', 'curve'):
+            elements = fixture.get(field)
+            if not isinstance(elements, list) or not elements:
+                continue  # metrics 空不空已由上面那条守卫报过；curve 由别的判据管
+            element_type = list_element(view_record, field)
+            element_record = records.get(element_type) if element_type else None
+            if element_record is None:
+                findings.append(('PW-FIXTURE-KEYS',
+                                 'view.%s 的元素类型 %r 不是本扫描认得的 Java 记录 ——'
+                                 '每一行的键都没法核对，拒绝通过' % (field, element_type)))
+                continue
+            bad = []
+            for index, item in enumerate(elements):
+                row_findings = align_keys('%s 的 %s[%d]' % (FIXTURE_REL, field, index), item,
+                                          element_record, element_type)
+                if row_findings:
+                    bad.append((index, row_findings))
+            if bad:
+                findings.extend(bad[0][1])
+                if len(bad) > 1:
+                    findings.append(('PW-FIXTURE-KEYS',
+                                     '%s 里另有 %d 行与 %s[%d] 同样的键不对齐'
+                                     % (field, len(bad) - 1, field, bad[0][0])))
+
     findings = sorted(set(findings))
     return summary, findings
 
@@ -788,10 +961,11 @@ def report(summary, findings):
           '别名改名要报（PW-STALE-ROOT）；绩效数字只许服务端格式化（PW-FORMAT-LEAK /'
           ' PW-FORMAT-SCOPE-READ）；指标键与分组名不许手抄（PW-SPEC-COPY）；'
           '带 text 的别名必须真读 .text（PW-TEXT-ECHO）；页脚自报的门禁清单要等于注册表'
-          '（PW-GATE-LIST / PW-GATE-COUNT / PW-CI-CLAIM）')
-    print('boundary: **不打开页面**（不起服务、不渲染、不看视觉：渲染/布局/视觉仍零覆盖）；'
-          '不启动 JVM、不编译 Java；看不见未登记的别名（解构 / 计算属性名 / 穿了函数参数'
-          '的字段）—— 所以别说「前端字段全被钉住了」')
+          '（PW-GATE-LIST / PW-GATE-COUNT / PW-CI-CLAIM）；渲染夹具的规格列与键集合'
+          '双向核对（PW-FIXTURE-KEYS）')
+    print('boundary: **不打开页面**（不起服务、不渲染、不看视觉；渲染归 platform-runtime'
+          ' 的第二步，布局/视觉仍零覆盖）；不启动 JVM、不编译 Java；看不见未登记的别名'
+          '（解构 / 计算属性名 / 穿了函数参数的字段）—— 所以别说「前端字段全被钉住了」')
     print('root:      %s' % summary['root'])
     print('scanned:   js=%d java=%d' % (summary['js'], summary['java']))
     print('records:   %d 个 Java 记录（组件名/类型只读文本，不编译）' % summary['records'])
@@ -805,6 +979,8 @@ def report(summary, findings):
           % summary['specTokens'])
     print('gates:     注册表 platform-*=%d；页脚点名=%d；页脚计数短语=%d'
           % (summary['registeredGates'], summary['pageGates'], summary['countPhrases']))
+    print('fixture:   渲染夹具 %d 条指标 / 主对象 %s 个键（键集合与规格列双向核对）'
+          % (summary.get('fixtureMetrics', 0), summary.get('fixtureKeys', 0)))
     for code, message in findings:
         print('FINDING [%s] %s' % (code, message))
     print('verdict: %s (%d issue(s))' % ('DIRTY' if findings else 'PASS', len(findings)))
@@ -819,6 +995,7 @@ SANDBOX_PATHS = (
     BINDINGS_REL,
     GATES_REL,
     CI_REL,
+    FIXTURE_REL,
 )
 
 
@@ -991,7 +1168,25 @@ def selftest():
     ok &= sample('ci-claim', ('PW-CI-CLAIM',), marker='run_all_gates.py',
                  mutate_fn=lambda: mutate(CI_REL, 'run_all_gates.py', 'run_all_the_gates.py', 2))
 
-    # ⑧ 空转守卫：扫描面为空 ⇒ 必须 FAIL，而不是「0 issue(s) PASS」
+    # ⑧ 渲染夹具（audit 的 ⑦）：规格列 / 键集合 / 空转守卫
+    ok &= sample('fixture-metric-key-missing', ('PW-FIXTURE-KEYS',), marker='少了 Java 记录',
+                 # 把键改名而不是删行：`"text"` 是那条指标的最后一项，删掉会让前一行
+                 # 留下一个尾逗号 ⇒ 那是「JSON 坏了」不是「键少了」，两个样本不能混。
+                 mutate_fn=lambda: mutate(FIXTURE_REL, '"text": "-3.2043%"',
+                                          '"textX": "-3.2043%"'))
+    ok &= sample('fixture-extra-top-key', ('PW-FIXTURE-KEYS',), marker='多了 Java 记录',
+                 mutate_fn=lambda: mutate(FIXTURE_REL, '  "status": "SUCCESS",\n',
+                                          '  "status": "SUCCESS",\n  "extraTop": 1,\n'))
+    ok &= sample('fixture-spec-drift', ('PW-FIXTURE-KEYS',), marker='规格表现在给的是',
+                 mutate_fn=lambda: mutate(FIXTURE_REL, '"label": "累计收益",',
+                                          '"label": "累计收益（旧）",'))
+    ok &= sample('fixture-no-metrics', ('PW-FIXTURE-KEYS',), marker='空转',
+                 mutate_fn=lambda: mutate(FIXTURE_REL, '  "metrics": [',
+                                          '  "metricsUnused": ['))
+    ok &= sample('fixture-unreadable', ('PW-FIXTURE-KEYS',), marker='读不到',
+                 mutate_fn=lambda: os.remove(os.path.join(SANDBOX['root'], FIXTURE_REL)))
+
+    # ⑨ 空转守卫：扫描面为空 ⇒ 必须 FAIL，而不是「0 issue(s) PASS」
     ok &= sample('no-js', ('PW-NO-JS',), marker='空转', exact=False,
                  mutate_fn=lambda: shutil.rmtree(os.path.join(SANDBOX['root'], JS_DIR_REL)))
     ok &= sample('no-records', ('PW-NO-RECORDS',), marker='空转', exact=False,
@@ -1002,7 +1197,7 @@ def selftest():
                  mutate_fn=lambda: mutate(GATES_REL, "'name': 'platform-",
                                           "'name': 'x-platform-", 4))
 
-    # ⑨ 真树现状（advisory，不决定自测结论）
+    # ⑩ 真树现状（advisory，不决定自测结论）
     sample('real-tree-now', (), advisory=True)
 
     print('note: 真产物的 PASS/FAIL 由不带 --selftest 的那次运行负责判（见统一入口的 real 列）')

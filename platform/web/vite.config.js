@@ -21,4 +21,12 @@ export default defineConfig({
       "/api": "http://localhost:8080",
     },
   },
+  // 页面渲染测试（vitest + jsdom）：把 App 真的挂到 DOM 上，喂一份服务端下发的 JSON。
+  // 用例放在 platform/web/test/ 而**不是** src/ —— src/ 是**出厂源码**，
+  // tools/verify_platform_web.py 会把它整棵树拿去扫「有没有手抄规格表」（PW-SPEC-COPY）
+  // 与「页面读了哪些字段」，测试文件混进去只会让那两条判据的扫描面变得含混。
+  test: {
+    environment: "jsdom",
+    include: ["test/**/*.test.{js,jsx}"],
+  },
 });

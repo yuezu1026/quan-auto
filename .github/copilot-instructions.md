@@ -89,8 +89,12 @@ DC 契约**附录 H** ⇒ 收口条件 ① 的三个子项**全关**（分红那
   把 Java 侧 `MetricSpec.METRIC_SPECS` 与 Python 侧 `quanauto/dashboard.py` 的 `METRIC_SPECS` **双向**比对
   —— 14 行的键/分组/标签/量纲/小数位 + **行序** + 量纲与分组常量取值 + `STRUCTURE_COUNTS`。
   ✅ **运行那一层**（2026-09-30 追加）：`platform-runtime`（`tools/verify_platform_build.py`，tier-A）
-  在一次性沙箱里按 `npm ci` → `npm run build` → `mvn test` 真跑一遍，并查前端产物有没有真的落到
-  Spring 托管的目录（顺序反了报 `PB-STITCH-PREEXISTING`）。它**探不到工具链时退 3 = SKIPPED**，而
+  在一次性沙箱里按 `npm ci` → `npm test` → `npm run build` → `mvn test` 真跑一遍，
+  并查前端产物有没有真的落到 Spring 托管的目录（顺序反了报 `PB-STITCH-PREEXISTING`）。
+  第二步 `npm test` 是 **2026-10-01 晚追加**的判据：vitest + jsdom 里**真的挂载**
+  `platform/web/src/App.jsx`（用例 `platform/web/test/render.test.jsx`，输入是一份由真报告
+  投影出来的夹具）⇒ **页面渲染**那一格从此有判据了（订正块见附录C **C.13**）。
+  它**探不到工具链时退 3 = SKIPPED**，而
   harness 把 3 记成「**不算绿**」⇒ `ci.yml` 里必须真的装好 `setup-java`(21) 与 `setup-node`(22) 两个步骤。
   ✅ **显示规则那一层**（2026-10-01 追加）：`platform-text-parity`（`tools/verify_platform_text_parity.py`，tier-A）
   一边核 `platform/text-parity-cases.json` 这份夹具（语料由 Python 现算）新不新鲜、够不够厚，
@@ -99,20 +103,26 @@ DC 契约**附录 H** ⇒ 收口条件 ① 的三个子项**全关**（分红那
   打印出不同的串（丢负号 / 十进制平局落错边 / 大整数计数），而当时两侧已有的用例**全绿** ——
   手挑的样本与碰巧没踩边界的真报告都证明不了「两侧一致」。**修法固定：改 Java 侧，不许改** `quanauto/dashboard.py`。
   ✅ **页面（静态可判那部分）**（2026-10-01 追加）：`platform-web-parity`（`tools/verify_platform_web.py`
-  + 登记表 `tools/platform-web-bindings.json`，tier-A）管四件事 —— 页面读的**字段名**能不能在 Java 记录组件上
+  + 登记表 `tools/platform-web-bindings.json`，tier-A）管五件事 —— 页面读的**字段名**能不能在 Java 记录组件上
   找到、**数字格式化**有没有漏到前端、页面里有没有**手抄规格表**（拿 `quanauto/dashboard.py` 当参照物）、
-  以及页面**页脚那份自报的门禁清单**等不等于注册表（含「N 条都在 CI 里跑」那个 N）。
+  页面**页脚那份自报的门禁清单**等不等于注册表（含「N 条都在 CI 里跑」那个 N），
+  以及那份渲染夹具（`platform/web/test/report-view.fixture.json`）的**规格列与键集合**跟 Python 规格表、
+  Java 记录组件**双向**对得上（它是**派生**文件 ⇒ 少一个 / 多一个都报 —— 单向判据会让漂移隐身）。
   **它只读源码**：不起服务、不打开页面、不启动 JVM、不编译 Java。
   门禁数现取 `python tools/run_all_gates.py --list`，**不在这里抄**。
-  ⚠️ **仍然零覆盖**的只剩：**页面渲染 / 布局 / 视觉**（要它就得把页面真的渲染出来）。
-  ⚠️ 上面的四条门禁**都不起服务**（跑完就退出，没有一个活着的 JVM 在监听端口），
+  ⚠️ **仍然零覆盖**的只剩：**布局 / 视觉**（jsdom 没有布局引擎，几何量恒为 0
+  ⇒ 在 jsdom 里写「没溢出视口 / 没重叠」这类断言恒真是假绿，所以那条渲染测试里**故意不写**几何判据；
+  要它就得把页面真的渲染出来看）。
+  ⚠️ 上面的四条门禁**都不起服务**（跑完就退出，没有一个活着的 JVM 在监听端口）；
+  其中三条不渲染页面，而**渲染**那一格归 `platform-runtime` 的第二步 `npm test`（订正见附录C §C.13），
   而「页面读哪些字段 / 谁在格式化数字 / 页脚自报清单是不是真的」自 2026-10-01 起**不再**是零覆盖项
-  —— 别把这两句读反（「页面整层都没判据」与「渲染没人管」是两件事）。
+  ⇒ 剩下没人管的是**布局 / 视觉**这一件事（别把它读成「页面整层都没判据」）。
   仍然只有手动脚本 `platform/check_text_parity.py` 的是**另一件事**：一个**活着的服务端**真实下发了什么
   （它需要一个活着的 JVM ⇒ 不能当门禁，也就不构成常驻证据）—— 「两侧展示文本是否一致」在 2026-10-01
   之前也算零覆盖项，**现在不是了**（见上一段）。
-  分工与四个订正块在 `docs/智能量化交易平台.md` 附录C 的 **C.8**（声明那层）/ **C.9**（运行那层）/
-  **C.11**（显示规则那层，即 C.5 第 3 条的 2026-10-01 订正）/ **C.12**（页面静态可判那层，= C.5 第 4 条的追加登记）。
+  分工与五个订正块在 `docs/智能量化交易平台.md` 附录C 的 **C.8**（声明那层）/ **C.9**（运行那层）/
+  **C.11**（显示规则那层，即 C.5 第 3 条的 2026-10-01 订正）/ **C.12**（页面静态可判那层，= C.5 第 4 条的追加登记）/
+  **C.13**（渲染那层，= C.5 第 5 条的 2026-10-01 晚订正：渲染有判据、**布局 / 视觉**仍零覆盖）。
   契约、字段清单与代价登记在 `docs/智能量化交易平台.md` 附录C；操作细节见 `platform/README.md`。
   三个坑先记住：① **构建顺序**是先 `npm run build` 再起后端（前端产物写进
   `api/src/main/resources/static/`，而 Spring 从 `target/classes/static/` 托管，反了就 served 旧包）；

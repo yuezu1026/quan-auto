@@ -19,13 +19,15 @@ import org.junit.jupiter.api.Test;
  * 而它接在 {@code tools/run_all_gates.py} 的统一入口里、{@code ci.yml} 会跑那条命令
  * ⇒ 下面这些用例真的有人跑，把它们弄红会在 CI 上被拦住。
  *
- * <p>仍然零覆盖的是：<b>页面本身</b>（渲染 / 布局 / 视觉）。<b>两侧展示文本是否一致</b>
+ * <p>仍然零覆盖的是：<b>布局 / 视觉</b>（jsdom 没有布局引擎，几何量恒为 0 ⇒ 写几何断言只是恒真的假绿）；
+ * <b>页面渲染</b>自 2026-10-01 晚起归运行层那条门禁的第二步 {@code npm test}，见附录C §C.13。
+ * <b>两侧展示文本是否一致</b>
  * 自 2026-10-01 起<b>已经不在这里的账上</b> —— 它由 {@code platform-text-parity} 门禁盯
  * （{@code platform/text-parity-cases.json} + 本包下的 {@link FormatParityTest}，
  * 后者跑在本类同一个 {@code mvn test} 里）。下面这几条<b>不是</b>两侧一致性的判据：
  * 它们比的是「这一侧读得动真报告」，样本是手挑的。
  * 仍然只有手动脚本 {@code platform/check_text_parity.py} 的是「<b>活着的服务端</b>下发了什么」
- * （需要一个活着的 JVM ⇒ 不能当门禁）。分工见 {@code docs/智能量化交易平台.md} 附录C §C.8 / §C.9 / §C.11。
+ * （需要一个活着的 JVM ⇒ 不能当门禁）。分工见 {@code docs/智能量化交易平台.md} 附录C §C.8 / §C.9 / §C.11 / §C.12 / §C.13。
  */
 class ReportProjectionTest {
 

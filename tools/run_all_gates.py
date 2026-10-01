@@ -140,7 +140,7 @@ REPORT_PATH = os.path.join(ROOT, 'tools', 'gates-report.txt')
 # 环境要么拿到一条环境性 FAIL，要么被静默 SKIP 而报绿 —— 后者正是本项目反复踩的
 # 假门禁。这里只指向它的产物，不转述它的结论。
 #
-# 2026-09-30 修订：`platform-runtime`（`mvn test` / `npm ci` / `npm run build`）
+# 2026-09-30 修订：`platform-runtime`（`npm ci` / `npm test` / `npm run build` / `mvn test`）
 # 是**有意的例外**。区别在于它需要的东西是**可装、可探、缺失时说得清**的（JDK≥21 /
 # Node），而且它正是这一层最大的那个缺口；让它能注册的前提是给 harness 加**第三种
 # 出口**（见 SKIP_RC 与 evaluate() 里的 SKIPPED 分支）：「环境不在」既不当 FAIL
@@ -455,7 +455,7 @@ GATES = [
         'name': 'platform-runtime',
         'tier': 'A',
         # 上一条比的是两侧的**声明**；这一条是平台层运行侧的第一条：真的把
-        # `npm ci` / `npm run build` / `mvn test` 跑一遍，并在同一棵树里核对
+        # `npm ci` / `npm test` / `npm run build` / `mvn test` 跑一遍，并在同一棵树里核对
         # 「前端产物真落进了 Java 侧被服务的那个目录」。附录C §C.5 第 4 条把它们
         # 记成缺口，理由一直是「需要 JDK/Node，而判据依赖环境就是判据的缺陷」。
         # 解法不是不跑，而是把「环境不在」变成一个**响亮的、不算绿**的结论：
@@ -466,18 +466,25 @@ GATES = [
         # 加 `.rounds/i1` 与一个**空的 `.git`**）—— 一个字节都不写进仓库，因此不必
         # 去放宽 FINGERPRINT_SKIP_DIRS（放宽判据是禁的）；`.git` 是必需的，
         # `ReportCatalog.resolve()` 靠往上找 `.git` 定位报告目录，没有它测试会假红。
-        # 步骤**顺序**是判据的一部分：`npm run build` 必须早于 `mvn test` —— 产物
-        # 写进 `api/src/main/resources/static/`，而 Spring 从 `target/classes/static/`
-        # 托管（`platform/README.md` 里记的那个坑）。
-        # 边界（别把这些读进来）：**页面本身仍然零覆盖** —— 打开页面要一个活着的
-        # JVM+端口，`platform/check_text_parity.py` 因此不是门禁；它也不判断页面好不好看。
+        # 步骤**顺序**是判据的一部分：`npm test` 排在 `npm run build` 之前（渲染用例不需要构建产物）、
+        # 而 `npm run build` 必须早于 `mvn test` —— 产物写进 `api/src/main/resources/static/`，
+        # 而 Spring 从 `target/classes/static/` 托管（`platform/README.md` 里记的那个坑）。
+        # 边界（别把这些读进来）：它**不打开浏览器**，也不判断页面好不好看 ——
+        # 页面好不好看、有没有元素重叠要一个**真的渲染引擎**（jsdom 没有布局引擎，
+        # 那里的 rect 恒为 0×0 ⇒ 断言恒真是假绿）⇒ **布局 / 视觉**仍然零覆盖；
+        # 「活着的服务端下发了什么」也仍然只有手动脚本（它要一个活着的 JVM+端口）。
+        # ⚠️ 订正（2026-10-01 晚）：这一段原来写的是「**页面本身仍然零覆盖**」，**已过期** ——
+        # 第二步 `npm test` 在 vitest + jsdom 里把 `App.jsx` **真的挂起来**
+        # （`platform/web/test/render.test.jsx`，输入是一份由真报告投影出来的夹具），
+        # 「页面上印了什么」第一次有了机器判据；仍然零覆盖的只剩**布局 / 视觉**那一格
+        # （订正记录见 `platform/README.md` 抬头与附录C §C.13）。
         # 它证明的是「这一层今天真的构建了、真的测试了，且产物真的走到被服务的那个目录」。
         # ⚠️ 订正（2026-10-01）：这段原来还写着「展示串两侧是否一致也一样（零覆盖）」，
         # **已过期** —— 那条缝现在由 `platform-text-parity` 门禁盯着（Python 侧核夹具+
         # Java 侧 `FormatParityTest` 由本条的真 `mvn test` 跑）；`check_text_parity.py`
         # 仍不是门禁，但它已经不是唯一手段了。
-        'what': 'npm ci/build 与 mvn test 真跑一遍，且前端产物真的落到'
-                ' target/classes/static（工具链不在时退 3 = SKIPPED，不算绿）',
+        'what': 'npm ci/test/build 与 mvn test 真跑一遍（第二步在 jsdom 里真的把页面挂起来），'
+                '且前端产物真的落到 target/classes/static（工具链不在时退 3 = SKIPPED，不算绿）',
         'runner': ['tools/verify_platform_build.py'],
         'selftest': ['tools/verify_platform_build.py', '--selftest'],
     },
@@ -499,7 +506,8 @@ GATES = [
         # 为什么夹具不是「Java 侧现场生成」：**Python 侧是冻结的参照**，夹具由它现算得出，
         # 于是「一侧改了、另一侧不知道」必然表现为夹具变红，而不是两侧一起改绿。
         # 修法固定：改 Java 侧或改本门禁的判据，**不许**改 `quanauto/dashboard.py`。
-        # 边界：不打开页面（**渲染 / 布局 / 视觉仍然零覆盖**）；不启动 JVM；也不判断
+        # 边界：不打开页面（它自己不渲染 —— **渲染**那一格归 `platform-runtime` 的第二步，
+        # **布局 / 视觉**仍然零覆盖）；不启动 JVM；也不判断
         # 显示规则本身好不好 —— 它只判断两侧**逐字节一致**。
         'what': '平台层显示规则与 Python 侧逐字节一致（语料覆盖平局 / 丢负号 / 大整数三类边界）',
         'runner': ['tools/verify_platform_text_parity.py'],
@@ -509,10 +517,13 @@ GATES = [
         'name': 'platform-web-parity',
         'tier': 'A',
         # 上面三条兄弟门禁（`platform-spec-parity` 管声明、`platform-runtime` 管运行、
-        # `platform-text-parity` 管显示规则）在各自 `what` 里**都**写着同一句边界：
+        # `platform-text-parity` 管显示规则）当时在各自 `what` 里**都**写着同一句边界：
         # 「页面本身仍然零覆盖」—— 理由是「要看页面得有一个活着的 JVM 与端口」。
-        # 那条理由只对**渲染 / 视觉**成立，对下面这几件事**不成立**，而它们正是
-        # 「静态判得动、但此前一条判据都没有」的部分：
+        # ⚠️ 订正（2026-10-01 晚）：那句口径此后**只对布局 / 视觉成立**了 ——
+        # `platform-runtime` 的第二步 `npm test` 已经把页面真的挂起来（渲染有判据），
+        # 所以本门禁继承的那条边界也只剩**布局 / 视觉**一格（见附录C §C.13）。
+        # 而那条理由（「要看页面得有一个活着的 JVM 与端口」）对下面这几件事**不成立**，
+        # 而它们正是「静态判得动、但此前一条判据都没有」的部分：
         #   ① 页面读的每一个字段（`view.dataVersion` 这种点链）是不是 Java 记录里真有的
         #      组件。前端写错一个字段名不会报任何错 —— JSON 反序列化不校验字段名，
         #      这一层也没上 TypeScript ⇒ 屏幕上是一个**静悄悄的空**，四条门禁没有一条会红。
@@ -534,14 +545,15 @@ GATES = [
         # 「只查单向」的补丁（兄弟门禁都用同一个手法）。
         # 三条空转守卫：扫不到 JS / 解析不出任何 Java 记录 / 登记表为空 ⇒ 一律拒判，
         # 绝不许打印「0 issue(s) PASS」。
-        # 边界（**这条门禁不解除那个零覆盖项**）：不打开页面 —— 不起服务、不渲染、
-        # 不看布局与视觉，**渲染 / 布局 / 视觉仍然零覆盖**；也不启动 JVM / 不编译 Java
+        # 边界（**这条门禁不解除那条零覆盖项**）：不打开页面 —— 不起服务、不渲染、
+        # 不看布局与视觉，**布局 / 视觉仍然零覆盖**（**渲染**那一格归 `platform-runtime`
+        # 的第二步 `npm test`，见附录C §C.13）；也不启动 JVM / 不编译 Java
         # （编译与测试归 `platform-runtime`）；看不见未登记的别名（解构、计算属性名、
         # 穿出函数参数的字段都在扫描面外）⇒ 别说「前端字段全被钉住了」。
         # 修法方向：改了页面或 Java 记录 ⇒ 改 JSX / 记录本身；登记表过期 ⇒ 改登记表；
         # **不许**为了让这条变绿去削 `quanauto/dashboard.py`（它是冻结的参照）。
         'what': '平台层页面与 Java 声明一致（字段名对得上记录组件 / 前端不做数字格式化 / '
-                '不手抄规格表 / 页脚自报的门禁清单等于注册表）',
+                '不手抄规格表 / 页脚自报的门禁清单等于注册表 / 渲染夹具的规格列与键集合双向核对）',
         'runner': ['tools/verify_platform_web.py'],
         'selftest': ['tools/verify_platform_web.py', '--selftest'],
     },
