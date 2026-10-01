@@ -50,12 +50,27 @@ expect 的比对先把定义归一化：PostgreSQL 会把它展开成 `'ACCOUNTS
 ----
     python tools/falsify_smoke.py            # 跑 CASES 里的全部案例
     python tools/falsify_smoke.py --list
+    python tools/falsify_smoke.py --selftest  # 只测参数/落点守卫，不需要 docker
+    python tools/falsify_smoke.py --pg-image=postgres:14 \
+        --report=tools/falsify-report-pg14.txt
+
+`--pg-image=` 与 `--report=` 和 tools/run_sql_smoke.py 的那两个开关**同义**（落点守卫
+直接 import 那边的 `resolve_report_path`，一份实现两个调用点）。为什么这两个开关必须
+一起加（2026-09-24 就已登记，见附录 B19 第 2 条）：
+
+* 报告里**没有镜像名**时，「在 14 上也逐条证伪过」这句话无法核对 —— 谁都能说，
+  谁都不能证伪。所以本工具现在把 `image : postgres:N`（与 digest、服务端版本）写进报告，
+  由 tools/verify_data_center.py 的 `C6` 与 tools/verify_risk_config.py 的 `C17` 拿它和
+  冒烟那一侧的证据集**双向**核对（少一个镜像的证伪 ⇒ FAIL，多一个未被戳记引用的 ⇒ 也 FAIL）。
+* 报告只有一条固定路径时，铺四个镜像 = 每次把上一版的证据**覆盖掉**，而快照没有撤销
+  —— 于是「14 上到底跑过没有」永远答不上来。
 
 当前覆盖
 --------
 33 个案例 / 32 条命名 CHECK（风控 14 + 数据中心 18；ck_risk_rule_ratio_range 上下界各一个案例）。
 （2026-10-01 分红那一批 `dc_dividend` 落地后由 31 个案例 / 30 条命名 CHECK 扩到这里 —— 这两个数
-会随 CASES 变，改 CASES 就同批改这里。）
+会随 CASES 变，改 CASES 就同批改这里。报告末尾那行「覆盖: N 个案例」是**数出来**的，
+而两个门禁会拿它跟本文件的 CASES 长度对账 ⇒ 加了案例却不重跑阶梯，门禁当场报 FAIL。）
 **不覆盖**的 3 个守门（靠 tools/verify_data_center.py 的 C7 核对，不靠本工具）：
 risk_rule.threshold 的 NOT NULL、两个单例表的 PK、uq_dc_data_version_active 部分唯一索引。
 它证明的是「放宽哪条就红哪条」（靠 `n_fail == 1` 这个签名），**不是**逐值证明
@@ -77,15 +92,74 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from run_sql_smoke import (                                    # noqa: E402
-    EXIT_GUARD, EXIT_NO_DOCKER, EXIT_OK, EXIT_SMOKE_FAIL,
-    ROOT, SUMMARY_RE, compose, psql, run, scalar,)
+    ENV, EXIT_GUARD, EXIT_NO_DOCKER, EXIT_OK, EXIT_SMOKE_FAIL,
+    ROOT, SUMMARY_RE, compose, psql, resolve_report_path, run, scalar, scalar_cid,)
 
 TMP_DIR = os.path.join(ROOT, 'tools', '_falsify_tmp')
-REPORT = os.path.join(ROOT, 'tools', 'falsify-report.txt')
+DEFAULT_REPORT = os.path.join(ROOT, 'tools', 'falsify-report.txt')
+# 可变：--report= 可以改它。默认值**一个字都没动** ⇒ 不带该开关时落点与以前一致。
+REPORT = DEFAULT_REPORT
+# _main() 填、main() 写报告头部时读。用全局传值是刻意的：镜像是**结论的一部分**
+# （「这句话只在哪个镜像上成立」），不值得为「干净」把它塞过 5 层参数。
+OBSERVED = {'image': '', 'digest': '', 'version': ''}
 
 
 class SelfAssert(Exception):
     """自 assert 失败。与「案例没抓到」是两回事，退出码也不同（2 vs 1）。"""
+
+
+def set_report_path(value):
+    """解析 --report=<相对仓库根的路径>。返回 (path, None) 或 (None, 原因)。
+
+    规则本身在 `run_sql_smoke.resolve_report_path`（一份实现、两个调用点）。这里只负责
+    把结果装进本模块的 REPORT。**失败时 REPORT 必须原样不动** —— 半途改掉落点，等于
+    把「拒绝」执行成「换一个地方写」。
+    """
+    global REPORT
+    path, why = resolve_report_path(value)
+    if path is None:
+        return None, why
+    REPORT = path
+    return path, None
+
+
+def parse_args(argv):
+    """把 argv 拆成 (pg_image, report_arg, flags)。纯函数 ⇒ 能自测。
+
+    `flags` 里三个开关都只回答「出现过没有」，取值一律走 `--name=值` 的形式：这样
+    `--report=` 后面留空**不**会被悄悄当成「没传」，而是走到守卫里报「后面是空的」。
+    （把「参数写错了」和「没传参数」混成同一件事，是「什么都不写就退 0」那类假绿的起点。）
+    """
+    pg_image, report_arg = None, None
+    flags = {'list': False, 'selftest': False, 'keep': False}
+    for arg in argv:
+        if arg.startswith('--pg-image='):
+            pg_image = arg.split('=', 1)[1]
+        elif arg.startswith('--report='):
+            report_arg = arg.split('=', 1)[1]
+        elif arg in ('--list', '--selftest', '--keep'):
+            flags[arg[2:]] = True
+    return pg_image, report_arg, flags
+
+
+def _environment():
+    """读回实测环境：服务端版本 + 容器用的镜像名 + 镜像 digest。
+
+    `image  : postgres:N` 这一行是**判据**，不是注释：两个门禁按这个形状从报告里取镜像名。
+    形状改了（缩进、空格、冒号）而没人报错，就是本仓库最怕的那种「报告看起来比真通过还
+    干净」—— 所以取不到时必须吼出来，并让那一行留成 `(未取到)`（门禁会因此 FAIL）。
+    """
+    _, version, _ = scalar('SHOW server_version')
+    image = digest = ''
+    rc, cid, _ = scalar_cid()
+    if rc == 0 and cid:
+        rc2, image = run(['docker', 'inspect', '--format', '{{.Config.Image}}', cid])
+        image = image.strip() if rc2 == 0 else ''
+        if image:
+            rc3, digest = run(['docker', 'image', 'inspect',
+                               '--format', '{{index .RepoDigests 0}}', image])
+            digest = digest.strip() if rc3 == 0 else ''
+    return version, image, digest
 
 
 # (tag, DDL, smoke, cname, edits, expect)
@@ -504,8 +578,28 @@ def main():
         except Exception:
             pass
 
-    if '--list' in sys.argv:
+    pg_image, report_arg, flags = parse_args(sys.argv[1:])
+    if flags['selftest']:
+        return selftest()
+    if pg_image is not None:
+        ENV['PG_IMAGE'] = pg_image
+    if flags['list']:
         return _main()
+
+    # --- 0. 报告落点 ------------------------------------------------------
+    # 与 run_sql_smoke 同一条理由：参数写错时**绝不退回默认路径**。退回默认路径恰好会
+    # 覆盖上一轮（例如 postgres:17）的证据，而覆盖它的还是一份「本次没跑成」的报告。
+    # 宁可什么都不写 —— 快照没有撤销。
+    if report_arg is not None:
+        new_path, why = set_report_path(report_arg)
+        if new_path is None:
+            print('GATE FAIL: --report 不可用 -- %s' % why)
+            print('          报告写不到指定位置时**不会**退回默认路径：那会覆盖上一轮的证据，')
+            print('          而且覆盖它的还是一份「本次没跑成」的报告。故本次不写任何报告。')
+            return EXIT_GUARD
+        print('report target: %s' % new_path)
+        print('              （默认落点是 %s；本次是另存，不会动它）' % DEFAULT_REPORT)
+        print('')
 
     buf = io.StringIO()
     real = sys.stdout
@@ -523,10 +617,18 @@ def main():
         fh.write('# 生成: %s\n' % time.strftime('%Y-%m-%d %H:%M:%S'))
         fh.write('# 工具: tools/falsify_smoke.py（每次运行把 db/*.sql 逐条放宽后重跑 smoke，\n')
         fh.write('#       每个案例都必须正好 1 条样本变红）\n')
+        fh.write('# 镜像: %s   digest: %s   server: PostgreSQL %s\n'
+                 % (OBSERVED['image'] or '(未取到)', OBSERVED['digest'] or '(未取到)',
+                    OBSERVED['version'] or '(未取到)'))
         fh.write('# 判定: %s (exit=%d)\n' % (verdict, code))
+        fh.write('#\n')
+        fh.write('# 上面这行「镜像」与正文里那句 `image  : postgres:N` 是同一个值的两种写法。\n')
+        fh.write('# 判据只认正文那种（tools/verify_data_center.py C6 / verify_risk_config.py C17\n')
+        fh.write('# 按 `image  :` 取镜像名），所以**正文那句不能丢**：丢了会让本快照在证据集里\n')
+        fh.write('# 贡献 0 个镜像，而那种「分量变轻」在报告上看起来比真通过还干净。\n')
         fh.write('#\n\n')
         fh.write(buf.getvalue())
-    print('报告: tools/falsify-report.txt  (%s)' % verdict)
+    print('报告: %s  (%s)' % (REPORT, verdict))
     return code
 
 
@@ -569,6 +671,22 @@ def _main():
         print('GATE FAIL: 数据库没起来。')
         print(out[:2000])
         return EXIT_GUARD
+
+    # --- 实测环境：这三个值决定了「本次结论在哪个镜像上成立」------------------
+    # `image  : postgres:N` 这一行的形状被两个门禁当判据读（C6/C17），所以它是输出
+    # 契约的一部分，不是给人看的注释。取不到时留 `(未取到)` 并吼一声：一份「没写镜像」
+    # 的证伪快照既不能被核对、也不该被当成证据用，而门禁会因此判 FAIL（fail-closed）。
+    print('--- 实测环境 ---')
+    version, image, digest = _environment()
+    OBSERVED['version'], OBSERVED['image'], OBSERVED['digest'] = version, image, digest
+    print('  image  : %s' % (image or '(未取到)'))
+    print('  digest : %s' % (digest or '(未取到)'))
+    print('  server : PostgreSQL %s' % (version or '(未取到)'))
+    if not image or not digest:
+        print('WARNING: 取不到 image/digest —— 本次结论无法标注「在哪个镜像上证伪过」。')
+        print('         报告里缺 `image  : postgres:N` 会让证据集少一个分量，')
+        print('         tools/verify_data_center.py C6 / verify_risk_config.py C17 会判 FAIL。')
+    print('')
 
     results = []
     try:
@@ -613,6 +731,64 @@ def _main():
     print('         另一半边界: 本工具只证明「被放宽的那一条会红」，不证明「除它以外全是绿」——')
     print('                 后者靠 n_fail == 1 这个签名间接兜住（变异波及多例会判 MISSED）。')
     return EXIT_OK
+
+
+# ---------------------------------------------------------------------------
+# 自测：只测「参数怎么解析」与「报告落点怎么守」，**不需要 docker**。
+# 落点规则本身与 tools/run_sql_smoke.py 共用（import 那边一个纯函数），但坏样本的
+# **后果**在两边不同：这边一旦半途改了 REPORT，会覆盖掉上一轮的 falsify 快照。
+# ---------------------------------------------------------------------------
+
+def selftest():
+    ok = True
+
+    def check(tag, cond, detail=''):
+        nonlocal ok
+        print('  [%s] %s%s' % (tag, 'OK' if cond else 'MISSED',
+                               (' -- ' + detail) if detail else ''))
+        ok = ok and cond
+
+    pg, rep, _ = parse_args(['--pg-image=postgres:14', '--report=tools/x.txt'])
+    check('args-POS-both', (pg, rep) == ('postgres:14', 'tools/x.txt'), 'got %r' % ((pg, rep),))
+
+    # 关键样本：`--report=` 后面留空**必须**带着空串走到守卫里报错，而不是被当成
+    # 「没传这个开关」⇒ 悄悄写默认落点 ⇒ 覆盖上一轮证据。这两个断言是同一个坑的两半：
+    # 前一半证明解析器没把它吞掉，后一半证明守卫真的拒绝它。
+    _, rep_empty, _ = parse_args(['--report='])
+    check('args-NEG-empty-report-is-not-none', rep_empty == '', 'got %r' % (rep_empty,))
+    check('args-NEG-empty-report-rejected', set_report_path(rep_empty)[0] is None)
+
+    _, _, flags = parse_args(['--list'])
+    check('args-POS-list', flags['list'] is True and flags['selftest'] is False)
+    _, _, flags = parse_args(['--selftest'])
+    check('args-POS-selftest', flags['selftest'] is True and flags['list'] is False)
+
+    saved = REPORT
+    check('default-target-untouched', saved == DEFAULT_REPORT, saved)
+
+    def rcase(tag, value, want_ok):
+        path, why = set_report_path(value)
+        hit = ((path is not None) == want_ok)
+        untouched = want_ok or (REPORT == saved)
+        globals()['REPORT'] = saved
+        check(tag, hit and untouched,
+              'ok=%s untouched=%s why=%s' % (path is not None, untouched, why or ''))
+
+    rcase('report-NEG-empty', '', False)
+    rcase('report-NEG-is-a-directory', 'tools', False)
+    rcase('report-NEG-parent-missing', 'tools/__selftest_no_such_dir__/x.txt', False)
+    rcase('report-POS-relative', 'tools/__selftest_target__.txt', True)
+    rcase('report-POS-absolute', os.path.join(ROOT, '__selftest_target__.txt'), True)
+
+    # 另存不许动默认落点：五个样本跑完，默认路径必须还是它自己（否则下一轮不带参数的
+    # 那次运行就会写到一个别的地方，看起来「跑了」，其实没人知道写到哪去了）。
+    check('report-default-survives-samples', REPORT == DEFAULT_REPORT, REPORT)
+
+    print('note: 这里只跑了自测 —— db/*.sql 与四份快照的结论由**不带 --selftest 的**那次'
+          '运行负责判。')
+    print('SELFTEST %s: 参数解析 + --report 落点守卫（含「空值不是没传」与「失败不许改全局」）'
+          % ('OK' if ok else 'FAIL'))
+    return 0 if ok else 1
 
 
 if __name__ == '__main__':

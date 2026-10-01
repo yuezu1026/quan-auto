@@ -1,8 +1,8 @@
 # falsify-report.txt —— 触发测试的证伪记录
-# 生成: 2026-10-01 21:25:00
+# 生成: 2026-10-01 21:20:55
 # 工具: tools/falsify_smoke.py（每次运行把 db/*.sql 逐条放宽后重跑 smoke，
 #       每个案例都必须正好 1 条样本变红）
-# 镜像: postgres:17   digest: postgres@sha256:f4c66b820c6f974249089d3d16d86a3698eae11e8746eb6644b2271031e91232   server: PostgreSQL 17.11 (Debian 17.11-1.pgdg13+2)
+# 镜像: postgres:14   digest: postgres@sha256:816cf7d06ec33116c8f54cf14197085be89f25291686229485ee7d53a785b901   server: PostgreSQL 14.24 (Debian 14.24-1.pgdg13+2)
 # 判定: OK (exit=0)
 #
 # 上面这行「镜像」与正文里那句 `image  : postgres:N` 是同一个值的两种写法。
@@ -12,9 +12,9 @@
 #
 
 --- 实测环境 ---
-  image  : postgres:17
-  digest : postgres@sha256:f4c66b820c6f974249089d3d16d86a3698eae11e8746eb6644b2271031e91232
-  server : PostgreSQL 17.11 (Debian 17.11-1.pgdg13+2)
+  image  : postgres:14
+  digest : postgres@sha256:816cf7d06ec33116c8f54cf14197085be89f25291686229485ee7d53a785b901
+  server : PostgreSQL 14.24 (Debian 14.24-1.pgdg13+2)
 
 
 === dc-version-format-anchor ===

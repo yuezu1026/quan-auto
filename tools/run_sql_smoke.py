@@ -8,8 +8,11 @@ tools/verify_risk_config.py 与 tools/verify_data_center.py 都是**纯静态**�
 会拒绝非法值**，也证明不了某个样本值真的落在拒绝区间内。后者只能由真实执行给出。
 截至本脚本诞生，30 条 CHECK 约束（风控 14 + 数据中心 16）全部处于 UNPROVEN 状态；
 **2026-09-23 起这句话不再成立**（两份触发测试已跑过，且每一条命名 CHECK 都被
- tools/falsify_smoke.py 逐条证伪）—— 当前结论一律以 tools/sql-smoke-report.txt 与
-tools/falsify-report.txt 这两份**快照**为准，改过任何 db/*.sql 或 *.smoke.sql 后即作废。
+ tools/falsify_smoke.py 逐条证伪）—— 当前结论一律以这两条**阶梯**的快照为准
+（2026-10-01 起各自四个 tag 各一份：`tools/sql-smoke-report-pg1{4,5,6}.txt` 与
+`tools/falsify-report-pg1{4,5,6}.txt`，**不带 `--report=` 的默认路径那两份 = `postgres:17`**），
+改过任何 db/*.sql 或 *.smoke.sql 后**八份一起**作废（不是只作废对应那一侧）。
+条数现值按内容搜快照里 `覆盖:` 那一行现取（2026-10-01 现取 **32 条命名 CHECK**：风控 14 + 数据中心 18）。
 
 用法
 ----
@@ -196,24 +199,37 @@ def write_report(lines, verdict, exit_code):
         fh.write('\n'.join(body) + '\n')
 
 
-def set_report_path(value):
+def resolve_report_path(value, root=ROOT):
     """解析 --report=<相对仓库根的路径>。返回 (path, None) 或 (None, 原因)。
+
+    **纯函数**：不碰任何全局。理由不是洁癖 —— `tools/falsify_smoke.py` 现在也要用同一条
+    守卫，而它有自己的默认落点（falsify-report.txt）。抄一份实现出来，两条守卫就会各自
+    漂移（本项目已经踩过「抄副本漂移 ⇒ 样本全红、看起来像探测器坏了」），所以规则只写
+    一次、两个调用点共用；`root` 可传是为了让自测能在临时目录上验证「相对路径按谁解析」。
 
     只做三件事，全部是「写不出去就别装作写出了」：① 相对路径按仓库根解析；
     ② 上级目录必须已存在（**不**自动 mkdir：路径打错时自动建目录会让人以为写对了）；
     ③ 不能指向目录。
     """
-    global REPORT_PATH
     raw = (value or '').strip()
     if not raw:
         return None, '--report 后面是空的'
-    path = raw if os.path.isabs(raw) else os.path.join(ROOT, raw)
+    path = raw if os.path.isabs(raw) else os.path.join(root, raw)
     path = os.path.normpath(path)
     if os.path.isdir(path):
         return None, '--report 指向的是一个目录：%s' % path
     parent = os.path.dirname(path)
     if not os.path.isdir(parent):
         return None, '--report 的上级目录不存在：%s' % parent
+    return path, None
+
+
+def set_report_path(value):
+    """`resolve_report_path` + 把结果装进本模块的 REPORT_PATH（给本脚本自己用）。"""
+    global REPORT_PATH
+    path, why = resolve_report_path(value)
+    if path is None:
+        return None, why
     REPORT_PATH = path
     return path, None
 
@@ -510,6 +526,15 @@ def selftest():
     rcase('report-POS-relative', 'tools/__selftest_target__.txt', True)
     rcase('report-POS-absolute', os.path.join(ROOT, '__selftest_target__.txt'), True)
     assert REPORT_PATH == saved, '自测把 REPORT_PATH 弄脏了：%s' % REPORT_PATH
+
+    # 同一条规则现在有两个调用点（本脚本 + tools/falsify_smoke.py），所以「root 真的被用上」
+    # 值得一个样本：两边都按**仓库根**解析是约定，不是巧合。
+    shared_path, _ = resolve_report_path('x.txt', root=os.path.join(ROOT, 'tools'))
+    want_shared = os.path.join(ROOT, 'tools', 'x.txt')
+    hit = (shared_path == want_shared)
+    print('  [resolve-POS-shared-rule-root] path=%s %s'
+          % (shared_path, 'OK' if hit else 'MISSED (want %s)' % want_shared))
+    ok = ok and hit
 
     print('SELFTEST %s: 判定逻辑的三种结局 + --report 落点守卫都有样本覆盖'
           % ('OK' if ok else 'FAIL'))

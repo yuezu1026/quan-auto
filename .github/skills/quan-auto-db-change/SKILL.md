@@ -32,8 +32,10 @@ description: "quan-auto 仓库改动 db/*.sql 或 db/*.smoke.sql 时要做的事
    - 退出码：`0` 两份都 PASS / `1` 有触测失败（**约束没拦住**）/ `2` 空库守卫或脚本自检失败 / `3` 无 docker。
 3. **维护 DDL 头部那句唯一主张**：每个 DDL 头部有一行 `-- PG-VERIFIED-ON:` 声明验过哪些版本。
    它由 `tools/verify_data_center.py` 的 C6 与 `tools/verify_risk_config.py` 的 C17 拿
-   `tools/sql-smoke-report*.txt` 里的镜像名**双向**核对 —— 多写一个没跑过的版本会红，
-   少写一个跑过的也红。所以「跑了新镜像」与「改这一行」必须同批。
+   `tools/sql-smoke-report*.txt` 与 `tools/falsify-report*.txt`（**两条阶梯各自**）里的镜像名
+   **双向**核对 —— 多写一个没跑过的版本会红，少写一个跑过的也红。⇒ 这里「验过」指的是**两条阶梯都有**：
+   冒烟说「约束被加载了」，证伪说「它真的会咬」，**少任一侧都算 FAIL**。所以「跑了新镜像」
+   与「改这一行」必须同批，且两条阶梯要一起铺。
 4. **证伪那两份绿**：`.\.venv\Scripts\python.exe tools/falsify_smoke.py`
    - 手法是**逐条放宽一条 `CHECK` 的表达式**（不删约束）：删约束会让「约束存在性」检查一起红，
      就分不清是「有牙」还是「文件被破坏了」；放宽只让对应样本变红，期望特征是
@@ -41,14 +43,16 @@ description: "quan-auto 仓库改动 db/*.sql 或 db/*.smoke.sql 时要做的事
    - 每条案例前 `DROP SCHEMA public CASCADE` 重建：不清库的话第二条案例改的 DDL 会静默空转
      （表已存在）⇒「变异没送进数据库」会被读成「触测没用」。
    - 退出码：`0` 每个案例都被抓到 / `1` 有案例没被抓到（触测是摆设）/ `2` 自 assert 失败。
-   - 它只在 `postgres:17` 上做过；另几个镜像只有冒烟层面的通过。
+   - 跨镜像与另存用的是**同一对开关**（`--pg-image=` / `--report=`），落点守卫直接 import
+     `run_sql_smoke.py` 的 `resolve_report_path`（一份实现、两个调用点）。**不满足于「冒烟铺满了」**：
+     戳记说的是「验过」，而冒烟照不了一条写反的约束。
 
 ## 边界（每一条都会让结论作废）
 
 - 绿色本身**不会告诉你有牙**。`SMOKE PASS` 只证明「这次跑对了」，
   「约束真的会拒绝」要靠证伪器那一步。
-- **改过任何 `db/*.sql` 后，所有快照即作废**（`tools/sql-smoke-report*.txt`、
-  `tools/falsify-report.txt` 都是快照）。
+- **改过任何 `db/*.sql` 后，所有快照即作废**（`tools/sql-smoke-report*.txt` 与
+  `tools/falsify-report*.txt` 都是快照，**两条阶梯共八份一起**作废，不是只作废对应那一侧）。
 - `docker-compose.dev.yml`（发布 127.0.0.1:55432、带命名卷）**不是证据通道**：
   它跑出来的任何结果都不许被门禁 / DoD / 契约引用。证据只出自 `docker-compose.smoke.yml`。
   在里面重跑 DDL 会静默空转（库非空），改了约束却看不到变化时先 `down -v` 重置。

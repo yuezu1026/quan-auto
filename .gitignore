@@ -22,13 +22,15 @@ Desktop.ini
 #   tools/gates-report.txt         上一次门禁的总判据（含棘轮数字）
 #   tools/sql-smoke-report.txt     容器 PostgreSQL 冒烟证据（镜像 digest + 默认路径那份 = postgres:17）
 #   tools/sql-smoke-report-pg1*.txt 版本阶梯证据（postgres:14/15/16，各一份，互不覆盖）
-#   tools/falsify-report.txt       逐条约束的证伪证据（目前只有 postgres:17 一轮）
+#   tools/falsify-report.txt       逐条约束的证伪证据（默认路径那份 = postgres:17）
+#   tools/falsify-report-pg1*.txt 证伪阶梯证据（postgres:14/15/16，各一份，互不覆盖）
 #   tools/gates-baseline.json      棘轮基线（手工维护，没有 --write-baseline）
 #   docs/*.docx                    3 份派生 md 的源文档
 #   .vscode/tasks.json             门禁任务的唯一入口
 # 如果将来要加忽略规则，先确认它不在上面这批里 —— 忽略掉证据 = 假绿。
-# 注意：这几份冒烟快照由 `--report=` 另存；`falsify_smoke.py` 目前仍写固定路径，
-# 跨版本跑之前得先给它加同样的开关，否则会把 postgres:17 那轮证据覆盖掉。
+# 注意：这几份冒烟快照与证伪快照都由 `--report=` 另存（`falsify_smoke.py` 的同一个开关
+# 2026-10-01 晚补上，落点规则与 `run_sql_smoke.py` 共用一份、不重写）；不带 `--report=`
+# 就写默认路径，那正是「覆盖上一份证据」的那一种行为 —— 跨版本跑必须先给落点。
 
 # ── 平台层切片（`platform/`，2026-09-29 追加）──────────────────────
 # 这一层是本仓库第一次出现非 Python 产物。**刚追加时没有 CI 覆盖、没有自建门禁**

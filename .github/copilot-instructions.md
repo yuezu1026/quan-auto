@@ -65,7 +65,10 @@ DC 契约**附录 H** ⇒ 收口条件 ① 的三个子项**全关**（分红那
   `tools/sql-smoke-report-pg16.txt`，pg17 那份未被覆盖）；
   ⚠️ 2026-10-01：**分红那一批改了 `db/*.sql` ⇒ 四份快照全部重跑**，数据中心侧变成 **46/0**（风控侧仍 23/0）。
   这两份绿的**效力**已被 `python tools/falsify_smoke.py` 逐条证伪 —— **33/33 CAUGHT**，
-  覆盖全部 32 条命名 CHECK（证据 `tools/falsify-report.txt`，**且只在 postgres:17 上做过**）。
+  覆盖全部 32 条命名 CHECK（**2026-10-01 起也铺满四个镜像**：证据 `tools/falsify-report-pg14.txt` /
+  `-pg15.txt` / `-pg16.txt` / 默认那份 `tools/falsify-report.txt`(pg17)，四份都是 33/33）。
+  两条阶梯（冒烟与证伪）现在被门禁**各自**与每个 DDL 头部的 `-- PG-VERIFIED-ON:` **双向**核对 ——
+  戳记点名而阶梯缺一个镜像即 FAIL。
   两句话都不能说：① 「从未执行」（已不成立）；② 「约束已验证」（只跑过这四个 tag，
   「PostgreSQL 14+」仍未证实，且改过任何 `db/*.sql` 后那轮结论即作废）。
   每个 DDL 头部的 `-- PG-VERIFIED-ON:` 与上面这些快照里的镜像名由门禁**双向**核对。

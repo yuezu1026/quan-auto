@@ -76,6 +76,37 @@ PG_IMAGE_RE = re.compile(r'postgres:\d[\w.\-]*')
 REPORT_GLOB = os.path.join(ROOT, 'tools', 'sql-smoke-report*.txt')
 REPORT_IMAGE_RE = re.compile(r'^[ \t]*image[ \t]*:[ \t]*(postgres:\d[\w.\-]*)[ \t]*$', re.M)
 
+# C6's second half: the FALSIFICATION ladder, tied to the same stamp.
+#
+# The stamp's claim is not "this DDL was loaded on four images" -- the claim a reader
+# actually leans on is "these constraints were each shown to bite, on four images". The
+# smoke reports can only show the constraints are *accepted* by the server; only the
+# falsify reports show that relaxing one makes exactly one sample go red. Appendix B19
+# recorded that ladder as covering postgres:17 alone, and said so as an explicit
+# boundary. Add a fifth image to the smoke ladder while the falsify ladder stays at one
+# and a smoke-only judge would stay green, with the stamp still claiming four -- the
+# reader would derive a stronger claim than the evidence supports. That is the
+# one-directional-judge family again, so the falsify set is a hard equality too.
+#
+# The ladder is a SHARED artifact: tools/falsify_smoke.py relaxes one constraint at a
+# time in BOTH db/*.sql files and reruns both smoke files, so one set of reports covers
+# the risk DDL exactly as much as the data-centre one. It is therefore cross-checked
+# here, once, rather than also inside tools/verify_risk_config.py -- a second copy would
+# be a copy that can drift, and this repository has already paid for that lesson.
+FALSIFY_GLOB = os.path.join(ROOT, 'tools', 'falsify-report*.txt')
+FALSIFY_TOOL = os.path.join(ROOT, 'tools', 'falsify_smoke.py')
+FALSIFY_VERDICT_RE = re.compile(r'^verdict:[ \t]*(\S+)[ \t]*--', re.M)
+FALSIFY_COVER_RE = re.compile(
+    r'覆盖:[ \t]*(\d+)[ \t]*个案例[ \t]*/[ \t]*(\d+)[ \t]*条命名\s*CHECK')
+# The tool's own case list, counted rather than written down here: a literal would go
+# wrong the first time a case is added, and comparing against it is exactly what makes a
+# stale snapshot visible.
+FALSIFY_CASE_RE = re.compile(r"^[ \t]*\(\s*'[^']+',\s*(?:RISK_DDL|DC_DDL)\s*,", re.M)
+# --selftest's injection point. None means "read the glob yourself". A module global
+# rather than a run_checks() parameter on purpose: the samples then run through the very
+# same call the real path uses, instead of through a branch only the samples take.
+FALSIFY_DOCS = None
+
 # C7: the shape a constraint name must take in the smoke test to count as a trigger
 # test -- an EQUALITY COMPARISON against that literal, e.g.
 #     IF v_cname = 'ck_dc_factor_positive' THEN
@@ -118,6 +149,83 @@ def evidence_images():
             problems.append('%s records no "image  : postgres:N" line'
                             % os.path.basename(path))
         found |= hits
+    return found, problems
+
+
+def falsify_evidence(docs=None):
+    """Returns (set of image names, list of problems) read from the falsify reports.
+
+    `docs=None` reads tools/falsify-report*.txt from disk; a list of (basename, text)
+    pairs is how --selftest drives every guard below. That parameter exists so the
+    self-test needs no temporary files: a guard proven against a directory layout the
+    real run never uses is only half proven, and a gate that writes files is a gate
+    whose "gates wrote nothing" claim has to be argued rather than observed.
+
+    Nothing here is allowed to be lenient -- each of these does the same damage, which is
+    to make the ladder look complete while covering less:
+      * a report file deleted or renamed away  -> that image silently loses its evidence
+      * the `image  :` line gone (format drift) -> the report contributes 0 images, and a
+        lighter-looking evidence set is exactly the shape this project keeps getting bitten by
+      * verdict not OK -> a ladder run that failed is not evidence that anything bites
+      * case count != the tool's current CASES -> the snapshot describes an older ladder
+      * reports disagreeing with each other -> at least one is from another case list
+    """
+    problems = []
+    if docs is None:
+        docs = []
+        for path in sorted(glob.glob(FALSIFY_GLOB)):
+            try:
+                with open(path, encoding='utf-8-sig', errors='replace') as handle:
+                    docs.append((os.path.basename(path),
+                                 handle.read().replace('\r\n', '\n')))
+            except OSError as exc:
+                problems.append('cannot read %s (%s)' % (path, exc))
+    if not docs:
+        return set(), problems + [
+            'no falsify report to read (glob %s, or the supplied list was empty) -- with '
+            'no ladder the comparison below would run over an empty set and agree with '
+            'any stamp whatsoever' % FALSIFY_GLOB]
+    try:
+        with open(FALSIFY_TOOL, encoding='utf-8', errors='replace') as handle:
+            n_cases = len(FALSIFY_CASE_RE.findall(handle.read().replace('\r\n', '\n')))
+    except OSError as exc:
+        return set(), problems + ['cannot read the ladder tool %s (%s)'
+                                  % (FALSIFY_TOOL, exc)]
+    if not n_cases:
+        return set(), problems + [
+            'the CASES list in %s yielded 0 entries -- every staleness comparison below '
+            'would compare against nothing' % os.path.basename(FALSIFY_TOOL)]
+    found = set()
+    counts = {}
+    for name, text in docs:
+        hits = set(REPORT_IMAGE_RE.findall(text))
+        if not hits:
+            problems.append('%s records no "image  : postgres:N" line' % name)
+        else:
+            found |= hits
+        verdict = FALSIFY_VERDICT_RE.search(text)
+        if not verdict:
+            problems.append('%s records no "verdict: ... -- ..." line' % name)
+        elif verdict.group(1) != 'OK':
+            problems.append('%s says verdict=%s -- a ladder run that did not pass is not '
+                            'evidence that the constraints bite' % (name, verdict.group(1)))
+        cover = FALSIFY_COVER_RE.search(text)
+        if not cover:
+            problems.append('%s records no "覆盖: N 个案例 / M 条命名 CHECK" line -- the '
+                            'report cannot be tied to the case list it came from' % name)
+        else:
+            counts[name] = (int(cover.group(1)), int(cover.group(2)))
+    stale = sorted('%s=%d' % (n, c[0]) for n, c in counts.items() if c[0] != n_cases)
+    if stale:
+        problems.append('falsify report(s) generated over a different case list than '
+                        'tools/falsify_smoke.py now defines (%d cases): %s -- a snapshot '
+                        'of an older ladder cannot be used to say the CURRENT constraints '
+                        'were falsified; re-run the ladder' % (n_cases, ', '.join(stale)))
+    if len(set(counts.values())) > 1:
+        problems.append('the falsify reports do not agree on their coverage counts (%s) -- '
+                        'at least one of them is from a different case list'
+                        % ', '.join('%s=%d/%d' % (n, c[0], c[1])
+                                    for n, c in sorted(counts.items())))
     return found, problems
 
 
@@ -274,6 +382,7 @@ def run_checks(ddl_text, contract_text, smoke_text):
         fail('C6', 'no smoke report yielded an image name -- the comparison below would '
                    'run over an empty set and agree with any stamp whatsoever')
     stamp = STAMP_RE.search(ddl_text)
+    cited = set()
     if not stamp:
         fail('C6', 'the DDL no longer carries its "-- PG-VERIFIED-ON: <image>..." stamp -- '
                    'a verification claim that does not say which images it was run on is '
@@ -300,6 +409,36 @@ def run_checks(ddl_text, contract_text, smoke_text):
                            'reader re-derives a weaker claim than the evidence supports'
                            % hidden)
             stats['evidence_images'] = ' '.join(sorted(evidence))
+
+    # --- C6 (second half): the falsification ladder, as wide as the same stamp -----
+    # Guarded on `cited` being non-empty: when the stamp is missing or names no image the
+    # failure above already says so, and reporting it again here would print one root
+    # cause as two findings that mask each other.
+    if cited:
+        fevidence, f_problems = falsify_evidence(FALSIFY_DOCS)
+        if f_problems:
+            fail('C6', 'the falsification ladder could not be read (%s) -- the stamp claims '
+                       'these images verified the constraints, and only the ladder shows '
+                       'the constraints actually bite' % '; '.join(f_problems))
+        if not fevidence:
+            fail('C6', 'no falsify report yielded an image name -- the ladder comparison '
+                       'below would run over an empty set and agree with any stamp '
+                       'whatsoever')
+        else:
+            stats['falsified_on'] = ' '.join(sorted(fevidence))
+            ladder_missing = sorted(cited - fevidence)
+            if ladder_missing:
+                fail('C6', 'the DDL claims verification on %s but the falsification ladder '
+                           'covers only %s -- on the missing image(s) the constraints were '
+                           'loaded, not shown to bite, so "verified" means two different '
+                           'things depending on who reads it'
+                           % (sorted(cited), sorted(fevidence)))
+            ladder_extra = sorted(fevidence - cited)
+            if ladder_extra:
+                fail('C6', 'the falsification ladder covers %s but the DDL stamp does not '
+                           'cite it -- the stamp understates what was actually falsified, '
+                           'and the next reader re-derives a weaker claim than the '
+                           'evidence supports' % ladder_extra)
 
     # --- C7: every declared constraint has a trigger test that names it -----------
     # C2-C6 prove the constraint INVENTORY is consistent. None of them can show that a
@@ -367,10 +506,11 @@ def selftest():
     # expected to be able to fail on them, which is the whole point of running it.
     issues, stats = run_checks(ddl, contract, smoke)
     print('  [control-real-artifacts] issues=%d codes=%s tables=%d documented=%d '
-          'declared=%d smoke_asserted=%d verified_on=%s evidence=%s'
+          'declared=%d smoke_asserted=%d verified_on=%s evidence=%s falsified_on=%s'
           % (len(issues), sorted(set(k for k, _ in issues)), stats['tables'],
              stats['documented'], stats['declared'], stats.get('smoke_asserted', -1),
-             stats.get('verified_on', '(none)'), stats.get('evidence_images', '(none)')))
+             stats.get('verified_on', '(none)'), stats.get('evidence_images', '(none)'),
+             stats.get('falsified_on', '(none)')))
 
     # C2: a constraint in the contract that the DDL does not declare.
     bad = _mutate(contract, '| `ck_dc_version_format` |', '| `ck_dc_ghost_format` |', 'NEG1')
@@ -455,6 +595,82 @@ def selftest():
         print('    REPORT_GLOB not restored -- the samples after this point would run '
               'against patched state')
         ok = False
+
+    # C6f: the FALSIFICATION ladder. One sample per guard, all built in memory (see
+    # falsify_evidence()'s `docs` parameter). Without the clean sample at the end, the
+    # eight negatives would be indistinguishable from a detector that fires on everything.
+    # The image list is read off the real stamp, not written down here, so these samples
+    # do not pin down "these four strings are the right ones" -- what they pin is how each
+    # way of losing a piece of the ladder gets reported.
+    def fake_report(image, n_cases=33, n_checks=32, verdict='OK', image_line=True,
+                    verdict_line=True, cover_line=True):
+        lines = ['--- 实测环境 ---']
+        if image_line:
+            lines.append('  image  : %s' % image)
+        lines.append('  digest : postgres@sha256:%s' % ('0' * 8))
+        lines.append('  server : PostgreSQL 99.9')
+        lines.append('')
+        lines.append('=== 汇总 ===')
+        lines.append('  some-case                  CAUGHT')
+        lines.append('')
+        if verdict_line:
+            lines.append('verdict: %s -- 每个被放宽的约束都被触发测试抓到了' % verdict)
+        if cover_line:
+            lines.append('         覆盖: %d 个案例 / %d 条命名 CHECK 约束'
+                         % (n_cases, n_checks))
+        return '\n'.join(lines) + '\n'
+
+    def ladder(overrides=None, drop=()):
+        docs = []
+        for image in sorted(cited_now):
+            if image in drop:
+                continue
+            docs.append(('falsify-report-%s.txt' % image.split(':')[1],
+                         fake_report(image, **(overrides or {}).get(image, {}))))
+        return docs
+
+    saved_docs = FALSIFY_DOCS
+
+    def fscenario(tag, docs, want_clean=False):
+        globals()['FALSIFY_DOCS'] = docs
+        try:
+            scenario(tag, ddl, contract, 'C6', want_clean=want_clean)
+        finally:
+            globals()['FALSIFY_DOCS'] = saved_docs
+
+    stamp_now = STAMP_RE.search(ddl)
+    cited_now = set(PG_IMAGE_RE.findall(stamp_now.group(1))) if stamp_now else set()
+    if not cited_now:
+        print('    C6f samples: the DDL stamp names no image -- the samples below would run '
+              'against an empty list, so each of them would either fire for the wrong '
+              'reason or not fire at all')
+        ok = False
+    else:
+        # the ladder is one image SHORTER than the stamp: loaded there, never shown to bite
+        fscenario('NEG10a-ladder-missing-image', ladder(drop=('postgres:16',)))
+        # the ladder is one image WIDER than the stamp: the stamp understates the evidence
+        fscenario('NEG10b-ladder-extra-image',
+                  ladder() + [('falsify-report-18.txt', fake_report('postgres:18'))])
+        # a ladder run that did not pass
+        fscenario('NEG10c-ladder-verdict-not-ok', ladder({'postgres:15': {'verdict': 'FAIL'}}))
+        # the `image  :` line lost -> the report contributes 0 images (format drift)
+        fscenario('NEG10d-ladder-no-image-line', ladder({'postgres:17': {'image_line': False}}))
+        # a snapshot from an older case list, counted by the tool's own CASES
+        fscenario('NEG10e-ladder-stale-cases', ladder({'postgres:14': {'n_cases': 31}}))
+        # reports that disagree with each other (same case count, different CHECK count)
+        fscenario('NEG10f-ladder-counts-disagree', ladder({'postgres:16': {'n_checks': 31}}))
+        # the verdict line lost entirely -> nothing says the run succeeded
+        fscenario('NEG10g-ladder-no-verdict-line',
+                  ladder({'postgres:14': {'verdict_line': False}}))
+        # the coverage line lost -> the report cannot be tied to a case list at all
+        fscenario('NEG10h-ladder-no-cover-line', ladder({'postgres:14': {'cover_line': False}}))
+        fscenario('GATE-no-falsify-reports', [])
+        # CLEAN control: four reports, all OK, counts agreeing -> must be silent.
+        fscenario('POSITIVE-ladder-complete', ladder(), want_clean=True)
+        if FALSIFY_DOCS is not saved_docs:
+            print('    FALSIFY_DOCS not restored -- the samples after this point would run '
+                  'against patched state')
+            ok = False
 
     # C7a: a constraint that the DDL declares but the smoke test never asserts. The DDL
     # is untouched and the contract still lists it, so C2-C6 all stay clean -- without
@@ -583,9 +799,9 @@ def main():
     print('NOTE: this gate never executes the DDL and never inspects a CHECK '
           'expression. Passing it does NOT mean the constraints reject bad values -- '
           'that is what db/data_center.smoke.sql has to print SMOKE PASS for. That run '
-          'has happened (see tools/sql-smoke-report.txt, and tools/falsify-report.txt '
-          'for the per-constraint falsification); both are SNAPSHOTS and are void the '
-          'moment any db/*.sql or *.smoke.sql file changes.')
+          'has happened (see tools/sql-smoke-report*.txt), and so has the per-constraint '
+          'falsification (tools/falsify-report*.txt); both sets are SNAPSHOTS and are '
+          'void the moment any db/*.sql or *.smoke.sql file changes.')
     return 0 if not issues else 1
 
 

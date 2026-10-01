@@ -62,12 +62,19 @@ a genuinely empty database, then writes tools/sql-smoke-report.txt. That file is
 SNAPSHOT: its verdict is only valid for the image digest recorded inside it, and it must
 be re-run after every db/*.sql edit. Whether that green has TEETH is a third channel:
 tools/falsify_smoke.py relaxes one named CHECK at a time and requires exactly one sample
-to go red (currently 31 cases / 30 constraints / 31 CAUGHT), writing
-tools/falsify-report.txt. It is deliberately NOT registered as a gate here --
+to go red (currently 33 cases / 32 named CHECKs / 33 CAUGHT), writing
+tools/falsify-report.txt by default and one report per image via `--report=` (since
+2026-10-01 the ladder is four files: tools/falsify-report-pg1{4,5,6}.txt + that default
+one, which is postgres:17). It is deliberately NOT registered as a gate here --
 on a machine without a running daemon it would either fail for environmental reasons or
 be silently skipped and reported green, which is the fake-gate pattern this project keeps
 getting bitten by. Integrating it properly means "no docker => explicit SKIPPED, counted
 as not-green", and that is a separate piece of work.
+What IS registered is the pair of static gates that CONSUME those snapshots:
+data-center-ddl (C6) and risk-config (C17) each read the `-- PG-VERIFIED-ON:` stamps out
+of the DDL headers and compare them BOTH ways against the smoke ladder AND the
+falsification ladder -- a stamp naming an image the falsification ladder never covered is
+a FAIL, because "verified on that image" means "shown to bite there", not "loaded there".
 
 Parallelism, and the guard that makes it safe
 ---------------------------------------------
@@ -144,6 +151,10 @@ SMOKE_TOOL = os.path.join(ROOT, 'tools', 'run_sql_smoke.py')
 SMOKE_REPORT_PATH = os.path.join(ROOT, 'tools', 'sql-smoke-report.txt')
 FALSIFY_TOOL = os.path.join(ROOT, 'tools', 'falsify_smoke.py')
 FALSIFY_REPORT_PATH = os.path.join(ROOT, 'tools', 'falsify-report.txt')
+# 证伪阶梯自 2026-10-01 起也是**逐镜像**记录的（与 sql-smoke 同形），所以尾部 NOTE
+# 引用的是 glob 而不是那一份默认快照 —— 否则它会说「只在 postgres:17 上做过」，
+# 而四个 tag 上早已各自 33/33 CAUGHT。
+FALSIFY_REPORT_GLOB = os.path.join(ROOT, 'tools', 'falsify-report*.txt')
 
 # 门禁自己的退出码约定（见 evaluate 的 SKIPPED 分支与它的样本）：
 #   0 = 通过；1 = 判据红了；3 = **环境不在**（工具链探不到），打印 `verdict: SKIPPED (...)`。
@@ -1750,9 +1761,18 @@ def execute(picked, report_path=REPORT_PATH):
     print('NOTE: these %d gates DO read those snapshots, but only to compare the image names ' % len(rows))
     print('      against each DDL\'s PG-VERIFIED-ON stamp (in both directions); they do not '
           're-run SQL.')
-    print('NOTE: proof that the runtime green has teeth lives in %s (produced by %s).'
+    print('NOTE: proof that the runtime green has teeth lives in %s (produced by %s),'
           % (os.path.relpath(FALSIFY_REPORT_PATH, ROOT), os.path.relpath(FALSIFY_TOOL, ROOT)))
-    print('      One case per named CHECK; every case must turn exactly one sample red.')
+    print('      one case per named CHECK, every case must turn exactly one sample red. That'
+          ' is the')
+    print('      DEFAULT snapshot; the per-image ladder is %s'
+          % os.path.relpath(FALSIFY_REPORT_GLOB, ROOT))
+    print('      (postgres:14/15/16, same `--report=` convention as the smoke ladder) -- and'
+          ' it has to')
+    print('      exist per image, because a stamp that names an image the ladder never'
+          ' falsified on')
+    print('      would otherwise be a claim that the constraints were LOADED there, not shown'
+          ' to bite.')
     return 0 if all_green else 1
 
 

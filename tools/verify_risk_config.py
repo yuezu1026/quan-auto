@@ -174,7 +174,7 @@ RULE_SPECS_ENTRY_RE = re.compile(
 TABLE_LIST_ROW_RE = re.compile(r"^\|\s*`([a-z][a-z0-9_]*)`\s*\|", re.MULTILINE)
 
 # ---------------------------------------------------------------------------
-# C17 -- the file's own supported-version claim, tied to the smoke evidence.
+# C17 -- the file's own supported-version claim, tied to the recorded runs.
 #
 # db/risk_control.sql's title says "PostgreSQL 14+". A static gate cannot prove a
 # version range; what it CAN do is force the file's claim and the recorded runs to
@@ -182,6 +182,11 @@ TABLE_LIST_ROW_RE = re.compile(r"^\|\s*`([a-z][a-z0-9_]*)`\s*\|", re.MULTILINE)
 # report") cannot see the drift where the artifact regenerates: run a fifth major and
 # the DDL keeps claiming four, every check stays green, and the next reader derives a
 # weaker claim than the evidence supports.
+#
+# Two kinds of run back that claim, and both are compared: tools/sql-smoke-report*.txt
+# (the DDL loads and the smoke samples pass) and the falsification ladder
+# tools/falsify-report*.txt (relaxing one constraint makes exactly one sample go red --
+# the part that shows the constraints bite rather than merely load).
 STAMP_RE = re.compile(r'^[ \t]*--[ \t]*PG-VERIFIED-ON:[ \t]*(.*)$', re.M)
 PG_IMAGE_RE = re.compile(r'postgres:\d[\w.\-]*')
 REPORT_IMAGE_RE = re.compile(r'^[ \t]*image[ \t]*:[ \t]*(postgres:\d[\w.\-]*)[ \t]*$',
@@ -205,6 +210,51 @@ def evidence_images(root):
     if not files:
         return set(), ['no file matched %s' % os.path.join(root, 'tools',
                                                            'sql-smoke-report*.txt')]
+    found = set()
+    for path in files:
+        try:
+            text = read_text(path)
+        except OSError as exc:
+            problems.append('cannot read %s (%s)' % (path, exc))
+            continue
+        hits = set(REPORT_IMAGE_RE.findall(text))
+        if not hits:
+            problems.append('%s records no "image  : postgres:N" line'
+                            % os.path.basename(path))
+        found |= hits
+    return found, problems
+
+
+# The falsification ladder (tools/falsify-report*.txt) is SHARED by both DDL files:
+# tools/falsify_smoke.py relaxes one constraint at a time in db/risk_control.sql and in
+# db/data_center.sql and reruns both smoke files, so one set of per-image reports covers
+# the risk DDL exactly as much as the data-centre one. main() and selftest() load it once
+# into this module global and C17 reads it.
+#
+# A global rather than a further run_checks parameter: the ~20 existing call sites must
+# keep exercising the same path the real run uses, and one more parameter would let a
+# sample pass a value production never produces. None means "never loaded" and is a loud
+# C17 failure, for the same reason the evidence set has a sentinel.
+#
+# Only the WIDTH is compared here. Whether the ladder itself is trustworthy -- verdict OK,
+# the reports agreeing with each other, generated over the tool's current case list -- is
+# judged once, by tools/verify_data_center.py's C6, which owns the ladder. Copying that
+# logic into a second file would be a copy that can drift.
+LADDER = None
+
+
+def load_ladder(root):
+    """Returns (set of image names the falsification ladder covers, list of problems).
+
+    Every report must yield at least one name, exactly as on the smoke side: one whose
+    `image  :` line is gone would contribute nothing and silently shrink the comparison
+    side, making a stamp that claims four look consistent with a ladder of three.
+    """
+    problems = []
+    files = sorted(glob.glob(os.path.join(root, 'tools', 'falsify-report*.txt')))
+    if not files:
+        return set(), ['no file matched %s'
+                       % os.path.join(root, 'tools', 'falsify-report*.txt')]
     found = set()
     for path in files:
         try:
@@ -615,6 +665,35 @@ def run_checks(sql_text, contract_text, smoke_text, specs_text, evidence=_NOT_SU
                                 % hidden)
                 stats['evidence_images'] = ' '.join(sorted(evidence))
 
+                # --- the falsification ladder, as wide as the same stamp -----------
+                # Reached only when the stamp DOES name images: the branches above have
+                # already reported a missing or empty stamp, and reporting that again here
+                # would print one root cause as two findings that mask each other.
+                if LADDER is None:
+                    fail('C17', 'the falsification ladder was never loaded (both main() '
+                                'and selftest() must call load_ladder(root)) -- C17 would '
+                                'have compared the stamp against the smoke evidence alone, '
+                                'and "verified" would quietly go back to meaning "loaded"')
+                elif not LADDER:
+                    fail('C17', 'the falsification ladder is empty (no tools/'
+                                'falsify-report*.txt yielded an image name) -- with nothing '
+                                'on that side, a stamp can claim any width and still agree')
+                else:
+                    stats['falsified_on'] = ' '.join(sorted(LADDER))
+                    no_ladder = sorted(cited - LADDER)
+                    if no_ladder:
+                        fail('C17', 'the DDL claims verification on %s but the '
+                                    'falsification ladder covers only %s -- on %s the '
+                                    'constraints were loaded, not shown to bite, so '
+                                    '"verified" means two different things depending on '
+                                    'who reads it'
+                                    % (sorted(cited), sorted(LADDER), no_ladder))
+                    ladder_extra = sorted(LADDER - cited)
+                    if ladder_extra:
+                        fail('C17', 'the falsification ladder covers %s but the DDL stamp '
+                                    'does not cite it -- the stamp understates what was '
+                                    'actually falsified' % ladder_extra)
+
     return issues, stats
 
 
@@ -656,13 +735,26 @@ def selftest(root):
         return 1
     print('  [evidence] %s' % ' '.join(sorted(evidence)))
 
+    # C17's other side: the falsification ladder. Loaded into the module global the same
+    # way main() does it, so the samples below run C17 through the very branch production
+    # runs -- then patched per sample (and restored) to prove each guard.
+    ladder, ladder_problems = load_ladder(root)
+    if ladder_problems or not ladder:
+        print('  SELFTEST SETUP FAIL: falsification ladder unreadable (%s)'
+              % (ladder_problems or 'empty set'))
+        return 1
+    globals()['LADDER'] = ladder
+    print('  [ladder  ] %s' % ' '.join(sorted(ladder)))
+    saved_ladder = ladder
+
     ok = True
 
     # ---- POSITIVE CONTROL: the real files must be clean. -------------------
     issues, stats = run_checks(sql, contract, smoke, specs, evidence)
-    print('  [positive ] real files        -> issues=%d (extracted seed=%d ddl=%d spec=%d impl=%d verified_on=%s)'
+    print('  [positive ] real files        -> issues=%d (extracted seed=%d ddl=%d spec=%d impl=%d verified_on=%s falsified_on=%s)'
           % (len(issues), stats['seed_rows'], stats['ddl_tables'], stats['spec_rows'],
-             stats['rule_specs'], stats.get('verified_on', '(none)')))
+             stats['rule_specs'], stats.get('verified_on', '(none)'),
+             stats.get('falsified_on', '(none)')))
     if issues:
         ok = False
         for code, msg in issues:
@@ -925,8 +1017,47 @@ def selftest(root):
           % (len(issues), sorted(codes), 'OK' if hit else 'MISSED'))
     ok = ok and hit
 
-    print('SELFTEST %s' % ('OK: all 17 negative controls fire, clean sample stays clean'
-                           if ok else 'FAIL'))
+    # ---- NEGATIVE CONTROL 18-21: the falsification ladder (C17's other side). -----
+    # One sample per guard. The expectation is the code set EXACTLY {'C17'}, not "C17 is
+    # in there": the real files are clean, so anything else on the list would mean a
+    # detector firing for a reason other than the one this sample is about.
+    stamp_now = STAMP_RE.search(sql)
+    cited_now = sorted(set(PG_IMAGE_RE.findall(stamp_now.group(1)))) if stamp_now else []
+    if len(cited_now) < 2:
+        print('  SELFTEST SETUP FAIL: the DDL stamp names %r -- a ladder sample cannot '
+              'drop one image and keep the rest' % (cited_now,))
+        ok = False
+    else:
+        def ladder_case(label, value, note):
+            nonlocal ok
+            globals()['LADDER'] = value
+            try:
+                issues, _ = run_checks(sql, contract, smoke, specs, evidence)
+            finally:
+                globals()['LADDER'] = saved_ladder
+            codes = set(c for c, _ in issues)
+            hit = (codes == {'C17'})
+            print('  [negative%s] %s -> issues=%d codes=%s %s'
+                  % (label, note, len(issues), sorted(codes), 'OK' if hit else 'MISSED'))
+            ok = ok and hit
+
+        # the ladder is one image narrower than the stamp: loaded there, never shown to bite
+        ladder_case('18', ladder - {cited_now[-1]},
+                    'ladder missing an image the stamp cites')
+        # the ladder is wider than the stamp: the stamp understates the evidence
+        ladder_case('19', ladder | {'postgres:13'},
+                    'ladder covers an image the stamp omits')
+        # an empty ladder would agree with any stamp whatsoever
+        ladder_case('20', set(), 'empty ladder                ')
+        # main()/selftest() forgot to load it: must be loud, never a silent skip
+        ladder_case('21', None, 'ladder never loaded        ')
+        if LADDER is not saved_ladder:
+            print('  SELFTEST SETUP FAIL: LADDER not restored -- the samples after this '
+                  'point would run against patched state')
+            ok = False
+
+    print('SELFTEST %s' % ('OK: every negative control above fired and the clean sample '
+                           'stayed clean' if ok else 'FAIL'))
     return 0 if ok else 1
 
 
@@ -957,6 +1088,14 @@ def main():
     for problem in ev_problems:
         print('WARNING: smoke evidence -- %s' % problem)
 
+    # The falsification ladder is loaded once here and read by C17 out of the module
+    # global (see the comment above load_ladder). An empty result with problems is NOT
+    # turned into "skip": C17 fails loudly on an empty ladder side.
+    ladder, ladder_problems = load_ladder(root)
+    globals()['LADDER'] = ladder
+    for problem in ladder_problems:
+        print('WARNING: falsification ladder -- %s' % problem)
+
     print('CRLF-normalised: contract=%d bytes, sql=%d bytes, smoke=%d bytes, specs=%d bytes'
           % (len(contract.encode('utf-8')), len(sql.encode('utf-8')),
              len(smoke.encode('utf-8')), len(specs.encode('utf-8'))))
@@ -965,14 +1104,18 @@ def main():
 
     print('extracted: seed_rows=%d ddl_tables=%d spec_rows=%d rule_specs=%d '
           'contract_table_refs=%d required_constraints=%d covered_by_smoke=%d '
-          'verified_on=%s evidence_images=%s'
+          'verified_on=%s evidence_images=%s falsified_on=%s'
           % (stats['seed_rows'], stats['ddl_tables'], stats['spec_rows'],
              stats['rule_specs'], stats['contract_table_refs'], len(REQUIRED_CONSTRAINTS),
              stats.get('smoke_constraints_tested', 0),
-             stats.get('verified_on', '(none)'), stats.get('evidence_images', '(none)')))
+             stats.get('verified_on', '(none)'), stats.get('evidence_images', '(none)'),
+             stats.get('falsified_on', '(none)')))
     print('smoke evidence files: %s'
           % ' '.join(sorted(glob.glob(os.path.join(root, 'tools',
                                                    'sql-smoke-report*.txt')))))
+    print('falsification ladder files: %s'
+          % ' '.join(sorted(glob.glob(os.path.join(root, 'tools',
+                                                   'falsify-report*.txt')))))
 
     for code, msg in issues:
         print('FAIL [%s] %s' % (code, msg))
