@@ -444,6 +444,58 @@ def test_threshold_of_unknown_rule_is_rejected():
         validate_threshold("invented_rule", 0.5)
 
 
+def test_threshold_finer_than_the_column_scale_is_refused_not_rounded():
+    """比 `numeric(18,8)` 更细的阈值必须**当场拒**，不许收下再让库静默四舍五入。
+
+    这是 2026-10-01 之前真实存在的那条缝：`0.123456789012` 看着完全合法、过得了单位判据，
+    落库却变成 `0.12345679` —— 调用方手里的值与生效值不是同一个数，而且**没有任何信号**
+    （`1e-9` 更极端：先被舍成 0，然后才轮到 `ck_risk_rule_ratio_range` 拒绝，于是报出来的
+    是「值越界」，真实原因却是「精度不够」）。错误信息必须说清「库里会存成什么」，
+    否则调用方只知道被拒、不知道该怎么改。
+    """
+    with pytest.raises(RiskConfigInvalidError) as info:
+        validate_threshold("max_position_pct", 0.123456789012)
+    assert "0.12345679" in str(info.value)
+
+    # 干净样本：恰好 8 位小数的、带零尾巴的（`0.1000000000` 就是 0.1）、第 8 位上的
+    # 极小值（`1e-07` = `0.00000010`）都必须照收 —— 否则这条判据会误伤一串合法配置。
+    validate_threshold("max_position_pct", 0.12345679)
+    validate_threshold("max_position_pct", 0.1000000000)
+    validate_threshold("max_position_pct", 1e-07)
+    validate_threshold("max_daily_trades", 3)
+
+
+def test_threshold_beyond_the_numeric_18_8_range_is_refused():
+    """超出 `numeric(18,8)` 量程的阈值也要当场拒 —— 库里只会给你一句 numeric overflow。
+
+    整数位只有 18 − 8 = 10 位。`max_daily_trades = 1e10` 这种「看起来只是很大」的 COUNT
+    阈值原本一路放行（`1e10` 是整数、也非负），到库才以 overflow 炸，而错误里看不到
+    「是这一列装不下」。
+    """
+    with pytest.raises(RiskConfigInvalidError) as info:
+        validate_threshold("max_daily_trades", 1e10)
+    assert "量程" in str(info.value)
+
+    validate_threshold("max_daily_trades", 9999999999)     # 上界之内（10 位整数）
+
+
+def test_non_finite_threshold_is_refused_before_the_unit_checks():
+    """`nan` / `±inf` 必须在单位判据**之前**挡住 —— 否则三条支路各漏一次。
+
+    漏法各不同：ABSOLUTE 支（`value < 0`）会**静默放行**；COUNT 支 `int(nan)` 抛
+    `ValueError`、`int(inf)` 抛 `OverflowError`（都不是 RISK_004 ⇒ 按错误码分派的调用方
+    接不住）；只有 RATIO 支靠 `0.0 < value` 顺带挡住。
+    ⚠️ ABSOLUTE 支当前**没有可达规则**（注册表 6 条全是 RATIO / COUNT）⇒ 那一半只能靠
+    代码读出来，本条样本打不到它；断言里钉「有限数」三个字，是为了证明拦下来的是
+    **这一道**判据，而不是恰好被别的判据挡住。
+    """
+    for rule_id in ("max_position_pct", "max_daily_trades"):
+        for bad in (float("nan"), float("inf"), float("-inf")):
+            with pytest.raises(RiskConfigInvalidError) as info:
+                validate_threshold(rule_id, bad)
+            assert "有限数" in str(info.value)
+
+
 # ── §3.8 第 5 行：放行矩阵（4 状态 × 开/平仓 = 8 组合）───────────────────
 def _matrix_engine(state: str):
     if state == "KILLED":

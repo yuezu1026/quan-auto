@@ -535,6 +535,51 @@ def test_save_change_rejects_an_out_of_range_threshold_before_any_sql() -> None:
     assert conn.calls == [], "非法值必须在开事务之前就拦住，不许先写进去再回滚"
 
 
+def test_save_change_refuses_a_threshold_finer_than_the_column_scale() -> None:
+    """比 `numeric(18,8)` 更细的阈值必须在**开事务之前**拒掉（2026-10-01 收口）。
+
+    收下它等于让库**静默存下另一个数**：`0.123456789012` → `0.12345679`，而调用方
+    看到的是一句「写入成功」。所以这里断言两件事：错误信息要说清库里会存成什么
+    （否则调用方只知道被拒、不知道怎么改），以及**一条 SQL 都不许发**。
+    本函数是 `validate_threshold()` 那道标度判据的主人 ——
+    变异 `S16-threshold-scale-check-dropped` 打在它上面。
+    """
+    conn = FakeConn(script=[list(step) for step in SAVE_SCRIPT])
+    with pytest.raises(RiskConfigInvalidError) as info:
+        _store(conn).save_change(_change(new_threshold=0.123456789012))
+    assert "0.12345679" in str(info.value)
+    assert conn.calls == [], "库装不下的精度必须在应用层拦住，不许交给库去四舍五入"
+
+
+def test_save_change_refuses_a_threshold_beyond_the_column_range() -> None:
+    """超出 `numeric(18,8)` 量程（整数位 > 10）的阈值同样在应用层拒掉。
+
+    换 `max_daily_trades` 是因为它单位是 COUNT ⇒ `1e10` 过得了单位判据（整数、非负），
+    原本要一路走到库里才以 `numeric field overflow` 炸 —— 而错误里看不到「是这一列装不下」。
+    本函数是量程判据的主人（变异 `S16-threshold-range-check-dropped`）。
+    """
+    conn = FakeConn(script=[list(step) for step in SAVE_SCRIPT])
+    with pytest.raises(RiskConfigInvalidError) as info:
+        _store(conn).save_change(_change(rule_id="max_daily_trades", new_threshold=1e10))
+    assert "量程" in str(info.value)
+    assert conn.calls == []
+
+
+def test_save_change_refuses_a_non_finite_threshold() -> None:
+    """`nan` / `±inf` 不许进配置 —— 它们到库那一层也一定会被拒，只是理由变了。
+
+    此前 COUNT 支的漏法是抛 `ValueError` / `OverflowError`（不是 RISK_004 ⇒ 按错误码
+    分派的调用方接不住）。本函数是非有限数判据的主人
+    （变异 `S16-threshold-finite-check-dropped`）。
+    """
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        conn = FakeConn(script=[list(step) for step in SAVE_SCRIPT])
+        with pytest.raises(RiskConfigInvalidError) as info:
+            _store(conn).save_change(_change(rule_id="max_daily_trades", new_threshold=bad))
+        assert "有限数" in str(info.value)
+        assert conn.calls == []
+
+
 def test_save_change_rejects_a_blank_operator_before_any_sql() -> None:
     conn = FakeConn(script=[list(step) for step in SAVE_SCRIPT])
     with pytest.raises(RiskConfigInvalidError):

@@ -22,14 +22,23 @@
   * `MUTATION` 触发出来的失败必须是**断言/异常**，不能是 `ImportError`/语法错
     （收集阶段就炸掉，等于测试根本没跑）。
 
-**它不进 `run_all_gates.py` 的注册表**：每条样本要跑一次 pytest（2026-10-01「分红收口」后实测 **91 条样本：84 条变异 + 7 条 CONTROL + 0 条 ENV-LIMIT**（基线**九**套件 `passed=458`；报告里那行
-`mutations=84 caught=84 control=7 env_limited=0` 的 `mutations` **只数变异、不含 CONTROL**，所以总数是 91
-而不是 84 —— 别把两处加混了）；此前 2026-09-30「采集编排层」那轮是 **81 条样本：74 条变异 + 7 条 CONTROL + 0 条 ENV-LIMIT**（基线九套件 `passed=433`）；2026-09-29 晚 Ⅳ「复权帧的 `validate_frame`
+**它不进 `run_all_gates.py` 的注册表**：每条样本要跑一次 pytest（2026-10-01「阈值精度收口」后实测 **94 条样本：87 条变异 + 7 条 CONTROL + 0 条 ENV-LIMIT**（基线**九**套件 `passed=461`；报告里那行
+`mutations=87 caught=87 control=7 env_limited=0` 的 `mutations` **只数变异、不含 CONTROL**，所以总数是 94
+而不是 87 —— 别把两处加混了）；此前 2026-10-01「分红收口」那轮是 **91 条样本：84 条变异 + 7 条 CONTROL + 0 条 ENV-LIMIT**（基线九套件 `passed=458`）；2026-09-30「采集编排层」那轮是 **81 条样本：74 条变异 + 7 条 CONTROL + 0 条 ENV-LIMIT**（基线九套件 `passed=433`）；2026-09-29 晚 Ⅳ「复权帧的 `validate_frame`
 判据」那轮是 **73 条样本：67 条变异 + 6 条 CONTROL + 0 条 ENV-LIMIT**（基线八套件 `passed=388`）；同日晚 Ⅲ「CSV 侧复权口径」那轮是 68 条 = 63 + 5 + 0
 （基线 `passed=252`，当时清单里**漏了** `tests/test_data_center_adapter.py`，所以下面几处「七套件」这个称呼与实际不符）；同日晚 Ⅱ「复权价实施」那轮是 66 条 = 61 + 5 + 0
 （基线 `passed=249`）；同一日的 A6 收口那轮是 59 条 = 54 + 5 + 0
 （基线 `passed=241`），I4 是 54 条 = 49 + 5 + 0（基线六套件 `passed=181`），I3 那轮是 43 条 = 39 + 4 + 0
 （基线五套件 `passed=145`），再往前 B20 后是 32 条 = 29 + 3 + 0），慢，且它验证的对象是测试而不是产物契约。
+
+⚠️ **2026-10-01 阈值精度收口（风控契约 §7.6 缺口 ②）：新增 3 条，全部落在 `tests/test_risk_store.py` 那套件**：
+  `S16-threshold-scale-check-dropped`（比 `numeric(18,8)` 更细的阈值不再被拒 ⇒ 库**静默四舍五入**成
+  另一个数，而调用方拿到的是一句「写入成功」）、`S16-threshold-range-check-dropped`（`1e10` 是整数、
+  也非负 ⇒ 过得了单位判据，到库才以 `numeric field overflow` 炸）、`S16-threshold-finite-check-dropped`
+  （`nan` 在 COUNT 支走到 `int(value)` 抛 `ValueError`、`inf` 抛 `OverflowError`，两个都不是 RISK_004）。
+  三条的 `expect` 钉在写路径（**一条 SQL 都不许发**）而不是 `tests/test_risk_engine.py` 里那几条纯函数
+  用例 —— 后者**不在基线九套件里**，拿它当主人会让「没抓到」伪装成「实现全对」（见上面那条纪律
+  「变异期望落在哪个套件，那个套件就必须在基线里」）。本套件因此从 79 条涨到 82 条，基线 `passed=458` → **461**。
 
 ⚠️ **2026-10-01 分红那一批（I2 收口 ①ⓐ，登记在 DC 契约附录 B22）：新增 10 条 + 重锚 3 条**：
   ① **重锚 3 条**，全是「新产物把有效变异悄悄变成 no-op」（铁律⑤）—— 这一批一条不落：
@@ -1087,6 +1096,44 @@ MUTATIONS = [
         "old": "        \"resumed_at = EXCLUDED.resumed_at, resumed_by = EXCLUDED.resumed_by\"\n",
         "new": "        \"resumed_at = EXCLUDED.resumed_at, resumed_by = EXCLUDED.resumed_by, \"\n        \"resume_reason = ''\"\n",
         "expect": ["test_breaker_upsert_never_touches_the_resume_reason_column"],
+    },
+    # ── 2026-10-01：阈值进库前的三道新判据（`quanauto/risk.py::validate_threshold`）──
+    # 三条的主人都是 `tests/test_risk_store.py` 里同一批新用例（写路径断言「一条 SQL 都不许发」），
+    # **不是** `tests/test_risk_engine.py` 里那几条纯函数用例 —— 后者不在基线九套件里
+    # （见上面那条纪律「变异期望落在哪个套件，那个套件就必须在基线里」），
+    # 拿它当主人会让「没抓到」伪装成「实现全对」。
+    {
+        # 标度判据拿掉：比 8 位更细的阈值会被原样绑给 `numeric(18,8)` ⇒ 库**静默四舍五入**
+        # 成另一个数，而调用方拿到的是一句「写入成功」。撤掉它不会有任何报错，
+        # 只是配置悄悄变成了别的值 —— 这正是 2026-10-01 之前真实存在的那条缝。
+        "tag": "S16-threshold-scale-check-dropped",
+        "tests": TESTS_RISK_STORE,
+        "path": "quanauto/risk.py",
+        "old": "    if scaled != as_written:\n",
+        "new": "    if False and scaled != as_written:  # MUT: 标度判据拿掉\n",
+        "expect": ["test_save_change_refuses_a_threshold_finer_than_the_column_scale"],
+    },
+    {
+        # 量程判据拿掉：`max_daily_trades = 1e10` 是整数、也非负 ⇒ 单位判据放行，
+        # 接着到库里以 `numeric field overflow` 炸，而错误里看不到「是这一列装不下」。
+        "tag": "S16-threshold-range-check-dropped",
+        "tests": TESTS_RISK_STORE,
+        "path": "quanauto/risk.py",
+        "old": "    if as_written > _THRESHOLD_MAX:\n",
+        "new": "    if False and as_written > _THRESHOLD_MAX:  # MUT: 量程判据拿掉\n",
+        "expect": ["test_save_change_refuses_a_threshold_beyond_the_column_range"],
+    },
+    {
+        # 非有限数判据拿掉：`nan` 在 COUNT 支走到 `int(value)` ⇒ **`ValueError`**（不是
+        # RISK_004）、`inf` ⇒ `OverflowError`；两个都不属于本域错误族，按错误码分派的
+        # 调用方接不住。⚠️ 只有 COUNT 支的样本能打到它：RATIO 支有 `0.0 < value` 顺带挡住，
+        # ABSOLUTE 支当前没有可达规则（注册表 6 条全是 RATIO / COUNT）。
+        "tag": "S16-threshold-finite-check-dropped",
+        "tests": TESTS_RISK_STORE,
+        "path": "quanauto/risk.py",
+        "old": "    if not as_written.is_finite():\n",
+        "new": "    if False and not as_written.is_finite():  # MUT: 非有限数判据拿掉\n",
+        "expect": ["test_save_change_refuses_a_non_finite_threshold"],
     },
     {
         # 对照组：只在注释上动手，必须**不**被抓到 —— 用来证明上面几条的红

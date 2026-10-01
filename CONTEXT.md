@@ -128,7 +128,7 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 | `tools/verify_dashboard.py` | ★ **I4 新门禁**（`dashboard-consistency`）：C1~C10。C6 直接禁掉落进看板模块的统计函数与统计模块（`performance`/`statistics`/`numpy`/`pandas`/`scipy` 任一 import，或 16 个统计函数名之一 ⇒ FAIL）；C8 双向扫「改一个数，读数必须跟着动」；**C10 是这个门禁的参照物** —— 它用报告自带的 `trades`/`orders`/`account_history` **现场重跑真的 `PerformanceAnalyzer`**，与报告里存的 14 个指标逐字段比。没有 C10，整个门禁就是恒等式（C3 两端同源、手改报告会把两边一起改掉）。**边界**：C10 的参照物就是写出这些数的同一个分析器 ⇒ 「公式本身算错了」它看不见；它证明的是「报告新鲜、没被手改过」 |
 | `tools/dashboard_failure_demo.py` | I4 DoD「触发测试」的**可复查脚本**：手工把报告里的一个指标改掉，确认 C10 会红。跑一次落 `tools/dashboard-failure-report.txt`；**不是门禁**（改的是临时副本，不改仓库里的报告） |
 | `tools/dashboard-failure-report.txt` | 上一条的输出 —— **快照**：那一行 `ISSUE [C10] <字段>: the report stores … but re-running PerformanceAnalyzer … yields …` 就是 DoD 要的「一次真实的失败记录」 |
-| `tools/pytest_mutation_check.py` | 把实现逐处改坏，验证基线**九套件**（`tests/test_backtest_slice.py` / `tests/test_data_center_adapter.py` / `tests/test_data_center_store.py` / `tests/test_backtest_db_feed.py` / `tests/test_data_center_pit.py` / `tests/test_backtest_risk_gate.py` / `tests/test_risk_store.py` / `tests/test_dashboard.py` / `tests/test_ingest.py`）真的会红（**不是门禁**：它验证的是测试，且慢。**2026-10-01（分红）现取**：`mutations=84 caught=84 control=7 env_limited=0`（基线九套件 `passed=458`）；**2026-09-30（采集编排层）** 是 `mutations=74 caught=74 control=7 env_limited=0`（基线九套件 `passed=433`）；**2026-09-29 晚 Ⅲ** 是 `mutations=63 caught=63 control=5 env_limited=0`（基线 `passed=252`，当时清单里**漏了** `tests/test_data_center_adapter.py`，所以「七套件」这个称呼与实际不符）、晚 Ⅱ 是 `mutations=61 caught=61 control=5 env_limited=0`（基线 249）；此前几轮记的是「`mutations=54 caught=54 control=5 env_limited=0`（基线 241）」「54 条样本 / 49 + 5 + 0」「43 条样本 / 39 + 4 + 0」「32 条样本 / 29 + 3 + 0」—— 那些行里的「N 条样本」是**当时的记法**（= caught + control + env_limited），**不同轮的记法不完全一致**，引用一律以报告文件为准。这一栏随环境变：`psycopg` 只声明在 `[postgres]` extra 里（opt-in）、本机 `.venv` 是手工装的、CI 只装 `.[dev]` ⇒ 那边驱动相关的变异会退回 `ENV-LIMIT` —— **`ENV-LIMIT` 逐条预写理由、不计入 CAUGHT 分母、绝不事后追认**） |
+| `tools/pytest_mutation_check.py` | 把实现逐处改坏，验证基线**九套件**（`tests/test_backtest_slice.py` / `tests/test_data_center_adapter.py` / `tests/test_data_center_store.py` / `tests/test_backtest_db_feed.py` / `tests/test_data_center_pit.py` / `tests/test_backtest_risk_gate.py` / `tests/test_risk_store.py` / `tests/test_dashboard.py` / `tests/test_ingest.py`）真的会红（**不是门禁**：它验证的是测试，且慢。**2026-10-01（阈值精度收口）现取**：`mutations=87 caught=87 control=7 env_limited=0`（基线九套件 `passed=461`）；**2026-10-01（分红）** 是 `mutations=84 caught=84 control=7 env_limited=0`（基线九套件 `passed=458`）；**2026-09-30（采集编排层）** 是 `mutations=74 caught=74 control=7 env_limited=0`（基线九套件 `passed=433`）；**2026-09-29 晚 Ⅲ** 是 `mutations=63 caught=63 control=5 env_limited=0`（基线 `passed=252`，当时清单里**漏了** `tests/test_data_center_adapter.py`，所以「七套件」这个称呼与实际不符）、晚 Ⅱ 是 `mutations=61 caught=61 control=5 env_limited=0`（基线 249）；此前几轮记的是「`mutations=54 caught=54 control=5 env_limited=0`（基线 241）」「54 条样本 / 49 + 5 + 0」「43 条样本 / 39 + 4 + 0」「32 条样本 / 29 + 3 + 0」—— 那些行里的「N 条样本」是**当时的记法**（= caught + control + env_limited），**不同轮的记法不完全一致**，引用一律以报告文件为准。这一栏随环境变：`psycopg` 只声明在 `[postgres]` extra 里（opt-in）、本机 `.venv` 是手工装的、CI 只装 `.[dev]` ⇒ 那边驱动相关的变异会退回 `ENV-LIMIT` —— **`ENV-LIMIT` 逐条预写理由、不计入 CAUGHT 分母、绝不事后追认**） |
 | `tools/pytest-mutation-report.txt` | 上一条的逐变异证据 —— **快照**，改实现或改测试后作废 |
 | `.rounds/i1/` | I1 可复现性门禁的证据样本（同种子两份 + 换种子一份，共三份）—— 由 `--record` 显式重录，**跑门禁不会改它们** |
 | `tools/ci_dryrun.py` | 在本地把 CI 的两条命令真跑一遍 + 两次红→绿往返（含清 `__pycache__`），写 `tools/ci-dryrun-report.txt`。**不是门禁**（需 .venv） |
@@ -311,16 +311,17 @@ I3 风控真正介入下单路径（**默认关闭**）、I3b 风控存储层与
   登记在核心契约 §F，一致性靠「现场重跑 `PerformanceAnalyzer`」而不是比两个同源数字。
 
 **产物**：
-`.venv` + pytest（数量**现取** `python -m pytest -q`；**2026-10-01「分红」后实测 `539 passed`**
+`.venv` + pytest（数量**现取** `python -m pytest -q`；**2026-10-01「阈值精度收口」后实测 `545 passed`**
 = 骨架 3 + 竖切 **25** + PIT **34** + 适配器 **136** + 采集凭证环境变量 11 + 落库侧 **67** + 端到端接线 11
-+ 风控引擎 67 + 风控闸门 19 + 风控存储 79 + 看板 36 + 采集编排 **51** —— 这个分项构成是**那一刻**的实测，
-别的文件要引用时**按现值取**，别抄。此前几轮那几行写的是 `514 passed`（2026-09-30「采集编排层」，落库侧 52 / 采集编排 45）、
++ 风控引擎 **70** + 风控闸门 19 + 风控存储 **82** + 看板 36 + 采集编排 **51** —— 这个分项构成是**那一刻**的实测，
+别的文件要引用时**按现值取**，别抄。此前几轮那几行写的是 `539 passed`（2026-10-01「分红」，风控引擎当时 67 / 风控存储 79）、
+`514 passed`（2026-09-30「采集编排层」，落库侧 52 / 采集编排 45）、
 `467 passed`（2026-09-29 晚 Ⅲ「CSV 侧复权口径」，适配器当时 134）、
 `464 passed`（晚 Ⅱ）、`456 passed`（A6 收口，PIT 23 / 端到端接线 10 条）、`436 passed`、`414 passed`）、
 `pyproject.toml`（`dependencies = ["pandas>=2.0"]` —— S2 起**不再是空数组**，理由见 §1；源 SDK 在 `[datasources]` extra 里；
 **`psycopg` 声明在 `[postgres]` extra 里**（2026-09-25 裁决，同 [datasources] 的 opt-in 口径）：`pgstore.py` 里**惰性导入**，本机 `.venv` 是**手工装**的 3.3.6、CI 只装 `.[dev]` ⇒ 那条「驱动改成顶层导入」的变异在 CI 上仍是 `ENV-LIMIT`）、
 `quanauto/` 包（**17 条**：16 个模块（15 个实现 + 入口 `quanauto.cli`）+ `__init__.py`；**条目数现取** `quanauto/*.py`）、
-`tests/`（骨架自检 3 条 + 竖切回归 **25** 条 + PIT 回归 **34** 条 + 适配器回归 **136** 条 + 采集凭证环境变量回归 **11** 条 + 落库侧回归 **67** 条 + 端到端接线回归 **11** 条 + 风控引擎回归 67 条 + 风控闸门回归 **19** 条 + 风控存储回归 **79** 条 + 看板回归 **36** 条 + 采集编排回归 **51** 条）、`.github/workflows/ci.yml`。
+`tests/`（骨架自检 3 条 + 竖切回归 **25** 条 + PIT 回归 **34** 条 + 适配器回归 **136** 条 + 采集凭证环境变量回归 **11** 条 + 落库侧回归 **67** 条 + 端到端接线回归 **11** 条 + 风控引擎回归 **70** 条 + 风控闸门回归 **19** 条 + 风控存储回归 **82** 条 + 看板回归 **36** 条 + 采集编排回归 **51** 条）、`.github/workflows/ci.yml`。
 
 **I2 仍未收口** —— 但开着的只剩**收口条件 ②**（**收口条件 ① 已于 2026-10-01 全关**；明细见下，交付记录见 `docs/迭代计划.md` 的「十一、I2 收口 ①ⓑ」与「十二、I2 收口 ①ⓐ：分红」那两节、以及 DC 契约附录 **B22** / **H**）：
 ① **复权价这一条已于 2026-09-29 晚 Ⅱ 实施**（订正：这里此前写的是「**复权价在回测里仍未实施**」，那句话**已作废**）：

@@ -15,8 +15,12 @@
 * 短轮询 watchdog 只在 DB 版才需要，回测路径不启动它。
 * 真库探针（postgres:17 容器，一次性核对、不进仓）实测留下的两条缺口登记在
   `docs/开工前缺口清单.md` §七之二：① `RuleChangeRequest` 没有 `old_threshold`，
-  审计表里的「变更前的生效值」只能由客户端算；② 库里 `numeric(18,8)` 会**静默**舍入
-  更多位的小数（`1e-9` 甚至会被舍成 0 之后才被 CHECK 拒绝）。
+  审计表里的「变更前的生效值」只能由客户端算（**仍开着**）；
+  ② ~~库里 `numeric(18,8)` 会**静默**舍入更多位的小数（`1e-9` 甚至会被舍成 0 之后才被
+  CHECK 拒绝）~~ ⇒ **2026-10-01 收口**：`validate_threshold()` 现在当场挡住「比 8 位更细」
+  与「超出 `numeric(18,8)` 量程」的阈值，并把库会存成什么写进错误信息；`nan` / `±inf`
+  也一并挡住（此前 ABSOLUTE 支静默放行、COUNT 支抛 `ValueError`）。边界：**计算值**
+  （权益峰值 / 留痕的 `observed`）不在这一层，仍按库的四舍五入走，见 `_as_numeric()`。
 
 设计要点（写给下一个改这里的人）：
 
@@ -42,7 +46,7 @@ import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from enum import Enum
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
@@ -298,15 +302,45 @@ def _ratio_in_range(value: float) -> bool:
     return 0.0 < value <= 1.0
 
 
+#: `threshold` 这一列在库里是 `numeric(18,8)`（`db/risk_control.sql`；峰值表与两张日志表
+#: 的同名列同标度）—— 「8 位小数」与「整数位最多 10 位」是**列**的属性，不是本模块的约定。
+#: 写在这里是为了让下面那两条判据与 DDL 对得起账；列改了标度，这里必须同批改。
+_THRESHOLD_SCALE = 8
+_THRESHOLD_QUANTUM = Decimal(1).scaleb(-_THRESHOLD_SCALE)
+_THRESHOLD_MAX = Decimal(10) ** (18 - _THRESHOLD_SCALE) - _THRESHOLD_QUANTUM
+
+
 def validate_threshold(rule_id: str, threshold: float) -> None:
     """按注册表的 unit 校验阈值；不合法抛 `RiskConfigInvalidError`（RISK_004）。
 
     这是「`0.1` 与 `10` 差 100 倍」那类静默算错的**唯一**拦截点：RATIO 一律存 0~1 小数。
+
+    单位合法只是第一层。`threshold` 列是 `numeric(18,8)`，所以这里还要挡住两类
+    「单位对、但库装不下」的值（2026-10-01 起，此前它们要到库里才炸）：
+
+    * **超出量程**（整数位 > 10）⇒ 库以 `numeric field overflow` 拒绝；
+    * **比 8 位更细** ⇒ 库**不报错**，四舍五入后静默存下另一个数（`0.123456789012`
+      变成 `0.12345679`；`1e-9` 先被舍成 0，然后才轮到 `ck_risk_rule_ratio_range` 拒绝
+      —— 于是报出来的是「值越界」，而真实原因是「精度不够」）。第二类才是本函数
+      必须存在的主要理由：它是「你设的阈值被改过而你不知道」的唯一拦截点。
+
+    入参是 `float`（契约 §3.3.4 的 `RuleChangeRequest.new_threshold` 就是 `float`）
+    ⇒ 10 位整数位那个量级上，能被表达的值本身就有 ulp 量级的间隔（1e10 附近约 2e-6）。
     """
     spec = RULE_REGISTRY.get(rule_id)
     if spec is None:
         raise RiskConfigInvalidError("规则 %r 不在注册表里，不可自定义新 rule_id" % (rule_id,))
     value = float(threshold)
+    as_written = Decimal(str(value))
+    if not as_written.is_finite():
+        # `nan` / `±inf` 在**比较**里对每一支都「不大于上限、不小于 0」⇒ 只有 RATIO
+        # 那支靠 `0.0 < value` 顺带挡住，另外两支拦不住：ABSOLUTE 支**静默放行**，
+        # COUNT 支抛的是 `ValueError` / `OverflowError`（不是 RISK_004 ⇒ 按错误码
+        # 分派的调用方接不住）。所以三个分支之前先挡一次。
+        raise RiskConfigInvalidError(
+            "规则 %s 的阈值必须是有限数，收到 %r —— threshold 列是 numeric(18,8)，"
+            "NaN / ±Infinity 到了那一层只会得到一句「数据库拒绝了」" % (rule_id, threshold)
+        )
     if spec.unit is RuleUnitEnum.RATIO:
         if not _ratio_in_range(value):
             raise RiskConfigInvalidError(
@@ -324,6 +358,20 @@ def validate_threshold(rule_id: str, threshold: float) -> None:
             raise RiskConfigInvalidError(
                 "规则 %s 的单位是 ABSOLUTE，阈值必须 >= 0，收到 %r" % (rule_id, threshold)
             )
+    # ── 第二层：库装得下吗（`numeric(18,8)`）───────────────────────────
+    if as_written > _THRESHOLD_MAX:
+        raise RiskConfigInvalidError(
+            "规则 %s 的阈值 %s 超出 threshold 列 numeric(18,8) 的量程（整数位最多 %d 位）"
+            "—— 库会以 numeric overflow 拒绝，而你看不到是这一列装不下"
+            % (rule_id, _audit_num(value), 18 - _THRESHOLD_SCALE)
+        )
+    scaled = as_written.quantize(_THRESHOLD_QUANTUM, rounding=ROUND_HALF_UP)
+    if scaled != as_written:
+        raise RiskConfigInvalidError(
+            "规则 %s 的阈值 %s 比 threshold 列 numeric(18,8) 更细 —— 落库会被四舍五入成 %s，"
+            "而你手里的值看着完全合法（这类静默改动最难查）。请显式写成 %s 再提交"
+            % (rule_id, _audit_num(value), _audit_num(scaled), _audit_num(scaled))
+        )
 
 
 # ── 数据类（契约 §3.2.2 ~ §3.2.7 / §3.3.4 / §3.3.5 / §3.4.2，逐字）───────
@@ -732,6 +780,14 @@ def _as_numeric(value: Any) -> Decimal:
 
     直接绑 float 等于把二进制尾数交给库：`0.1` 会变成 `0.1000000000000000055…`，
     而 `numeric` 是**精确**类型 —— 那串尾巴会一直躺在库里，回读时就在那儿。
+
+    ⚠️ 本函数**不按列标度量化**，而且这是有意的：`quanauto/pgstore.py::_to_decimal` 那边
+    量化，是为了让它自己发出的 `IS DISTINCT FROM` 判等与库里的值一致（D10 幂等）；
+    本模块**目前没有这类比对**（峰值取 `max`、两张日志表只追加）⇒ 加上量化只会让
+    「参数到底是不是 `Decimal`」这条判据失去牙。而「库装不下」那条风险由
+    `validate_threshold()` 在**更前面**挡住（2026-10-01 起），配置值到这里一定已是
+    8 位小数。**计算值**（权益峰值、留痕里的 `observed`）超过 8 位小数时仍由库四舍五入
+    —— 本层不假装没这回事，边界写在这里。
     """
     return Decimal(str(float(value)))
 
@@ -741,8 +797,13 @@ def _audit_num(value: Any) -> str:
 
     `Decimal.normalize()` 会把 `0.10` 收成 `0.1`、把 `1000.0` 收成 `1E+3`，
     所以最后必须 `format(..., 'f')` 回到定点 —— 否则审计里会出现看不懂的 `1E-7`。
+
+    `Decimal` 入参**不做** float 中转（`float()` 在 10 位整数位 + 8 位小数的量级上
+    会丢位，那会让这句话里的数与库里真正的数不是同一个）；同一个定点写法也被
+    `validate_threshold()` 的错误信息复用 —— 同一个数不许有两种打印方式。
     """
-    return format(Decimal(str(float(value))).normalize(), "f")
+    number = value if isinstance(value, Decimal) else Decimal(str(float(value)))
+    return format(number.normalize(), "f")
 
 
 def _as_local_dt(value: Any) -> Optional[datetime]:
