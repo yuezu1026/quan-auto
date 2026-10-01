@@ -573,7 +573,7 @@ class _DriverCursor:
     """假游标：**照实测**同时给出 `description` 与 `fetchall()` 两副面孔。
 
     实测（psycopg 3.3.6 `_cursor_base.py:115`）：无结果集时 `Cursor.description`
-    **返回 `None`**（不抛）；而 `fetchall()`（同文件 L629）**抛**「没产生记录」。
+    **返回 `None`**（不抛）；而 `fetchall()`（psycopg 3.3.6 同文件 L629）**抛**「没产生记录」。
     两者不对称，正是「`PsycopgConnection.execute()` 无条件 `fetchall()`」会炸的原因 ——
     也是为什么修法要判 `description` 而不是判异常。
     """
