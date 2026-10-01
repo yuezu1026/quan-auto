@@ -111,25 +111,31 @@ SOURCE_RELS = (ADAPTER_REL, ROWCLASS_REL, ERRORS_REL, CONTRACT_REL)
 # 报文里的列名。它与上面五张的区别在**值域**：它的三个标准列名来自
 # `ADJUST_FACTOR_COLUMNS`（另一张表的 schema），不是日线行的列 —— 所以下面
 # `SCHEMA_TUPLES` 必须一起登记，否则 A1 会把 `adjust_factor` 判成「不在标准 schema 里」。
+# `TUSHARE_DIVIDEND`（2026-10-01，契约附录 B22）与 `TUSHARE_ADJ_FACTOR` 同形：值域是
+# `DIVIDEND_COLUMNS`。两处刻意不合并成一张表的两行 —— 它们是两个 `api_name`
+# 报文的列名，字段集也不同（分红多 `ann_date`，因子没有）。
 COLUMN_MAPS = ('AKSHARE_DAILY_BAR', 'BAOSTOCK_DAILY_BAR', 'TENCENT_DAILY_BAR',
                'EASTMONEY_INCOME_FINANCIAL',
                'EASTMONEY_BALANCE_FINANCIAL', 'EASTMONEY_INDEX_MEMBER',
-               'TUSHARE_ADJ_FACTOR')
+               'TUSHARE_ADJ_FACTOR', 'TUSHARE_DIVIDEND')
 # 取值域映射表：{源取值: 标准取值}。键不是列名，所以不参与 A1/A2 的列名判定。
 VALUE_MAPS = ('EASTMONEY_REPORT_TYPE',)
-# 定义标准 schema 的五个元组。A1 的「标准列名集合」由它们拼出来（不读
+# 定义标准 schema 的六个元组。A1 的「标准列名集合」由它们拼出来（不读
 # `STANDARD_COLUMNS` —— 那是个 BinOp，`ast.literal_eval` 拿不到，而且拼法本身就是
 # `STANDARD_COLUMNS` 的定义）。
 # `ADJUST_FACTOR_COLUMNS` 是 2026-09-29 加的第 5 个（契约附录 B21）：它不是日线行的列，
 # 而是另一张表的 schema —— 所以它**单独登记在这里**，A8 才能用两段契约锚分别核对。
+# `DIVIDEND_COLUMNS` 是 2026-10-01 加的第 6 个（契约附录 B22），与上一条同一种情况。
 # ⚠️ 2026-09-29 晩 Ⅳ 订正：此前的注释写它「**故意不出现在** `STANDARD_COLUMNS` 里」，
 # 那句话在**产品文件**里**已作废**（`quanauto/datasources.py` 的 `STANDARD_COLUMNS` 现在
-# 把四个元组都拼进去、含 `ADJUST_FACTOR_COLUMNS`；不拼的话 `validate_frame` 的通用分支
-# 会把 `adjust_factor` 当成「多出来的列」）。本门禁**不读** `STANDARD_COLUMNS`（A1 的
-# 标准列名集合由 `SCHEMA_TUPLES` 拼出）⇒ 这条订正只动文字与下面的合成样本，不动任何判据。
+# 把本模块登记的全部 schema 元组都拼进去、含 `ADJUST_FACTOR_COLUMNS`；不拼的话
+# `validate_frame` 的通用分支会把 `adjust_factor` 当成「多出来的列」）。
+# 这里刻意**不写个数**：拼法变一次这个数就旧一次，而它读起来仍然像事实。
+# 本门禁**不读** `STANDARD_COLUMNS`（A1 的标准列名集合由 `SCHEMA_TUPLES` 拼出）
+# ⇒ 这条订正只动文字与下面的合成样本，不动任何判据。
 SCHEMA_TUPLES = ('DAILY_BAR_COLUMNS', 'FINANCIAL_REQUIRED_COLUMNS',
                  'FINANCIAL_SUBJECT_COLUMNS', 'INDEX_MEMBER_COLUMNS',
-                 'ADJUST_FACTOR_COLUMNS')
+                 'ADJUST_FACTOR_COLUMNS', 'DIVIDEND_COLUMNS')
 REPORT_TYPES_CONST = 'REPORT_TYPES'
 DROPPED_MARKERS_CONST = 'BAOSTOCK_DROPPED_MARKERS'
 
@@ -148,16 +154,21 @@ DB_DRIVER_MODULES = ('psycopg', 'psycopg2', 'sqlalchemy', 'asyncpg', 'aiomysql',
 SOURCE_SDK_MODULES = ('akshare', 'baostock', 'tushare', 'jqdatasdk', 'rqdatac',
                       'efinance', 'adata', 'yfinance')
 
-# 契约 §3.2 的四段列名清单：(标签, 对应常量, 起点锚, 终点锚)。
+# 契约 §3.2 的五段列名清单：(标签, 对应常量, 起点锚, 终点锚)。
 # 锚都是实测唯一的（`--selftest` 的 NEG8b 会证明「锚丢了 = 判 FAIL」而不是跳过）。
 # 第 4 段（adjust_factor，2026-09-29 随附录 B21 落地）两道锚都是新选的，因为既有
 # 锚都不能共用：`列名 ——` 是index 那段的起点锚（再拿它当起点会命中两处 ⇒ 抽失败），
 # 而正文里首个 `，且` 必须紧跟在清单尾巴后面 —— 换行把 `，且` 拆开就等于终点锚不存在。
+# 第 5 段（dividend，2026-10-01 随附录 B22 落地）沿用终点锚 `，且`，起点锚是新写的
+# `列名恰好是 ——`：它**不是**第 4 段起点锚 `列名必须恰好是 ——` 的子串（“列名”与
+# “恰好”之间隔着“必须”）⇒ 两段各自唯一。契约正文里那句「这里**故意**不写
+# ‘列名必须恰好是’」就是为此写的，两处必须同批改。
 CONTRACT_SCHEMA_SPECS = (
     ('daily', 'DAILY_BAR_COLUMNS', '列名必须是标准 schema ——', '，且'),
     ('financial', 'FINANCIAL_REQUIRED_COLUMNS', '必须包含列 ——', '（缺失该列'),
     ('index', 'INDEX_MEMBER_COLUMNS', '列名 ——', '。'),
     ('adjust_factor', 'ADJUST_FACTOR_COLUMNS', '列名必须恰好是 ——', '，且'),
+    ('dividend', 'DIVIDEND_COLUMNS', '列名恰好是 ——', '，且'),
 )
 
 # 契约正文里除列名之外还会有散文（如财务清单尾巴上的「各财务科目」）。散文允许存在，
@@ -171,22 +182,25 @@ STAT_KEYS = ('scanned_modules', 'str_maps', 'column_maps', 'value_maps',
 
 # A10 的下限：必须是「这个门禁**实际会跑到的每一个输入**」的最小值，不是愿望值。
 # 注意它不是「真产物的实测值」：`--selftest` 的 CLEAN 合成样本也走同一条
-# `run_checks`，所以下限是被**最小的那个输入**钉住的 ⇒ 真产物现在比下限高。
-# 每条括注里两个数（真产物 / CLEAN 合成）都是数出来的，不是估的：改产物或改
-# 合成样本后要重新数，否则注文会变成假话 —— 但**不要为了收紧而下调抬高**：
-# 抬到超过 CLEAN 合成会让 POSITIVE 样本变红，那不是收紧，是制造假红。
+# `run_checks`，所以下限是被**最小的那个输入**钉住的。
+# ⚠️ 2026-10-01 订正：**这一批下限现在与真产物同量了**（分红落地时把 CLEAN 合成样本
+# 补成同形，于是两个输入在这几项上相等）。此前的注文写「真产物现在比下限高」——
+# 那句话当时对，**现在已作废**。逐项两个数（真产物 / CLEAN 合成）都是数出来的：
+# str_maps 9/9、column_maps 8/8、schema_bindings 6/6、contract_schemas 5/5，其余 1/1。
+# 代价（写在这里以免被当成误报）：**真产物里删掉一张映射表或一个 schema 元组也会红**
+# —— 那不是误报，而是提醒「你动了登记面」；同批要改这里的数字与 CLEAN 合成样本。
 # 这些下限只负责「提取器失配 ⇒ 数掉到 0 ⇒ 红」；「已登记的常量被删」由 A0
 # （注册了却不存在）与 A3/A9（存在却没登记）负责，不靠抬高下限。
 MIN_STATS = (
-    ('str_maps', 7, '模块级 str->str 映射表（真产物 8 = 7 张列名表 + 1 张取值表 / CLEAN 7）'),
-    ('column_maps', 6, '解析到的列名映射表（真产物 7 / CLEAN 6）'),
+    ('str_maps', 9, '模块级 str->str 映射表（真产物 9 = 8 张列名表 + 1 张取值表 / CLEAN 9）'),
+    ('column_maps', 8, '解析到的列名映射表（真产物 8 / CLEAN 8）'),
     ('value_maps', 1, '解析到的取值域映射表（真产物 1 / CLEAN 1）'),
-    ('schema_bindings', 4, '标准 schema 列名元组（真产物 5 / CLEAN 4）'),
+    ('schema_bindings', 6, '标准 schema 列名元组（真产物 6 / CLEAN 6）'),
     ('module_imports', 1, '模块级 import'),
     ('lazy_source_imports', 1, '函数体内导入的源 SDK（A6 的证据：看不到就说明惰性导入没了）'),
     ('row_classes', 1, '被检查的数据类'),
-    ('denylist_names', 1, '反推出来的源特有字段名黑名单'),
-    ('contract_schemas', 3, '从契约 §3.2 抽出的列名清单（真产物 4 / CLEAN 3）'),
+    ('denylist_names', 1, '反推出来的源特有字段名黑名单（真产物 37 / CLEAN 9）'),
+    ('contract_schemas', 5, '从契约 §3.2 抽出的列名清单（真产物 5 / CLEAN 5）'),
     ('taxonomy_declared', 8, 'errors.py 里声明出来的取数失败类别（A11 的证据：看不到就说明分类表没了）'),
     ('taxonomy_producers', 8, '适配器实际会产出的类别（判定分支 ＋ 显式 raise）'),
     ('taxonomy_wiring', 1, '把分类结果接成 kind= 的翻译点（A11 的证据：看不到就说明分类没接线）'),
@@ -349,7 +363,7 @@ def run_checks(adapter_text, rows_text, errors_text, contract_text):
             return _MISSING
         return value
 
-    # ── 标准 schema：由五个元组拼出来 ────────────────────────────────────────────
+    # ── 标准 schema：由六个元组拼出来 ────────────────────────────────────────────
     tuples = {}
     for name in SCHEMA_TUPLES:
         value = need(name, '标准 schema 列名元组')
@@ -692,12 +706,13 @@ FINANCIAL_SUBJECT_COLUMNS = ('revenue', 'total_assets')
 INDEX_MEMBER_COLUMNS = ('index_code', 'symbol', 'effective_from', 'effective_to',
                         'weight')
 ADJUST_FACTOR_COLUMNS = ('symbol', 'trade_date', 'adjust_factor')
+DIVIDEND_COLUMNS = ('symbol', 'ex_date', 'announce_date', 'cash_per_share')
 # 与真货一致（2026-09-29 晩 Ⅳ 起）：复权因子也拼进 `STANDARD_COLUMNS`
 # —— 不拼的话通用分支会把 `adjust_factor` 判成「多出来的列」；
 # 门禁自身靠 `SCHEMA_TUPLES` 而不是靠这行拼接去认识它。
 STANDARD_COLUMNS = (DAILY_BAR_COLUMNS + FINANCIAL_REQUIRED_COLUMNS
                     + FINANCIAL_SUBJECT_COLUMNS + INDEX_MEMBER_COLUMNS
-                    + ADJUST_FACTOR_COLUMNS)
+                    + ADJUST_FACTOR_COLUMNS + DIVIDEND_COLUMNS)
 REPORT_TYPES = ('BALANCE', 'INCOME')
 
 AKSHARE_DAILY_BAR = {
@@ -727,6 +742,12 @@ TUSHARE_ADJ_FACTOR = {
     'ts_code': 'symbol',
     'trade_date': 'trade_date',
     'adj_factor': 'adjust_factor',
+}
+TUSHARE_DIVIDEND = {
+    'ts_code': 'symbol',
+    'ex_date': 'ex_date',
+    'ann_date': 'announce_date',
+    'cash_div_tax': 'cash_per_share',
 }
 
 
@@ -787,8 +808,8 @@ class DailyBar:
     source: str
 """
 
-# A8 判据要求这四段能对上 CLEAN_ADAPTER 里的四个元组，所以列名清单与常量逐字一致。
-# （第 4 段的终结锚也是「紧跟在清单尾巴后面的那个 `，且`」—— 两边必须一致，
+# A8 判据要求这五段能对上 CLEAN_ADAPTER 里的六个元组，所以列名清单与常量逐字一致。
+# （第 4/5 段的终结锚也是「紧跟在清单尾巴后面的那个 `，且`」—— 两边必须一致，
 #  否则 `contract_list` 会因为「找不到终点锚」而抽失败，而那是 A8 的 FAIL、不是跳过。）
 CLEAN_CONTRACT = """\
             pd.DataFrame: 列名必须是标准 schema —— symbol / trade_date / open / high /
@@ -802,6 +823,9 @@ CLEAN_CONTRACT = """\
 
             pd.DataFrame: 列名必须恰好是 —— symbol / trade_date / adjust_factor，且
                 trade_date 为 date 类型；adjust_factor 是恒为正的累计因子。
+
+            pd.DataFrame: 列名恰好是 —— symbol / ex_date / announce_date /
+                cash_per_share，且 ex_date 与 announce_date 均为 date 类型。
 """
 
 
@@ -963,12 +987,12 @@ def selftest():
     # 就会把这个样本变成「常量都没找齐」（A0）而不是「找到了但都是空的」（A10）。
     empty_adapter = ("DAILY_BAR_COLUMNS = ()\nFINANCIAL_REQUIRED_COLUMNS = ()\n"
                      "FINANCIAL_SUBJECT_COLUMNS = ()\nINDEX_MEMBER_COLUMNS = ()\n"
-                     "ADJUST_FACTOR_COLUMNS = ()\n"
+                     "ADJUST_FACTOR_COLUMNS = ()\nDIVIDEND_COLUMNS = ()\n"
                      "REPORT_TYPES = ()\nAKSHARE_DAILY_BAR = {}\n"
                      "BAOSTOCK_DAILY_BAR = {}\nEASTMONEY_INCOME_FINANCIAL = {}\n"
                      "EASTMONEY_BALANCE_FINANCIAL = {}\n"
                      "EASTMONEY_INDEX_MEMBER = {}\nEASTMONEY_REPORT_TYPE = {}\n"
-                     "TUSHARE_ADJ_FACTOR = {}\n")
+                     "TUSHARE_ADJ_FACTOR = {}\nTUSHARE_DIVIDEND = {}\n")
     scenario('NEG10-extraction-empty', empty_adapter, rows, contract, 'A10')
 
     # A11 的四个方向各给一个样本，而且**刻意做成单向**：一发只点着一个分支，

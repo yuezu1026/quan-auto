@@ -49,7 +49,7 @@ from decimal import Decimal
 import pytest
 
 from quanauto import pgstore
-from quanauto.datacenter import AdjustFactorPoint, DailyBar
+from quanauto.datacenter import AdjustFactorPoint, DailyBar, DividendPoint
 from quanauto.errors import (
     DataStoreError,
     DataVersionError,
@@ -58,11 +58,14 @@ from quanauto.errors import (
 )
 from quanauto.pgstore import (
     BAR_COLUMNS,
+    DIVIDEND_COLUMNS,
     FACTOR_COLUMNS,
     VALUE_FIELDS,
     IngestReport,
     PgBarIngestor,
     PgBarStore,
+    PgDividendIngestor,
+    PgDividendStore,
     PgFactorIngestor,
     PgFactorStore,
     PsycopgConnection,
@@ -136,6 +139,39 @@ def _factor_row(adjust_factor: str = "1.25000000") -> dict:
         "symbol": SYMBOL,
         "trade_date": "2026-01-05",
         "adjust_factor": adjust_factor,
+        "source": "tushare",
+        "data_version": VERSION,
+    }
+
+
+#: 分红的两条日期：`EX_DAY` 是事件日（窗口键、主键的一列），`ANNOUNCE_DAY` 是公告日
+#: （可见性依据）。**故意不是同一天**，否则“把两个日期写反”这件事在用例里看不出来。
+EX_DAY = date(2026, 1, 5)
+ANNOUNCE_DAY = date(2026, 1, 2)
+
+
+def _dividend(symbol: str = SYMBOL, ex_date: date = EX_DAY,
+              announce_date: date = ANNOUNCE_DAY, cash_per_share: str = "0.35",
+              data_version: str = VERSION, source: str = "tushare") -> DividendPoint:
+    """一条标准分红行。`cash_per_share` 收字符串，方便造「同值但尾巴多几位」。"""
+    return DividendPoint(
+        symbol=symbol,
+        ex_date=ex_date,
+        announce_date=announce_date,
+        cash_per_share=Decimal(cash_per_share),
+        source=source,
+        data_version=data_version,
+    )
+
+
+def _dividend_row(cash_per_share: str = "0.35",
+                  announce_date: str = "2026-01-02") -> dict:
+    """库里的那一行分红 —— 与 `_row()` 同理，**故意全是字符串**。"""
+    return {
+        "symbol": SYMBOL,
+        "ex_date": "2026-01-05",
+        "announce_date": announce_date,
+        "cash_per_share": cash_per_share,
         "source": "tushare",
         "data_version": VERSION,
     }
@@ -1074,3 +1110,234 @@ def test_factor_upsert_stops_the_batch_at_the_conflict():
 def test_pg_factor_store_requires_a_data_version():
     with pytest.raises(TypeError):
         PgFactorStore(FakeConn())  # type: ignore[call-arg]
+
+
+# ── 分红的落库侧（I2 收口 ①ⓐ，2026-10-01，附录 B22）─────────────────────
+# 这一组与因子那组同源，但**多守一条**：本表是仓库里第一张「两个日期不是同一件事」的表
+# （D4）——
+#
+#   * 窗口打在 `ex_date`（除权除息日，**事件日**，也是主键的一列）；
+#   * 交给 `PITGuard` 的是 `announce_date`（**公告日**）。
+#
+# 两件事一旦互换，症状是**两个方向的静默错误**：拿公告日当窗口 ⇒ 窗口整体前移（除权前
+# 就把钱算进去）；拿除权日当可见性依据 ⇒ 公告晚于 `as_of` 的那条照样进结果。所以这里把
+# 两件事分开钉：本文件管**窗口列与判等列**，`tests/test_data_center_pit.py` 的分红用例
+# 管**守卫收到的日期**。任一侧少了，另一侧绿得再好看也说明不了这一侧。
+
+
+def test_dividend_columns_match_the_ddl():
+    """列清单必须与 `db/data_center.sql` 的 `dc_dividend` 逐列对应。
+
+    **提取为空必须判失败**：正则失配时一个列都比不到，却会打印「全等」。锚在
+    `CREATE TABLE ... dc_dividend` 那一段上，并且顺带钉住「主键里是**事件日**」。
+    """
+    assert DIVIDEND_COLUMNS == ("symbol", "ex_date", "announce_date", "cash_per_share",
+                                "source", "data_version"), DIVIDEND_COLUMNS
+    assert "trade_date" not in DIVIDEND_COLUMNS, (
+        "分红表没有 `trade_date` —— 抄日线/因子的列清单会连窗口键一起抄错（D4）"
+    )
+
+    ddl = open(os.path.join(REPO_ROOT, "db", "data_center.sql"), encoding="utf-8").read()
+    table = re.search(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?dc_dividend\b(.*?);",
+                      ddl, re.S | re.I)
+    assert table, "没在 DDL 里找到 dc_dividend 的 CREATE TABLE —— 提取为空，本用例形同虚设"
+    body = table.group(1)
+    found = {m.group(1).lower() for m in re.finditer(
+        r"^\s{4}([a-z_]+)\s+(?:date|numeric|text|varchar|timestamp|bigint|integer)\b",
+        body, re.I | re.M)}
+    assert found, "一个列都没从 dc_dividend 的 DDL 里取到 —— 提取为空，本用例形同虚设"
+    assert found == set(DIVIDEND_COLUMNS), (
+        "DDL 列与 `DIVIDEND_COLUMNS` 不一致：DDL 多出来 %r，清单多出来 %r"
+        % (sorted(found - set(DIVIDEND_COLUMNS)), sorted(set(DIVIDEND_COLUMNS) - found))
+    )
+    primary = re.search(r"PRIMARY\s+KEY\s*\(([^)]*)\)", body, re.I)
+    assert primary, "DDL 里没找到主键 —— 提取为空，本用例形同虚设"
+    keys = [k.strip().lower() for k in primary.group(1).split(",")]
+    assert keys == ["symbol", "ex_date", "data_version"], (
+        "主键里必须是**事件日** `ex_date`：用 `announce_date` 当键的一局部会让同一除权日的"
+        "两个公告变成两行（而现金只能到账一次）：%r" % (keys,)
+    )
+    assert re.search(r"numeric\(\s*18\s*,\s*(\d+)\s*\)", body, re.I), (
+        "没取到 cash_per_share 的标度 —— 见下面的标度用例"
+    )
+    scale = int(re.search(r"cash_per_share\s+numeric\(\s*\d+\s*,\s*(\d+)\s*\)",
+                          body, re.I).group(1))
+    assert scale == pgstore._DIVIDEND_SCALE, (
+        "DDL 的 `numeric(18,%d)` 与 `_DIVIDEND_SCALE=%d` 不一致"
+        % (scale, pgstore._DIVIDEND_SCALE)
+    )
+
+
+def test_dividend_scale_is_four_and_quantum_follows_it():
+    """现金分红是 `numeric(18,4)`（与日线六列同标度、与因子的 8 不同）。"""
+    assert pgstore._DIVIDEND_SCALE == 4, pgstore._DIVIDEND_SCALE
+    assert pgstore._DIVIDEND_QUANTUM == Decimal("0.0001"), pgstore._DIVIDEND_QUANTUM
+    assert pgstore._DIVIDEND_SCALE != pgstore._FACTOR_SCALE, (
+        "两列标度不同（分红 4 / 因子 8）—— 共用一个常数必然有一侧的判等出错"
+    )
+
+
+def test_select_dividends_sql_is_parameterized_and_versioned():
+    trap = "600000.SH' OR '1'='1"
+    conn = FakeConn()
+    PgDividendStore(conn, VERSION).select_dividends(trap, date(2026, 1, 1), date(2026, 1, 31))
+    assert len(conn.calls) == 1, conn.calls
+    sql, params = conn.calls[0]
+    assert trap not in sql, "标的被拼进了 SQL 文本：%r" % sql
+    assert sql.count("%s") == 4, "四个绑定值各占一个占位符：%r" % sql
+    assert params == (trap, VERSION, date(2026, 1, 1), date(2026, 1, 31)), params
+    assert "data_version = %s" in sql, (
+        "不绑版本的话，同一个 (symbol, ex_date) 会按版本数重复出现，而调用方取的是 "
+        "`rows[0]` —— 拿到哪个版本就变成执行顺序的函数（更糟：两笔现金）：%r" % sql
+    )
+
+
+def test_select_dividends_windows_on_ex_date_not_announce_date():
+    """窗口列必须是**事件日** `ex_date`；`announce_date` 不是窗口。
+
+    这条与上一条分开写：参数化对了、窗口列抄错，是这一层最容易发生的组合
+    （`SELECT` 的列清单里两个日期挨着，肉眼一眼看不出哪一个是 `WHERE` 那一个）。
+    """
+    conn = FakeConn()
+    PgDividendStore(conn, VERSION).select_dividends(SYMBOL, DAY, DAY)
+    sql, _ = conn.calls[0]
+    assert ">= %s" in sql and "<= %s" in sql, sql
+    assert "ex_date >= %s AND ex_date <= %s" in sql, (
+        "闭区间必须打在 `ex_date`（事件日）上：%r" % sql
+    )
+    assert "announce_date >=" not in sql and "announce_date <=" not in sql, (
+        "窗口不许打在 `announce_date` 上 —— 那会让窗口整体前移（D4 的两条日期各自的位置"
+        "见 `quanauto/datacenter.py` 的 `DividendPoint`）：%r" % sql
+    )
+    assert "ORDER BY ex_date" in sql, sql
+
+
+def test_select_dividends_converts_text_columns_to_dividend_point():
+    """文本通道进来的两列日期都要归一成 `date`，且**不许互换**。"""
+    conn = FakeConn(script=[[_dividend_row()]])
+    rows = PgDividendStore(conn, VERSION).select_dividends(SYMBOL, DAY, DAY)
+    assert len(rows) == 1, rows
+    point = rows[0]
+    assert isinstance(point, DividendPoint)
+    assert point.ex_date == EX_DAY, (
+        "`ex_date` 必须是事件日（DDL 里 2026-01-05 那一列），拿到 %r" % (point.ex_date,)
+    )
+    assert point.announce_date == ANNOUNCE_DAY, (
+        "`announce_date` 必须是公告日（DDL 里 2026-01-02 那一列），拿到 %r —— "
+        "两个日期互换是这张表最贵的错法" % (point.announce_date,)
+    )
+    assert point.cash_per_share == Decimal("0.3500"), point.cash_per_share
+
+
+def test_select_dividends_empty_result_is_an_empty_list():
+    """控制样本：**存储层**查不到就是空表。
+
+    “查不到就返回 0.0” 是**读侧**（`DbDataFeed.get_dividend`）那条判据，不是存储层的 ——
+    把两者混在一处，会让「这只标的不分红」与「库连不上」变成同一个结果。
+    """
+    conn = FakeConn(script=[[]])
+    assert PgDividendStore(conn, VERSION).select_dividends(SYMBOL, DAY, DAY) == []
+
+
+def test_dividend_upsert_sql_follows_contract_rule_6():
+    conn = FakeConn(script=[[], [{"symbol": SYMBOL}]])
+    PgDividendIngestor(conn).upsert_dividends([_dividend()])
+    ins = _insert_calls(conn)
+    assert len(ins) == 1, [c[0] for c in conn.calls]
+    sql = ins[0][0]
+    assert "ON CONFLICT (symbol, ex_date, data_version)" in sql, (
+        "约定 6：写入必须是按业务主键的 upsert（幂等，见 D10）：%r" % sql
+    )
+    assert "DO UPDATE" in sql and "IS DISTINCT FROM" in sql, sql
+    assert sql.count("%s") == len(DIVIDEND_COLUMNS), (
+        "绑定顺序必须与列清单一一对应，实际 %d 个占位符 vs %d 列"
+        % (sql.count("%s"), len(DIVIDEND_COLUMNS))
+    )
+    for column in DIVIDEND_COLUMNS:
+        assert column in sql, "%s 不在 INSERT 的列清单里：%r" % (column, sql)
+
+
+def test_dividend_upsert_compares_two_columns_not_one():
+    """判等列集合是**两列**（`announce_date` + `cash_per_share`），不是因子表那样的一列。
+
+    两列判等的意义是「公告改期也算异值」：只比金额的话，同一次分红从 1/2 改到 1/3 会被
+    判成同值而静默跳过重写 —— 而下游的可见性判断正是看公告日。
+    """
+    sql = pgstore.SQL_UPSERT_DIVIDEND
+    distinct = re.search(r"IS\s+DISTINCT\s+FROM", sql, re.I)
+    assert distinct, sql
+    where = sql[distinct.start():]
+    assert "announce_date" in where and "cash_per_share" in where, (
+        "`WHERE ... IS DISTINCT FROM ...` 这一半必须同时提名两列（`source` 不参与，"
+        "与日线/因子同一条理由）：%r" % where
+    )
+
+
+def test_dividend_upsert_binds_quantized_values_in_column_order():
+    conn = FakeConn(script=[[], [{"symbol": SYMBOL}]])
+    PgDividendIngestor(conn).upsert_dividends([_dividend(cash_per_share="0.35")])
+    params = _insert_calls(conn)[0][1]
+    assert params == (SYMBOL, EX_DAY, ANNOUNCE_DAY, Decimal("0.3500"), "tushare", VERSION), params
+    assert params[3].as_tuple().exponent == -pgstore._DIVIDEND_SCALE, (
+        "绑定的值必须已经量化到**分红**那一列的标度（4 位），否则库端 `IS DISTINCT FROM` "
+        "那道闸会把同一批重跑判成异值：%r" % params[3]
+    )
+
+
+def test_dividend_upsert_new_row_counts_as_inserted():
+    conn = FakeConn(script=[[], [{"symbol": SYMBOL}]])
+    report = PgDividendIngestor(conn).upsert_dividends([_dividend()])
+    assert report == IngestReport(inserted=1, skipped=0), report
+    assert report.total == 1
+
+
+def test_dividend_upsert_identical_rerun_writes_nothing():
+    conn = FakeConn(script=[[_dividend_row()]])
+    report = PgDividendIngestor(conn).upsert_dividends([_dividend(cash_per_share="0.3500")])
+    assert report == IngestReport(inserted=0, skipped=1), report
+    assert _insert_calls(conn) == [], "同值重跑不许再写（D10）：%r" % conn.calls
+
+
+def test_dividend_upsert_looks_up_the_row_by_the_event_date():
+    """按主键查现有行时，日期列必须是**事件日** `ex_date`。
+
+    用公告日当键的一局部会去查一个不存在的键 ⇒ 每次都落进「新行」分支 ⇒ 幂等（D10）
+    静默失效（库里会多出第二行，而报告说「写入 1 条」看着完全正常）。
+    这条与写入侧的形状用例互补：那条看 INSERT 的绑定，这条看**前一次查询**的绑定。
+    """
+    conn = FakeConn(script=[[_dividend_row()]])
+    PgDividendIngestor(conn).upsert_dividends([_dividend()])
+    selects = _select_calls(conn)
+    assert len(selects) == 1, [c[0] for c in conn.calls]
+    sql, params = selects[0]
+    assert "ex_date = %s" in sql, sql
+    assert params == (SYMBOL, EX_DAY, VERSION), (
+        "按主键查现有行绑定的是 (symbol, ex_date, data_version)，实际 %r" % (params,)
+    )
+    assert ANNOUNCE_DAY not in params, (
+        "公告日不许出现在主键里 —— 它只参与**判等**，不进键（D4）"
+    )
+
+
+def test_dividend_announce_date_change_is_a_conflict():
+    """改公告日也算异值 —— 这条用例就是「两列判等」的样本。"""
+    conn = FakeConn(script=[[_dividend_row(announce_date="2026-01-03")]])
+    with pytest.raises(IngestConflictError) as excinfo:
+        PgDividendIngestor(conn).upsert_dividends([_dividend()])
+    msg = str(excinfo.value)
+    assert "announce_date" in msg, "冲突信息必须点名是哪一列不同：%s" % msg
+    assert _insert_calls(conn) == [], "判成冲突之后不许再写"
+
+
+def test_dividend_upsert_rejects_a_blank_data_version_before_any_sql():
+    """D8：形状问题在开事务之前就要拦掉（一条 SQL 都不发）。"""
+    conn = FakeConn()
+    with pytest.raises(DataVersionError):
+        PgDividendIngestor(conn).upsert_dividends([_dividend(data_version="")])
+    assert conn.calls == [], conn.calls
+    assert conn.events == [], "连事务都不该开：%r" % conn.events
+
+
+def test_pg_dividend_store_requires_a_data_version():
+    with pytest.raises(TypeError):
+        PgDividendStore(FakeConn())  # type: ignore[call-arg]

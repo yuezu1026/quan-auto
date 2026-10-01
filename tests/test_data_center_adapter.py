@@ -1505,9 +1505,11 @@ _SYNTHETIC_TOKEN = 'SYNTHETIC-NOT-A-REAL-TOKEN'
 #: 所以有一处断言把两者钉在一起（否则「帧的列名」与「映射表」会各说各话）。
 _TUSHARE_FIELDS = ['ts_code', 'trade_date', 'adj_factor']
 
-#: 契约 §3.2 的 6 个抽象方法（2026-09-29 实测 `SourceAdapter.__abstractmethods__`）。
-_ABSTRACT_METHODS = ('fetch_adjust_factor', 'fetch_daily_bar', 'fetch_financial',
-                     'fetch_index_members', 'source_name', 'validate')
+#: 契约 §3.2 的 7 个抽象方法（2026-09-29 实测 `SourceAdapter.__abstractmethods__`；
+#: 2026-10-01 追加 `fetch_dividend`，附录 B22）。必须保持**字典序**：
+#: 下面的断言用 `tuple(sorted(...))` 与它比，写成别的顺序只会报一句看不懂的差异。
+_ABSTRACT_METHODS = ('fetch_adjust_factor', 'fetch_daily_bar', 'fetch_dividend',
+                     'fetch_financial', 'fetch_index_members', 'source_name', 'validate')
 
 
 @pytest.fixture
@@ -1739,8 +1741,9 @@ def test_tushare_fetch_adjust_factor_without_symbols_returns_the_standard_column
 def test_every_concrete_adapter_can_be_constructed(adapter) -> None:
     """**每一个**具体适配器都必须能被构造出来 —— 抽象方法一个都不许漏。
 
-    `_AdapterBase` 只给了 `fetch_adjust_factor` 一个默认实现，另外三个留在抽象层
-    （那是「一个源适配器至少要能做的是什么」这条纪律）。于是**只覆盖单个数据面的源
+    `_AdapterBase` 给了 `fetch_adjust_factor` 与 `fetch_dividend` 两个默认实现，
+    另外三个留在抽象层
+    （那是「一个源适配器至少要能做的是什么」这条纪律）。于是**只覆盖部分数据面的源
     必须自己把三条写出来** —— 不写，这个类就实例化不了，而不是「运行时抛 UNSUPPORTED」。
 
     这条用例是 2026-09-29 **实测补的**：`TushareAdapter` 第一版只写了 `_default_fetch`
@@ -1761,7 +1764,14 @@ def test_every_concrete_adapter_can_be_constructed(adapter) -> None:
         assert callable(getattr(instance, name)), '%s 不可调用' % name
     assert tuple(sorted(SourceAdapter.__abstractmethods__)) == _ABSTRACT_METHODS, (
         '契约 §3.2 的抽象方法清单变了（实测 %r）—— 这条用例要跟着重读契约，'
-        '并确认每个具体适配器都实现了新方法' % tuple(sorted(SourceAdapter.__abstractmethods__)))
+        '并确认每个具体适配器都实现了新方法'
+        # ⚠️ 2026-10-01 实测修正：这里原来写的是 `% tuple(sorted(...))`，
+        # 而**断言消息只在断言失败时求值** ⇒ 这个格式化 bug 一直潜伏着，
+        # 直到抽象方法从 6 个变 7 个、这条断言第一次真的失败时才炸：
+        # 报出来的是 `TypeError: not all arguments converted`，把真正的原因
+        # （清单少了一项）藏在一条看起来像「用例自己写错了」的异常里。
+        # 多元素元组要整个当**一个**参数传，所以外面再套一层元组。
+        % (tuple(sorted(SourceAdapter.__abstractmethods__)),))
 
 
 # ── `normalize_adjust_factor`：源帧 → 标准帧（列对、类型对）────────────────────

@@ -62,8 +62,16 @@ bug），没有越界时返回**最后一次访问**的报告；全部越界点�
 * **因子读取是逐根 K 线一次查询**（`_row_to_bar` 每根都要问一次因子；S1 的存储是内存实现）。
   接 PG 时要改成按 `(symbol, 窗口)` 一次取回再映射；`get_available_symbols` 与
   `get_trading_calendar` 是同一族的 N 次查询，S1 起就记着这个 TODO。
-* `get_dividend` 仍恒 0.0（没有分红数据源）—— **与复权是两件事**：分红缺口**没有**被本轮
-  顺手"修好"，`tests/test_data_center_pit.py::test_known_gap_dividend_is_still_zero` 仍守着它。
+* **分红读取已实施**（2026-10-01，数据中心契约附录 **B22**）：`get_dividend()` 不再恒 `0.0`
+  —— 它从 `dc_dividend` 取那个**除权除息日**的行（窗口打在 `ex_date`），把每行的
+  `announce_date`（**公告日才是可见性依据**，D4）交给第二层守卫；**没有行 ⇒ `0.0`**，
+  口径与主契约 §2.2.1 的示例实现、以及本仓库的 `CsvDataFeed` 一致（后者缺 symbol /
+  缺日 / 缺 `dividend` 列一律 `0.0`，从不抛）。
+  ⚠️ 这**不等于**「回测计入分红」：`quanauto/engine.py` 一行没动，引擎从来**不调用**
+  `get_dividend()` ⇒ 绩效数字一个都没变（附录 B22.2）。订正（历史）：本句一度写作
+  「`get_dividend` 仍恒 0.0（没有分红数据源）—— **与复权是两件事**」，那句话在
+  2026-10-01 之前为真；守住旧缺口的那条用例（`test_known_gap_dividend_is_still_zero`）
+  也在同一批里删掉了（它的删改条件是**缺口真的关闭**）—— 别把旧那句当现状引用。
 * 因子帧的 schema 校验判据**已实现**（2026-09-29 晩 Ⅳ）：`validate_frame` 认四张 schema（含复权因子），
   对复权帧判值域（`adjust_factor > 0`，对齐 `ck_dc_factor_positive`，**NaN 也算违规**）、
   帧级自然键 `('symbol','trade_date')` 不重复、以及列集合与类型。**仍未判的是覆盖率**
@@ -99,6 +107,12 @@ BAR_FIELD = "bar"
 # 复权因子是**单字段**读取（`dc_adjust_factor.adjust_factor` 那一列），所以这里填真实列名
 # 而不是像日线那样填整行名 —— 契约 §3.7 的 `field` 参数本来就是这个意思。
 FACTOR_FIELD = "adjust_factor"
+
+# 分红同样是**单字段**读取（`dc_dividend.cash_per_share` 那一列）。
+# ⚠️ 注意这里**不是** `announce_date`：`announce_date` 是交给 `record_access` 的**日期**
+# （D4 的可见性依据），而 `field` 要回答的是「读了哪个**字段**」—— 两者角色不同，
+# 把日期列名抄进 `field` 会让报告里分不清「读的是现量还是公告日」。
+DIVIDEND_FIELD = "cash_per_share"
 
 
 class SessionMode(Enum):
@@ -204,6 +218,32 @@ class AdjustFactorPoint:
     data_version: str = ""
 
 
+@dataclass(frozen=True)
+class DividendPoint:
+    """一条现金分红 —— 列名与 `db/data_center.sql` 的 `dc_dividend` 逐列对应（附录 B22）。
+
+    **两个日期不是同一件事**（D4，本仓库第一张这类表）：
+
+    * `ex_date`（除权除息日）是**事件日**，也是存储层的窗口键（`select_dividends`）；
+    * `announce_date`（公告日）是**可见性依据** —— 交给它的是 `PITGuard.record_access`。
+
+    两张表共用的主键形状（`symbol` + 日期 + `data_version`）里放的是 `ex_date`
+    （DDL 的 `pk_dc_dividend`）：同一除权日的现金只能到账一次。
+
+    `cash_per_share` 单位是**元/股**且为**税前**（DC 契约 §2.3 / §3.6.1），DDL 里是
+    `numeric(18,4)` 且带 `ck_dc_dividend_cash_nonneg`；标注 `float` 是契约形状
+    （与 `AdjustFactorPoint.adjust_factor` 同一条缝：存储层交出来的实际是 `Decimal`，
+    收口在 `DbDataFeed.get_dividend` 里那次 `_as_float`）。
+    """
+
+    symbol: str
+    ex_date: date
+    announce_date: date
+    cash_per_share: float
+    source: str = ""
+    data_version: str = ""
+
+
 class FactorStore(ABC):
     """复权因子的存储接口 —— 与 `BarStore` **并列**，而不是并进它。
 
@@ -232,6 +272,41 @@ class InMemoryFactorStore(FactorStore):
         return sorted(
             (r for r in self.rows if r.symbol == symbol and start <= r.trade_date <= end),
             key=lambda r: r.trade_date,
+        )
+
+
+class DividendStore(ABC):
+    """分红的存储接口 —— 与 `BarStore` / `FactorStore` **并列**（第三个协议）。
+
+    为什么仍然不把 `select_dividends` 加到 `FactorStore` 上：两张表的**窗口键不同**
+    （因子是 `trade_date`，分红是 `ex_date`），而分红还多一个 `announce_date` 要交给守卫。
+    合成一个协议会让实现体必须知道「这个 `date` 参数在哪张表上叫什么名字」——
+    那正是把两边都搞错的那种设计。
+
+    窗口是**闭区间**、且打在 `ex_date`（**事件日**）上，必须接受：
+
+    * 接受窗口才能让用例造一个「WHERE 写错、多吐一行」的存储，而第二层守卫
+      （`PITGuard`）的职责就是抓住它 —— 不接受窗口的接口会让第二层没有触发场景；
+    * 打在 `ex_date` 而不是 `announce_date` 上是契约定的（§3.2 `fetch_dividend` 的过滤键
+      同一列）：拿公告日当窗口，会让「除权除息日 = T」的那条分红在 T 之前就进窗口。
+    """
+
+    @abstractmethod
+    def select_dividends(self, symbol: str, start: date, end: date) -> List[DividendPoint]:
+        """闭区间 `[start, end]` 内**除权除息日**落入的分红行，按 `ex_date` 升序。"""
+        raise NotImplementedError
+
+
+class InMemoryDividendStore(DividendStore):
+    """内存实现 —— 给单元测试与门禁用，不依赖数据库（本机没有本地 PostgreSQL）。"""
+
+    def __init__(self, rows: Sequence[DividendPoint]):
+        self.rows = list(rows)
+
+    def select_dividends(self, symbol: str, start: date, end: date) -> List[DividendPoint]:
+        return sorted(
+            (r for r in self.rows if r.symbol == symbol and start <= r.ex_date <= end),
+            key=lambda r: r.ex_date,
         )
 
 
@@ -405,6 +480,7 @@ class DbDataFeed(DataFeed):
         fill_policy: FillPolicy = FillPolicy.NONE,
         pit_guard: Optional[PITGuard] = None,
         factor_store: Optional[FactorStore] = None,
+        dividend_store: Optional[DividendStore] = None,
     ):
         self.store = store
         self.as_of_date = _as_date(as_of_date)
@@ -416,6 +492,11 @@ class DbDataFeed(DataFeed):
         # 一字不改。没有接因子源的 feed 仍然是**合法**的 —— 它只是回答不了"HFQ 的因子是多少"
         # （那时抛 DATA_001，见 `get_adjustment_factor`），而不是悄悄地按不复权跑。
         self.factor_store = factor_store
+        # `dividend_store` 同样追加在最后、同样带默认值（B22 不是位置参数的一次破坏性变更）。
+        # ⚠️ 没接分红源与没接因子源的**后果刻意不同**：分红缺行/缺源都返回 0.0（主契约
+        # §2.2.1 示例与 `CsvDataFeed` 同口径，见 `get_dividend` 的 docstring 与附录 B22.3），
+        # 而因子缺行/缺源都抛 DATA_001。两句话挨着写，是因为下一个读的人一定会问。
+        self.dividend_store = dividend_store
         self.pit_guard = pit_guard if pit_guard is not None else RecordingPITGuard(self.as_of_date)
 
     # ── 内部：把存储行变成 `BarData` ──────────────────────────────────────
@@ -569,6 +650,28 @@ class DbDataFeed(DataFeed):
             factors.append(row)
         return factors
 
+    def _select_dividends(self, symbol: str, start: date, end: date) -> List[DividendPoint]:
+        """分红行走**同一套**第二层防护，但记的日期是 `announce_date` —— 这是 D4 的入口。
+
+        与前两个 `_select_*` 有**两处刻意不同**，每一处都是一条能静默出错的判据：
+
+        1. 窗口问的是 `ex_date`（事件日），交给守卫的是 `announce_date`（公告日）。
+           两者搞混会一边漏掉未来函数（拿事件日当可见性依据 ⇒ 公告晚于 `as_of` 的那条
+           照样进结果）、一边把合法事件判成越界（拿公告日当窗口 ⇒ 窗口整体前移）。
+        2. `field` 记 `cash_per_share`（真正被读出来的那一列），不是整行名。
+
+        没有接分红源时返回空列表：那是存储层的事实（"没有行"）。⚠️ **本方法不替调用方
+        决定要不要抛** —— `get_dividend` 的选择是**缺行返回 0.0**，与 `_factor_for` 的
+        "缺行抛 DATA_001" 是两条不同口径，各自写在自己的判据里（见附录 B22.3）。
+        """
+        if self.dividend_store is None:
+            return []
+        dividends = []
+        for row in self.dividend_store.select_dividends(symbol, start, end):
+            self.pit_guard.record_access(row.symbol, row.announce_date, DIVIDEND_FIELD)
+            dividends.append(row)
+        return dividends
+
     # ── DataFeed 的 9 个方法 ──────────────────────────────────────────────
     def get_bar(self, symbol: str, datetime: datetime) -> Optional[BarData]:
         when = self._require_visible(datetime, "DbDataFeed.get_bar")
@@ -634,16 +737,42 @@ class DbDataFeed(DataFeed):
         return self._factor_for(symbol, when)
 
     def get_dividend(self, symbol: str, datetime: datetime) -> float:
-        """**仍然开着的**已知缺口：本切片没有分红数据，恒返回 0.0。
+        """该 (标的, **除权除息日**) 的每股现金分红（元/股，税前）—— 2026-10-01 起真的读库。
 
-        与复权**刻意分开**：复权已经在 `_row_to_bar` 里实施了（模块文档的"已知缺口"节），
-        而分红这一半**一个字都没动** —— 复权价是从 `dc_adjust_factor` 现算的，不依赖也不
-        消费分红。守住它的用例是 `tests/test_data_center_pit.py` 里那条
-        `test_known_gap_dividend_is_still_zero`（它的删改条件是**缺口真的关闭**，不是
-        "某个迭代交付了"—— 2026-09-29 收口时正是按这个条件把它**留**下来的）。
+        缺口已于 2026-10-01 关闭（附录 B22）：本方法从 `dc_dividend` 按 `ex_date` 取那一天的行，
+        把每行的 `announce_date` 交给第二层守卫（**公告日才是可见性依据**，D4）。
+
+        四条分支：
+
+        * `when > as_of_date` ⇒ DATA_002（`_require_visible` 在**最前面**：问一句"那天的分红
+          是多少"本身就是一次对未来数据的访问）。
+        * 本 feed 没接分红源（`dividend_store=None`）⇒ 返回 **`0.0`**。
+        * 库里的那一天**没有分红行** ⇒ 返回 **`0.0`**。
+        * 有行 ⇒ 那一行的 `cash_per_share`（DDL 保证非负、4 位小数）。
+
+        ⚠️ **为什么缺行/缺源都返回 `0.0`，而 `get_adjustment_factor` 却抛 DATA_001**
+        （这是本类里最容易被下一个人"统一"掉的一处不对称，所以写在这里）：
+
+        1. **同一协议的两条实现体必须同口径。** 主契约 §2.2.1 的参考实现 `CsvDataFeed`
+           在「没有这个 symbol」「没有这一天」「没有 `dividend` 列」三种情形下一律 `return 0.0`，
+           **从不抛**；本仓库的 `CsvDataFeed.get_dividend` 逐字同形。若 `DbDataFeed`
+           在"没有源"时抛，同一个 `DataFeed` 协议就会在"分红数据不存在"这件事上分裂成
+           两种行为，而调用方只能按实现类分别写代码 —— 那正是 D9 要消掉的东西。
+        2. **分红是稀疏事件流，因子是连续序列。** 「这一天没有分红事件」是**正常状态**
+           （大多数交易日都没有），所以"没有"的默认答案是 0；而"这一天该有因子却没有"
+           是**异常**（因子序列不该有洞），默认答案是抛（契约 §3.6 与附录 B22.3 的那张表）。
+
+        ⚠️ 代价写在这里，不藏着：本方法返回 `0.0` 时，**"没有分红"与"没接分红源"在返回值上
+        不可区分**。要自查只能看 `feed.dividend_store is None`。静默补 0.0 的后果是
+        「整段回测悄悄变成**不含分红**」，而曲线照样画得出来（与"静默补 1.0 ⇒ 悄悄不复权"
+        同族）。所以本方法**不**是「分红口径在绩效里已生效」的证据 —— 引擎从不调用它
+        （附录 B22.2），要声称"回测计入分红"得另有证据。
         """
-        self._require_visible(datetime, "DbDataFeed.get_dividend")
-        return 0.0
+        when = self._require_visible(datetime, "DbDataFeed.get_dividend")
+        rows = self._select_dividends(symbol, when, when)
+        if not rows:
+            return 0.0
+        return _as_float(rows[0].cash_per_share)
 
     def get_trading_calendar(self, start: datetime, end: datetime) -> List[datetime]:
         first = self._require_visible(start, "DbDataFeed.get_trading_calendar(start)")
@@ -707,6 +836,7 @@ class InMemoryDataCenter(DataCenter):
         active_version: str = "v2026.09.23",
         session_mode: SessionMode = SessionMode.BACKTEST,
         factor_store: Optional[FactorStore] = None,
+        dividend_store: Optional[DividendStore] = None,
     ):
         self.store = store
         self.versions = tuple(versions)
@@ -715,6 +845,9 @@ class InMemoryDataCenter(DataCenter):
         # 因子源与日线源是两个存储（两张表、两种行），所以在**数据中心**这一层也得各接一根
         # 线；默认 `None` 的老用法向后兼容（位置参数一个没动）。
         self.factor_store = factor_store
+        # 分红源是第三条线（B22）。与 `factor_store` 对称地接在这里而不是让调用方去
+        # 构造 `DbDataFeed` —— `as_of()` 是产出 `DataFeed` 的**唯一合法入口**（D3）。
+        self.dividend_store = dividend_store
 
     def as_of(
         self,
@@ -752,6 +885,7 @@ class InMemoryDataCenter(DataCenter):
             # 是**会话级**的，跨会话复用会让上一个视图的泄露点污染下一个视图的报告。
             pit_guard=RecordingPITGuard(as_of_date),
             factor_store=self.factor_store,
+            dividend_store=self.dividend_store,
         )
 
     def live(self, account_mode: str) -> DataFeed:

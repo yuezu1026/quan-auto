@@ -17,10 +17,16 @@ feed）已落地，**但 I2 未关闭** —— 订正（2026-09-29）：原先�
 `QFQ` ⇒ 该日因子 ÷ 视图末日因子），`volume` / `amount` **刻意不乘** ⇒ 回测口径**不再是「不复权」**。
 守着这条缝的是读侧 7 条用例 + 端到端控制组 `test_adjusted_prices_reach_the_strategy_through_the_engine`
 （变异 `S11` / `A12`），逐条见数据中心契约附录 A6 / B21.3 的订正块。
-**I2 仍未关闭的理由也换了**：现在开着的是①**分红**（`get_dividend()` 恒 `0.0`）、
-③~~`validate_frame` 对复权帧一条判据都没有~~ —— **2026-09-29 晩 Ⅳ 已收口**（值域对齐
-`ck_dc_factor_positive` / 帧级自然键重复 / 认 schema），**「复权价」这一条不在其中了** 。
-②~~两个 ingestor 在 `quanauto/` 内**零调用者**（接口有实现，没有产品写入路径）~~ ——
+**I2 仍未关闭的理由也换了**，而 2026-10-01 又变了一次：收口条件**①（复权价 / 分红 / 写入路径）
+三条现已全关** —— ①ⓐ~~分红（`get_dividend()` 恒 `0.0`）~~ **2026-10-01 已收口**：
+`DbDataFeed.get_dividend()` 从 `dc_dividend` 按 `ex_date` 取那一天的行、把每行的
+`announce_date` 交给 PIT 守卫（**公告日才是可见性依据**，D4）；**缺行/缺源都返回 `0.0`**
+（与主契约 §2.2.1 的示例实现、`CsvDataFeed` 同口径 —— 与 `get_adjustment_factor` 缺行抛
+DATA_001 **刻意不对称**，理由见附录 B22.3）；①ⓒ~~`validate_frame` 对复权帧一条判据都没有~~
+—— **2026-09-29 晩 Ⅳ 已收口**（值域对齐 `ck_dc_factor_positive` / 帧级自然键重复 / 认 schema）。
+⇒ **真正开着的现在是②**（「各通道『哪些位置已实测、哪些仍是推断』的未确认清单」）。
+⚠️ 分红**读得出来**了 ≠ 引擎在绩效里**计**了分红：`quanauto/engine.py` 一行没动（附录 B22.2）。
+①ⓑ~~两个 ingestor 在 `quanauto/` 内**零调用者**（接口有实现，没有产品写入路径）~~ ——
 **2026-09-30 已接上**：`quanauto/ingest.py` 就是那条缺的编排层（取数 → 校验 → 盖戳 →
 落库 → 写 `dc_ingest_run` 批次留痕），两个 ingestor 各有一个调用点，`tests/test_ingest.py`
 45 条压着它。⚠️ **但它不主张这条路径被真实走过**：`quanauto/cli.py` 没开采集子命令、

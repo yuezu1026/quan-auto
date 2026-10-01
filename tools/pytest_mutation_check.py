@@ -22,14 +22,36 @@
   * `MUTATION` 触发出来的失败必须是**断言/异常**，不能是 `ImportError`/语法错
     （收集阶段就炸掉，等于测试根本没跑）。
 
-**它不进 `run_all_gates.py` 的注册表**：每条样本要跑一次 pytest（2026-09-30「采集编排层」后实测 **81 条样本：74 条变异 + 7 条 CONTROL + 0 条 ENV-LIMIT**（基线**九**套件 `passed=433`；报告里那行
-`mutations=74 caught=74 control=7 env_limited=0` 的 `mutations` **只数变异、不含 CONTROL**，所以总数是 81
-而不是 74 —— 别把两处加混了）；此前 2026-09-29 晚 Ⅳ「复权帧的 `validate_frame`
+**它不进 `run_all_gates.py` 的注册表**：每条样本要跑一次 pytest（2026-10-01「分红收口」后实测 **91 条样本：84 条变异 + 7 条 CONTROL + 0 条 ENV-LIMIT**（基线**九**套件 `passed=458`；报告里那行
+`mutations=84 caught=84 control=7 env_limited=0` 的 `mutations` **只数变异、不含 CONTROL**，所以总数是 91
+而不是 84 —— 别把两处加混了）；此前 2026-09-30「采集编排层」那轮是 **81 条样本：74 条变异 + 7 条 CONTROL + 0 条 ENV-LIMIT**（基线九套件 `passed=433`）；2026-09-29 晚 Ⅳ「复权帧的 `validate_frame`
 判据」那轮是 **73 条样本：67 条变异 + 6 条 CONTROL + 0 条 ENV-LIMIT**（基线八套件 `passed=388`）；同日晚 Ⅲ「CSV 侧复权口径」那轮是 68 条 = 63 + 5 + 0
 （基线 `passed=252`，当时清单里**漏了** `tests/test_data_center_adapter.py`，所以下面几处「七套件」这个称呼与实际不符）；同日晚 Ⅱ「复权价实施」那轮是 66 条 = 61 + 5 + 0
 （基线 `passed=249`）；同一日的 A6 收口那轮是 59 条 = 54 + 5 + 0
 （基线 `passed=241`），I4 是 54 条 = 49 + 5 + 0（基线六套件 `passed=181`），I3 那轮是 43 条 = 39 + 4 + 0
 （基线五套件 `passed=145`），再往前 B20 后是 32 条 = 29 + 3 + 0），慢，且它验证的对象是测试而不是产物契约。
+
+⚠️ **2026-10-01 分红那一批（I2 收口 ①ⓐ，登记在 DC 契约附录 B22）：新增 10 条 + 重锚 3 条**：
+  ① **重锚 3 条**，全是「新产物把有效变异悄悄变成 no-op」（铁律⑤）—— 这一批一条不落：
+     `S9` 的针从一行 `from .datacenter import …` 变成括号多行（第二次重锚）；`A16`/`A18` 的针
+     钉在 `_match_schema` 的**末项**与 `STANDARD_COLUMNS` 的**末项**上，而分红往这两处各加了
+     一项 ⇒ 双双**命中 0 次**。工具的「恰好 1 次」自 assert 又一次把它们拦下（第三次同形状）。
+     教训：**针不要钉在「它是最后一项」这个位置上** —— 钉在相邻的那一项上，或者把整张表写进针里。
+  ② **新增 `DV1`~`DV8`**（分红侧，八条；前缀用 `DV` 以免与 dashboard 的 `D1`~`D10` 撞前缀）：
+     读侧不绑版本（`DV1`）、窗口打到公告日（`DV2`）、upsert 退化成裸 INSERT（`DV3`）、
+     标度塌成因子那个 8（`DV4`）、**守卫收到的是事件日而不是公告日**（`DV5`，全组唯一落在
+     `TESTS_PIT` 上的一条）、判等丢公告日（`DV6`）、主键用了公告日（`DV7`）、绑定参数里两个
+     日期互换（`DV8`）。
+  ③ **新增 `A19`/`A20`**：分红侧也有 `A15`/`A16` 的同形两条（值域放宽 / schema 不再被认出）
+     —— 新 schema 落地时若只有正向用例，这张表上的判据就是**零验证**的。
+  ④ `DV1`~`DV4`、`DV6`~`DV8` 期望的失败落在 `tests/test_data_center_store.py` **本轮新加的分红段**，
+     `DV5` 落在 `tests/test_data_center_pit.py`（已有的 5 条分红用例），`A19`/`A20` 落在
+     `tests/test_ingest.py`。⇒ **变异期望落在哪个套件，那个套件就必须在基线里，而且里面必须真有一条
+     会红的用例**：本批开工时 `tests/test_data_center_store.py` 对分红是**零覆盖**（整个文件里
+     一个 `dividend` 都没有）⇒ 必须先补用例再写变异，否则八条会一起报 `caught=NO`
+     —— 那看起来像「实现全对」，实际是「没人看」。
+  ⑤ 静态侧只有 `tools/verify_data_center_pit.py` 的 `NEG3d`/`NEG3e` 两条对应 `DV5`；它们只能看出
+     「字段名对不对」，看不出「日期取的是哪天」⇒ 静态与运行两侧都要有，`DV5` 是运行那一侧。
 
 ⚠️ **2026-09-29 A6 那一批同时干了三件事，别只看新增的 5 条**：
   ① 新增 `A1`~`A5`（因子读语句的版本过滤与窗口 / 因子 upsert 退化成裸 INSERT / 标度 8 塌成日线那个 4 /
@@ -275,6 +297,104 @@ MUTATIONS = [
         "new": "_FACTOR_SCALE = 4",
         "expect": ["test_factor_scale_is_eight_not_the_bar_scale"],
     },
+    # ── 分红侧（I2 收口 ①ⓐ，2026-10-01，附录 B22）─────────────────────
+    # 这一组的存在理由与 A1/A2/A3/A4 同源，但多一层：分红表是仓库里第一张
+    # 「两个日期不是同一件事」的表（D4）—— 窗口打 `ex_date`、守卫收 `announce_date`。
+    # 所以下面这几条里有两条（DV2 / DV5）钉的就是那两个日期**不许互换**。
+    # ⚠️ tag 前缀用 `DV`（不是 `D`）：dashboard 那组已经占了 `D1`~`D10`，
+    # 两边同前缀会让报告里的失败行**归不到组**（“D1 红了”到底指哪条读不出来）。
+    {
+        # 读侧不绑版本：同一 (symbol, ex_date) 会按版本数重复出现，而调用方取 `rows[0]`。
+        "tag": "DV1-select-dividends-drops-version-filter",
+        "tests": TESTS_STORE,
+        "path": "quanauto/pgstore.py",
+        "old": '"FROM dc_dividend "\n    "WHERE symbol = %s AND data_version = %s "',
+        "new": '"FROM dc_dividend "\n    "WHERE symbol = %s "',
+        "expect": ["test_select_dividends_sql_is_parameterized_and_versioned"],
+    },
+    {
+        # 窗口打到公告日：窗口整体前移（除权前就把钱算进去）。参数化一样对、列数一样对，
+        # 只有窗口列变了 ⇒ 只有窗口那条断言会红。
+        "tag": "DV2-select-dividends-window-on-announce-date",
+        "tests": TESTS_STORE,
+        "path": "quanauto/pgstore.py",
+        "old": '"AND ex_date >= %s AND ex_date <= %s "',
+        "new": '"AND announce_date >= %s AND announce_date <= %s "',
+        "expect": ["test_select_dividends_windows_on_ex_date_not_announce_date"],
+    },
+    {
+        # upsert 退化成普通 INSERT：幂等（D10）没了，重跑会撞主键。
+        "tag": "DV3-dividend-upsert-becomes-plain-insert",
+        "tests": TESTS_STORE,
+        "path": "quanauto/pgstore.py",
+        "old": ('"VALUES (%s, %s, %s, %s, %s, %s) "\n'
+                '    "ON CONFLICT (symbol, ex_date, data_version) DO UPDATE "'),
+        "new": '"VALUES (%s, %s, %s, %s, %s, %s) "',
+        "expect": ["test_dividend_upsert_sql_follows_contract_rule_6"],
+    },
+    {
+        # 标度 4 是 DDL 的事实（`numeric(18,4)`，与日线同、与因子的 8 不同）。
+        # 改错的话库端 `IS DISTINCT FROM` 会把同一批重跑判成异值。
+        "tag": "DV4-dividend-scale-collapses-to-the-factor-scale",
+        "tests": TESTS_STORE,
+        "path": "quanauto/pgstore.py",
+        "old": "_DIVIDEND_SCALE = 4",
+        "new": "_DIVIDEND_SCALE = 8",
+        "expect": ["test_dividend_scale_is_four_and_quantum_follows_it"],
+    },
+    {
+        # 🔴 DV4 的入口：守卫收到的日期从公告日改成除权日。
+        # 静态门禁（`tools/verify_data_center_pit.py` 的 P3）只看「有没有记那个字段」，
+        # **看不见记的日期是不是公告日** ⇒ 只有跑起来的这条用例能抓（夹具里那一天的两列
+        # 故意不相等）。它是本组里唯一期望落在 TESTS_PIT 上的一条。
+        "tag": "DV5-dividend-guard-records-the-event-date",
+        "tests": TESTS_PIT,
+        "path": "quanauto/datacenter.py",
+        "old": ('            self.pit_guard.record_access(row.symbol, row.announce_date, '
+                'DIVIDEND_FIELD)\n'),
+        "new": ('            self.pit_guard.record_access(row.symbol, row.ex_date, '
+                'DIVIDEND_FIELD)  # MUT: 可见性依据变成了事件日\n'),
+        "expect": ["test_dividend_read_is_guarded_by_pit_too"],
+    },
+    {
+        # 判等只比现金、不比公告日 ⇒ 「改公告日」被判成同值而静默跳过重写。
+        # 这是本表与因子表在判等形状上的**唯一**区别，也是最容易漏掉的一列。
+        "tag": "DV6-dividend-divergence-ignores-the-announce-date",
+        "tests": TESTS_STORE,
+        "path": "quanauto/pgstore.py",
+        "old": ("    if mine_date == theirs_date and mine_cash == theirs_cash:\n"
+                "        return\n"),
+        "new": ("    if mine_cash == theirs_cash:  # MUT: 公告日不再参与判等\n"
+                "        return\n"),
+        "expect": ["test_dividend_announce_date_change_is_a_conflict"],
+    },
+    {
+        # 主键的日期列取成公告日 ⇒ 每次都查一个不存在的键、每次都当「新行」写。
+        # 写入侧的形状断言看不见这条（它们只看 INSERT 的绑定），所以它由**前一次查询**
+        # 的绑定那条用例抓 —— 「变异要打在断言真的会看的地方」。
+        "tag": "DV7-dividend-primary-key-uses-the-announce-date",
+        "tests": TESTS_STORE,
+        "path": "quanauto/pgstore.py",
+        "old": ("        point.symbol,\n"
+                "        _as_date_value(point.ex_date),\n"
+                "        _require_version(\n"),
+        "new": ("        point.symbol,\n"
+                "        _as_date_value(point.announce_date),  # MUT: 键里放了公告日\n"
+                "        _require_version(\n"),
+        "expect": ["test_dividend_upsert_looks_up_the_row_by_the_event_date"],
+    },
+    {
+        # 绑定顺序里两个日期互换了：列序与值序不再同源。库端会把公告日写进 `ex_date`
+        # （两个列的类型一样，DDL 拦不住）⇒ 只有断言绑定元组的那条用例看得见。
+        "tag": "DV8-dividend-insert-params-swap-the-two-dates",
+        "tests": TESTS_STORE,
+        "path": "quanauto/pgstore.py",
+        "old": ("        _as_date_value(point.ex_date),\n"
+                "        _as_date_value(point.announce_date),\n"),
+        "new": ("        _as_date_value(point.announce_date),\n"
+                "        _as_date_value(point.ex_date),  # MUT: 两个日期互换\n"),
+        "expect": ["test_dividend_upsert_binds_quantized_values_in_column_order"],
+    },
     {
         "tag": "S5-identical-row-writes-anyway",
         "tests": TESTS_STORE,
@@ -326,14 +446,29 @@ MUTATIONS = [
         "expect": ["test_already_classified_error_from_a_lower_layer_passes_through"],
     },
     {
-        # 2026-09-29 A6 重新锚定：A6 往这一行加了两个因子侧的名字
-        # （`AdjustFactorPoint` / `FactorStore`）⇒ 旧针「命中 0 次」。
+        # 2026-10-01（附录 B22）第二次重新锚定：分红那一轮把这一行改成了**括号多行**的
+        # 形式（原来是一行 `from .datacenter import ...`）⇒ 旧针「命中 0 次」。
+        # 针换成整个括号块，变化频率比单行低，但**加新名字时仍会失效** —— 这就是
+        # `hits != 1` 必须当 HARNESS 故障报出来的意义。
         "tag": "S9-driver-imported-eagerly",
         "tests": TESTS_STORE,
         "path": "quanauto/pgstore.py",
-        "old": "from .datacenter import AdjustFactorPoint, BarStore, DailyBar, FactorStore",
-        "new": ("from .datacenter import AdjustFactorPoint, BarStore, DailyBar, FactorStore"
-                "\n\nimport psycopg  # MUT"),
+        "old": ("from .datacenter import (\n"
+                "    AdjustFactorPoint,\n"
+                "    BarStore,\n"
+                "    DailyBar,\n"
+                "    DividendPoint,\n"
+                "    DividendStore,\n"
+                "    FactorStore,\n"
+                ")"),
+        "new": ("from .datacenter import (\n"
+                "    AdjustFactorPoint,\n"
+                "    BarStore,\n"
+                "    DailyBar,\n"
+                "    DividendPoint,\n"
+                "    DividendStore,\n"
+                "    FactorStore,\n"
+                ")\n\nimport psycopg  # MUT"),
         "expect": ["test_import_pgstore_does_not_import_the_driver"],
         "env_limit": (
             "**只有在这个环境没装驱动时**才走这条退路：顶层拉驱动会是收集期 ImportError，"
@@ -687,15 +822,20 @@ MUTATIONS = [
         "expect": ["test_validate_rejects_a_non_positive_adjust_factor"],
     },
     {
-        # 复权因子从「认得出的四张 schema」里被拿掉 ⇒ 帧重新落进
+        # 复权因子从「认得出的 schema」里被拿掉 ⇒ 帧重新落进
         # 「列集合不匹配任何标准 schema」。这正是 B21.6 描述过的那个误诊的回潮，
         # 而且是最隐蔽的一种：判据表**还在**，只是没人再走到它。
+        #
+        # 2026-10-01 重锚：分红那一轮在这张表末尾加了 `('dividend', …)`
+        # ⇒ 旧针结尾的 `)):` 变成了 `),` ⇒ **命中 0 次**（工具报 HARNESS）。
+        # 第三次同一形状（S1/S2/S4 → S9 → A16/A18）：**往一张表的末尾加一项
+        # 会让所有以「这一项是最后一项」为前提的针失效** —— 针要钉到相邻的那一项上。
         "tag": "A16-factor-schema-no-longer-recognised",
         "tests": TESTS_ADAPTER,
         "path": "quanauto/datasources.py",
-        "old": ("                           ('index', INDEX_MEMBER_COLUMNS),\n"
-                "                           ('factor', ADJUST_FACTOR_COLUMNS)):\n"),
-        "new": "                           ('index', INDEX_MEMBER_COLUMNS)):\n",
+        "old": ("                           ('factor', ADJUST_FACTOR_COLUMNS),\n"
+                "                           ('dividend', DIVIDEND_COLUMNS)):\n"),
+        "new": "                           ('dividend', DIVIDEND_COLUMNS)):\n",
         "expect": ["test_validate_frame_judges_the_adjust_factor_schema",
                    "test_validate_rejects_a_non_positive_adjust_factor"],
     },
@@ -715,13 +855,42 @@ MUTATIONS = [
         # `adjust_factor` 被报成「源字段名泄漏到输出列」（B21.6 里第一句误诊）。
         # 与 `A16` 是**两句不同误诊**的两个方向：`A16` 打「认不出 schema」，
         # 这条打「认出了，但把契约标准列当成泄漏」。
+        #
+        # 2026-10-01 重锚：`STANDARD_COLUMNS` 末尾多了 `+ DIVIDEND_COLUMNS` ⇒ 旧针命中 0 次。
         "tag": "A18-factor-column-listed-as-leaked",
         "tests": TESTS_ADAPTER,
         "path": "quanauto/datasources.py",
         "old": ("STANDARD_COLUMNS = (DAILY_BAR_COLUMNS + FINANCIAL_COLUMNS + INDEX_MEMBER_COLUMNS\n"
-                "                    + ADJUST_FACTOR_COLUMNS)\n"),
-        "new": "STANDARD_COLUMNS = (DAILY_BAR_COLUMNS + FINANCIAL_COLUMNS + INDEX_MEMBER_COLUMNS)\n",
+                "                    + ADJUST_FACTOR_COLUMNS + DIVIDEND_COLUMNS)\n"),
+        "new": ("STANDARD_COLUMNS = (DAILY_BAR_COLUMNS + FINANCIAL_COLUMNS + INDEX_MEMBER_COLUMNS\n"
+                "                    + DIVIDEND_COLUMNS)\n"),
         "expect": ["test_validate_frame_judges_the_adjust_factor_schema"],
+    },
+    {
+        # 分红帧的判据放宽（`cash_per_share < 0` ⇒ `< -1e9`）：与 `A15` 同一个手法 —— 只
+        # 放宽表达式、不删判据，所以「判据表还在不在」那类静态检查仍然全绿，只有跑起来的
+        # 采样会变红。期望的那条断言看的是**异常消息里的约束名**（`ck_dc_dividend_cash_nonneg`），
+        # 所以放宽之后它必然找不到那个名字。
+        "tag": "A19-dividend-cash-negativity-loosened",
+        "tests": TESTS_INGEST,
+        "path": "quanauto/datasources.py",
+        "old": ("        for position, value in enumerate(frame['cash_per_share']):\n"
+                "            if pd.isna(value) or value < 0:\n"),
+        "new": ("        for position, value in enumerate(frame['cash_per_share']):\n"
+                "            if pd.isna(value) or value < -1e9:  # MUT\n"),
+        "expect": ["test_a_bad_dividend_value_writes_nothing_and_marks_the_run_failed"],
+    },
+    {
+        # 分红不再被 `_match_schema` 认出来（与 `A16` 同形，只是打在新表上）：分红帧落进
+        # 「列集合不匹配任何标准 schema」，整条通道从「有判据」退回「判据都没走到」。
+        # 新表一落地就该有这一条 —— 否则分红帧的判据覆盖是**零验证**的。
+        "tag": "A20-dividend-schema-no-longer-recognised",
+        "tests": TESTS_INGEST,
+        "path": "quanauto/datasources.py",
+        "old": ("                           ('factor', ADJUST_FACTOR_COLUMNS),\n"
+                "                           ('dividend', DIVIDEND_COLUMNS)):\n"),
+        "new": "                           ('factor', ADJUST_FACTOR_COLUMNS)):\n",
+        "expect": ["test_dividend_channel_writes_the_dividend_table"],
     },
     {
         # 对照组：只改注释，适配器套件必须**不**红 —— 证明上面四条抓到的是行为，

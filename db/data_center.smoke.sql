@@ -37,7 +37,7 @@
 --     * a name that appears only inside a comment -- that lets the constraint be
 --       dropped or renamed while this file still "mentions" it; and
 --     * a name that appears only as a bare quoted literal in a list -- such as the
---       A2 inventory in this very file. A2 has to name all 16 constraints, so if C7
+--       A2 inventory in this very file. A2 has to name all 18 constraints, so if C7
 --       accepted bare literals the whole of section B could be deleted and the gate
 --       would still report full coverage. Asserting the name AFTER a rejection, in
 --       the equality form, is what makes it a trigger test.
@@ -53,10 +53,11 @@
 --     exit code 0 + "SMOKE PASS: ..."  -> every guard is effective
 --     non-zero   + "SMOKE FAIL: ..."   -> at least one guard is a paper guard
 --
--- STATUS: written 2026-09-23, EXECUTED 2026-09-23 and re-run on a version ladder
---   2026-09-24 -- SMOKE PASS, 42 passed / 0 failed, on FOUR images, each run writing
---   its own snapshot (a later run never overwrites an earlier one -- that is what
---   run_sql_smoke.py's --report= is for):
+-- STATUS: written 2026-09-23, EXECUTED 2026-09-23, re-run on a version ladder
+--   2026-09-24, and re-run on the same ladder 2026-10-01 after the 10th table
+--   (dc_dividend, +2 CHECKs) was added -- SMOKE PASS, 46 passed / 0 failed, on FOUR
+--   images, each run writing its own snapshot (a later run never overwrites an earlier
+--   one -- that is what run_sql_smoke.py's --report= is for):
 --     postgres:14  PostgreSQL 14.24  tools/sql-smoke-report-pg14.txt
 --     postgres:15  PostgreSQL 15.18  tools/sql-smoke-report-pg15.txt
 --     postgres:16  PostgreSQL 16.15  tools/sql-smoke-report-pg16.txt
@@ -71,7 +72,7 @@
 --     * no image outside those four has ever been run;
 --     * the denominator is not self-asserted: a section that silently stopped
 --       executing would shrink n_pass without turning anything red. What keeps the
---       B half present is C7 in tools/verify_data_center.py (16/16 asserted by name).
+--       B half present is C7 in tools/verify_data_center.py (18/18 asserted by name).
 --     * falsification is per-CONSTRAINT, one case at a time: each case must turn
 --       EXACTLY one sample red (n_fail == 1). That signature is what indirectly
 --       covers "every sample value really falls inside the reject region"; it is not
@@ -85,11 +86,11 @@
 --   Proof that the B half has teeth (a green that is never falsified is not evidence):
 --   tools/falsify_smoke.py relaxes ONE named CHECK at a time in the DDL (expression
 --   only -- the constraint is never dropped), re-runs this file, and requires exactly
---   one sample to go red. Coverage is now every constraint, not a sample: 31 cases /
---   31 CAUGHT / 30 named CHECKs (this file's 16 + risk control's 14). Per-case
+--   one sample to go red. Coverage is now every constraint, not a sample: 33 cases /
+--   33 CAUGHT / 32 named CHECKs (this file's 18 + risk control's 14). Per-case
 --   evidence: tools/falsify-report.txt. Example: widening ck_dc_fin_roe_range's upper
---   bound from 5 to 1000 makes this file report 41 passed / 1 failed
---   (B10 FAIL  roe = 600 was accepted) instead of 42 / 0.
+--   bound from 5 to 1000 makes this file report 45 passed / 1 failed
+--   (B10 FAIL  roe = 600 was accepted) instead of 46 / 0.
 --
 --   A6 asked whether PostgreSQL populates CONSTRAINT_NAME for a violation raised by a
 --   unique INDEX. Measured answer on 17.11: yes, it does -- A6 PASSED, so the planned
@@ -117,16 +118,16 @@ BEGIN
   -- A. schema inventory, seed integrity, cross-row invariant
   -- ========================================================================
 
-  -- A1: all nine tables must be present in the search_path.
+  -- A1: all ten tables must be present in the search_path.
   SELECT count(*) INTO v_cnt
   FROM unnest(ARRAY[
          'dc_data_version', 'dc_trading_calendar', 'dc_symbol', 'dc_daily_bar',
          'dc_adjust_factor', 'dc_financial_report', 'dc_index_member',
-         'dc_ingest_run', 'dc_quality_issue']) AS t(name)
+         'dc_ingest_run', 'dc_quality_issue', 'dc_dividend']) AS t(name)
   WHERE to_regclass(t.name) IS NULL;
   IF v_cnt = 0 THEN
     n_pass := n_pass + 1;
-    RAISE NOTICE 'A1 PASS  all 9 tables exist';
+    RAISE NOTICE 'A1 PASS  all 10 tables exist';
   ELSE
     n_fail := n_fail + 1;
     RAISE NOTICE 'A1 FAIL  % table(s) missing from the schema', v_cnt;
@@ -153,7 +154,9 @@ BEGIN
       ('dc_ingest_run',       'ck_dc_ingest_status'),
       ('dc_ingest_run',       'ck_dc_ingest_priority'),
       ('dc_quality_issue',    'ck_dc_quality_flag'),
-      ('dc_quality_issue',    'ck_dc_quality_severity')
+      ('dc_quality_issue',    'ck_dc_quality_severity'),
+      ('dc_dividend',         'ck_dc_dividend_cash_nonneg'),
+      ('dc_dividend',         'ck_dc_dividend_announce_not_after_ex')
   ) AS e(tbl, cname)
   WHERE NOT EXISTS (
       SELECT 1
@@ -165,7 +168,7 @@ BEGIN
   );
   IF v_missing IS NULL THEN
     n_pass := n_pass + 1;
-    RAISE NOTICE 'A2 PASS  all 16 required CHECK constraints present';
+    RAISE NOTICE 'A2 PASS  all 18 required CHECK constraints present';
   ELSE
     n_fail := n_fail + 1;
     RAISE NOTICE 'A2 FAIL  missing/misplaced CHECK constraint(s): %', v_missing;
@@ -552,6 +555,48 @@ BEGIN
     END IF;
   END;
 
+  -- B17: cash per share must be non-negative. A negative dividend is not a
+  -- "small" dividend, it is a different event (a capital call), and the read
+  -- side reports it as cash received -- so the sign has to be refused here.
+  -- announce_date equals ex_date so that B18's constraint is not the one that
+  -- fires first.
+  BEGIN
+    INSERT INTO dc_dividend (symbol, ex_date, announce_date, cash_per_share, data_version)
+    VALUES ('__smoke_div', DATE '2026-01-05', DATE '2026-01-05', -0.5, 'v2026.09.23');
+    n_fail := n_fail + 1;
+    RAISE NOTICE 'B17 FAIL  cash_per_share = -0.5 was accepted';
+  EXCEPTION WHEN check_violation THEN
+    GET STACKED DIAGNOSTICS v_cname = CONSTRAINT_NAME;
+    IF v_cname = 'ck_dc_dividend_cash_nonneg' THEN
+      n_pass := n_pass + 1;
+      RAISE NOTICE 'B17 PASS  negative cash_per_share rejected by ck_dc_dividend_cash_nonneg';
+    ELSE
+      n_fail := n_fail + 1;
+      RAISE NOTICE 'B17 FAIL  rejected by the WRONG constraint: %', v_cname;
+    END IF;
+  END;
+
+  -- B18: a dividend cannot be ANNOUNCED after it has already gone ex. The same
+  -- shape as B8 (contract D4): announce_date is the visibility key, so if it can
+  -- postdate ex_date the read side would have to expose the row before it could
+  -- legally know about it, or hide it while the price already moved. cash_per_share
+  -- is a clean positive value so B17's constraint is not the one that fires.
+  BEGIN
+    INSERT INTO dc_dividend (symbol, ex_date, announce_date, cash_per_share, data_version)
+    VALUES ('__smoke_div', DATE '2026-01-05', DATE '2026-02-05', 0.5, 'v2026.09.23');
+    n_fail := n_fail + 1;
+    RAISE NOTICE 'B18 FAIL  announce_date after ex_date was accepted';
+  EXCEPTION WHEN check_violation THEN
+    GET STACKED DIAGNOSTICS v_cname = CONSTRAINT_NAME;
+    IF v_cname = 'ck_dc_dividend_announce_not_after_ex' THEN
+      n_pass := n_pass + 1;
+      RAISE NOTICE 'B18 PASS  announce_date > ex_date rejected by ck_dc_dividend_announce_not_after_ex';
+    ELSE
+      n_fail := n_fail + 1;
+      RAISE NOTICE 'B18 FAIL  rejected by the WRONG constraint: %', v_cname;
+    END IF;
+  END;
+
   -- ========================================================================
   -- C. boundary samples -- every sample here MUST be ACCEPTED
   -- ========================================================================
@@ -853,6 +898,31 @@ BEGIN
   EXCEPTION WHEN unique_violation THEN
     n_pass := n_pass + 1;
     RAISE NOTICE 'C8b PASS  duplicate calendar day rejected (unique_violation)';
+  END;
+
+  -- C9: the dividend boundaries. cash_per_share = 0 (a bonus-share-only plan)
+  -- and announce_date exactly equal to ex_date are both legal -- an over-tight
+  -- `<` or `>` in either place would stop real filings from loading.
+  BEGIN
+    INSERT INTO dc_dividend (symbol, ex_date, announce_date, cash_per_share, data_version)
+    VALUES ('__smoke_ok_div', DATE '2026-01-05', DATE '2026-01-05', 0, 'v2026.09.23');
+    n_pass := n_pass + 1;
+    RAISE NOTICE 'C9a PASS  cash_per_share = 0 accepted (send/transfer-only plan) and announce_date == ex_date accepted';
+  EXCEPTION WHEN check_violation THEN
+    GET STACKED DIAGNOSTICS v_cname = CONSTRAINT_NAME;
+    n_fail := n_fail + 1;
+    RAISE NOTICE 'C9a FAIL  a legal zero-cash dividend was rejected by % -- the bound is too tight', v_cname;
+  END;
+
+  BEGIN
+    INSERT INTO dc_dividend (symbol, ex_date, announce_date, cash_per_share, data_version)
+    VALUES ('__smoke_ok_div', DATE '2026-06-10', DATE '2026-05-20', 0.35, 'v2026.09.23');
+    n_pass := n_pass + 1;
+    RAISE NOTICE 'C9b PASS  ordinary dividend row accepted (announce < ex)';
+  EXCEPTION WHEN check_violation THEN
+    GET STACKED DIAGNOSTICS v_cname = CONSTRAINT_NAME;
+    n_fail := n_fail + 1;
+    RAISE NOTICE 'C9b FAIL  an ordinary dividend row was rejected by %', v_cname;
   END;
 
   -- ========================================================================

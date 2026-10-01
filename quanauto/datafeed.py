@@ -101,7 +101,27 @@ class DataFeed(ABC):
 
     @abstractmethod
     def get_dividend(self, symbol: str, datetime: datetime) -> float:
-        """每股分红；没有分红信息时返回 0.0。"""
+        """该 (标的, **除权除息日**) 的每股现金分红（元/股，税前）；没有分红信息时返回 `0.0`。
+
+        ⚠️ 这里的"没有"包含**三种情形**，它们**都返回 `0.0`、都不抛**（订正于 2026-10-01，
+        数据中心契约附录 **B22.3**）：① 这个标的没有分红记录；② 这一天不是除权除息日；
+        ③ 数据源根本没有分红这一列。主契约 §2.2.1 的参考实现就是这么写的（缺 symbol /
+        缺日 / 缺 `dividend` 列一律 `return 0.0`），本仓库的 `CsvDataFeed` 逐字同形。
+
+        **与 `get_adjustment_factor` 刻意不对称**（两者挨着，所以写在这里）：因子那边
+        "缺行"要抛 `DataNotAvailableError`（DATA_001）。理由两条，缺一不可：
+
+        * **分红是稀疏事件流，因子是连续序列。** 绝大多数交易日没有分红，所以"没有"的
+          默认答案是 `0.0`；而"该有因子却没有"是数据异常（序列不该有洞），默认答案是抛。
+        * **同一协议的两条实现体必须同口径**（D9）。CSV 侧根本没有 `AdjustType` 这个概念
+          （见 `CsvDataFeed` 的已登记偏差），它面对"文件里没有分红"只能给 `0.0`；
+          若库侧的同一个方法因为"没接源"而抛，调用方就得按实现类分支写代码。
+
+        ⚠️ 代价：**"没有分红"与"没接分红源"在返回值上不可区分**，而"静默补 0.0"会让
+        整段回测悄悄变成**不含分红**（与因子侧"静默补 1.0 ⇒ 悄悄不复权"同族）。所以
+        本方法的返回值**不**能当作"分红口径在绩效里生效"的证据 —— 引擎侧是否消费它
+        要看 `quanauto/engine.py`（当前**一行都没动**，附录 B22.2）。
+        """
         raise NotImplementedError
 
     @abstractmethod
@@ -179,6 +199,11 @@ class CsvDataFeed(DataFeed):
     列的约定：`datetime`、`symbol`、`open`、`high`、`low`、`close`、`volume` 必填；
     `amount`（缺则 `close * volume`）、`timestamp`（缺则按 UTC 纪元秒自算）、
     `adjust_factor`、`dividend` 选填。
+
+    `dividend` 列的语义是**该行那个日期（= 除权除息日）的每股现金分红**（元/股、税前）。
+    它只被 `get_dividend` 消费，**不参与**任何价格换算（复权算术只认 `adjust_factor`）——
+    两件事刻意分开："复权"是乘法，"分红"是现金流，混在一起会得到一个既不是前复权
+    也不是后复权的价。
 
     **价格量纲**：`adjust_factor` 列被当成**累计**复权因子，四列价格各乘一次它就是
     `BarData` 里的价格，与 `DbDataFeed._row_to_bar` 同一条口径（同一份 `_rescale_price`）。
@@ -315,6 +340,12 @@ class CsvDataFeed(DataFeed):
         return self._adjust.get(symbol, {}).get(datetime, 1.0)
 
     def get_dividend(self, symbol: str, datetime: datetime) -> float:
+        """该时点（**除权除息日**）的每股现金分红；文件没提供时 `0.0`。
+
+        这是 B22.3 那张"两条读侧口径"表的 **CSV 那一半**：缺 symbol / 缺日 / 缺
+        `dividend` 列**一律** `0.0`，从不抛。`DbDataFeed.get_dividend` 与它同口径
+        —— 这两条实现体不一致的话，同一个 `DataFeed` 协议下"没有分红数据"就有两种行为。
+        """
         return self._dividend.get(symbol, {}).get(datetime, 0.0)
 
     def get_trading_calendar(self, start: datetime, end: datetime) -> List[datetime]:

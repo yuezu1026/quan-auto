@@ -4,15 +4,16 @@
 -- 对应 PRD 模块: 模块 1（数据中心）
 -- 生成日期: 2026-09-23
 --
--- STATUS: written 2026-09-23, EXECUTED 2026-09-23, re-run on a version ladder 2026-09-24.
+-- STATUS: written 2026-09-23, EXECUTED 2026-09-23, re-run on a version ladder 2026-09-24,
+--         re-run on the same ladder 2026-10-01 after adding the 10th table dc_dividend.
 --
 -- PG-VERIFIED-ON: postgres:14 postgres:15 postgres:16 postgres:17
 --
 --         逐版本证据（每个镜像一次独立运行，各写一份快照，互不覆盖）:
---           postgres:14 -- PostgreSQL 14.24, tools/sql-smoke-report-pg14.txt (42/42 PASS)
---           postgres:15 -- PostgreSQL 15.18, tools/sql-smoke-report-pg15.txt (42/42 PASS)
---           postgres:16 -- PostgreSQL 16.15, tools/sql-smoke-report-pg16.txt (42/42 PASS)
---           postgres:17 -- PostgreSQL 17.11, tools/sql-smoke-report.txt      (42/42 PASS)
+--           postgres:14 -- PostgreSQL 14.24, tools/sql-smoke-report-pg14.txt (46/46 PASS)
+--           postgres:15 -- PostgreSQL 15.18, tools/sql-smoke-report-pg15.txt (46/46 PASS)
+--           postgres:16 -- PostgreSQL 16.15, tools/sql-smoke-report-pg16.txt (46/46 PASS)
+--           postgres:17 -- PostgreSQL 17.11, tools/sql-smoke-report.txt      (46/46 PASS)
 --         上面那行 PG-VERIFIED-ON 是本文件关于「在哪些镜像上验过」的**唯一**主张，
 --         它的字面内容由 tools/verify_data_center.py 的 C6 与 tools/sql-smoke-report*.txt
 --         记录的镜像名**双向**核对（多写一个没跑过的版本会红，少写一个跑过的也会红）。
@@ -297,6 +298,35 @@ CREATE INDEX IF NOT EXISTS idx_dc_quality_date ON dc_quality_issue (trade_date);
 CREATE INDEX IF NOT EXISTS idx_dc_quality_symbol ON dc_quality_issue (symbol, trade_date);
 
 -- -----------------------------------------------------------------------------
+-- 10. dc_dividend — 分红（每股派息）
+--     契约 D4: 公告日 = 唯一合法的可见性依据（与 dc_financial_report 同一条 D4）
+--     契约 附录 B22: 这是 2026-10-01 新增的第 10 张表，I2 收口条件 ①ⓐ 的落地面
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS dc_dividend (
+    symbol          text            NOT NULL,
+    ex_date         date            NOT NULL,
+    announce_date   date            NOT NULL,
+    cash_per_share  numeric(18,4)   NOT NULL,
+    source          text            NOT NULL DEFAULT '',
+    ingested_at     timestamptz(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    data_version    text            NOT NULL,
+
+    CONSTRAINT pk_dc_dividend PRIMARY KEY (symbol, ex_date, data_version),
+    CONSTRAINT ck_dc_dividend_cash_nonneg
+        CHECK (cash_per_share >= 0),
+    CONSTRAINT ck_dc_dividend_announce_not_after_ex
+        CHECK (announce_date <= ex_date)
+);
+
+COMMENT ON TABLE  dc_dividend IS '分红（每股税前派息）。契约 D4：可见性依据是 announce_date，读侧只暴露 announce_date <= as_of_date 的行。';
+COMMENT ON COLUMN dc_dividend.ex_date        IS '除权除息日 = 数据所属日期。事件在“这一天”发生，窗口过滤键就是它（与 dc_daily_bar.trade_date 同位）。';
+COMMENT ON COLUMN dc_dividend.announce_date  IS '公告日期 = 数据可获取日期。★ 唯一合法的可见性依据；禁止用 ex_date 冒充（契约 D4）。';
+COMMENT ON COLUMN dc_dividend.cash_per_share IS '每股税前现金分红（元/股），不是分红总额、不是比例。允许 0（不分红但做送转的预案）。';
+
+CREATE INDEX IF NOT EXISTS idx_dc_dividend_pit
+    ON dc_dividend (symbol, ex_date, announce_date);
+
+-- -----------------------------------------------------------------------------
 -- 种子数据：初始数据版本
 --   幂等：重复执行不覆盖已有版本（契约 D8 版本不可变）
 -- -----------------------------------------------------------------------------
@@ -312,24 +342,28 @@ COMMIT;
 -- 1. 【已执行四个版本，不是「14+ 全部成立」】2026-09-23 首次用 tools/run_sql_smoke.py 在
 --    临时容器 postgres:17（PostgreSQL 17.11, Debian）上执行本文件 + db/data_center.smoke.sql，
 --    结果 42/42 通过；2026-09-24 用同一脚本（`--pg-image=postgres:NN` + `--report=...`
---    另存）在 postgres:14 / postgres:15 / postgres:16 上各跑一次，也都是 42/42。证据四份：
+--    另存）在 postgres:14 / postgres:15 / postgres:16 上各跑一次，也都是 42/42。
+--    2026-10-01 新增第 10 张表 dc_dividend（+2 条 CHECK）后，**四个镜像上同一套阶梯全部重跑**
+--    （旧快照不覆盖，各自写回原路径），结果一致变成 46/46。
+--    证据四份：
 --      tools/sql-smoke-report-pg14.txt (14.24)
 --      tools/sql-smoke-report-pg15.txt (15.18)
 --      tools/sql-smoke-report-pg16.txt (16.15)
---      tools/sql-smoke-report.txt      (17.11, 2026-09-23 那份，未被覆盖)
+--      tools/sql-smoke-report.txt      (17.11)
 --    每份都含镜像 digest、server/client encoding。
 --    **但**「在四个 tag 上通过」仍不等于 DDL 标题里那句「PostgreSQL 14+」——
 --    四条大版本之间还有别的 tag 与发行版，从未跑过。本段不得被读成后者。
 --
--- 2. 触发测试的**效力**已逐条证伪（2026-09-23，不再是抽样）：`python tools/falsify_smoke.py`
+-- 2. 触发测试的**效力**已逐条证伪（2026-09-23 首跑，2026-09-24 / 2026-10-01 随 DDL 变动重跑）：
+--    `python tools/falsify_smoke.py`
 --    把两份 DDL 里的每一条命名 CHECK **单独**放宽（只放松表达式，不删约束）后重跑对应
---    触发测试，要求**正好 1 条样本变红**（`n_fail == 1`）。当前 **31 个案例 / 31 CAUGHT**，
---    覆盖全部 30 条命名 CHECK（本文件的 16 条 + 风控 14 条；ck_risk_rule_ratio_range 上下界各一个案例）。
+--    触发测试，要求**正好 1 条样本变红**（`n_fail == 1`）。当前 **33 个案例 / 33 CAUGHT**，
+--    覆盖全部 32 条命名 CHECK（本文件的 18 条 + 风控 14 条；ck_risk_rule_ratio_range 上下界各一个案例）。
 --    逐案例证据：tools/falsify-report.txt。举例：把本文件的 ck_dc_fin_roe_range 上界 5 放宽成 1000，
---    触发测试立刻由 42/42 变成 41 passed / 1 failed（B10 FAIL  roe = 600 was accepted），说明 B 段不是摆设。
+--    触发测试立刻由 46/46 变成 45 passed / 1 failed（B10 FAIL  roe = 600 was accepted），说明 B 段不是摆设。
 --    但要说清它证明的**是**什么：它证明「B 段会红」，**不是**「每条样本值都真的落在拒绝区间内」——
 --    那是靠 `n_fail == 1`（每次只该红一条）这个签名间接兜住的，不是逐值证明。
---    tools/verify_data_center.py 的 C7 只能核对「触发用例还在、16/16 覆盖齐、
+--    tools/verify_data_center.py 的 C7 只能核对「触发用例还在、18/18 覆盖齐、
 --    且每个用例都断言了是哪条约束拒绝的」。
 --    B 段每条样本都写了它针对哪个 CHECK、为何挑这个值；改样本时请一并改注释。
 --

@@ -1,4 +1,4 @@
-"""采集 → 落库：把「源这一次取回来的帧」真的写进数据中心那两张表（I2 收口 ①ⓑ）。
+"""采集 → 落库：把「源这一次取回来的帧」真的写进数据中心那**三**张表（I2 收口 ①ⓑ）。
 
 这个模块补的是**产品写入路径**，不是又一层实现。
 
@@ -26,14 +26,16 @@
    抛 `DataQualityError`。契约 §2.4 不允许用空集表示「找不到数据」，而
    `validate_frame` 对空帧就给 `is_valid=False` ⇒ 空帧天然走这一支，不必另写守卫。
 4. 帧 → 行对象（盖 `source = adapter.source_name()`、`data_version`）→
-   `PgBarIngestor.upsert_daily_bars` / `PgFactorIngestor.upsert_adjust_factors`。
+   `PgBarIngestor.upsert_daily_bars` / `PgFactorIngestor.upsert_adjust_factors` /
+   `PgDividendIngestor.upsert_dividends`。
 5. 收尾：`status` 看**帧有没有覆盖全部请求标的**（缺 ⇒ `PARTIAL`，`db/data_center.sql`
    里 `dc_ingest_run.status` 的列注释就是这么定义 `PARTIAL` 的），
    `row_count` = 本批**落定**的行数（`inserted + skipped`，即 `IngestReport.total`）。
 
 ## 这里**没有**做的事（别把本模块读成「I2 已收口」）
 
-* 只接了**两张表**：`dc_daily_bar` / `dc_adjust_factor`。`dc_quality_issue` 仍零写入者
+* 只接了**三张表**：`dc_daily_bar` / `dc_adjust_factor` / `dc_dividend`（第三张是
+  2026-10-01 随附录 B22 加的）。`dc_quality_issue` 仍零写入者
   （质量标记要的那套「停牌/涨跌停」判据本迭代没做）。
 * **没有主备源自动切换、没有重试、没有退避**。`SourceAdapterError.retryable` 是给
   **上层**的判据，本模块不消费它：「换个源再试一次」是调用方的决定（换 adapter 再
@@ -44,11 +46,17 @@
   这一条是**有意**的、不是漏做 —— 入口一开出来就成了一条对外承诺，而本层**从没在
   任何真实 PostgreSQL 上跑过**（`tests/test_ingest.py` 用的是假连接；真库那边只有
   `db/*.smoke.sql` 那条约束触测通道，它跑的不是本模块）。
-* `get_dividend()` 仍恒 `0.0`（分红那条缺口与本模块无关，别在这里顺手改）。
+* ~~`get_dividend()` 仍恒 `0.0`（分红那条缺口与本模块无关，别在这里顺手改）。~~
+  **2026-10-01 作废**：分红**读侧**（`DbDataFeed.get_dividend`）与**本模块的第三条通道**
+  （`ingest_dividends` → `PgDividendIngestor.upsert_dividends`）是同一批（附录 B22）接上的。
+  缺口关在**读侧**，但本模块现在**有**它的对应物。⚠️ 与另外两张表的一条差别：分红有
+  **两个日期**（`ex_date` 事件日 / `announce_date` 公告日），**两列都必填**、都照原样落
+  —— 别在这里做「公告日后移到下一交易日」之类的推导（推导会让同一条分红有两个可能的
+  写入值，`ON CONFLICT` 的判等列当场打架）。
 
 **一句话边界**：本模块主张的是「**两个 ingestor 有了产品调用点**」—— 这正是
 `docs/迭代计划.md` 里 I2 收口条件 ①ⓑ 那句话的字面内容。它**不**主张这条路径被
-真实走过（入口未开、真库未验，见上），也**不**主张采集覆盖面已经够了（只两张表、
+真实走过（入口未开、真库未验，见上），也**不**主张采集覆盖面已经够了（只三张表、
 无主备切换）。
 
 ## 语汇的来源（一处都不许改方向）
@@ -66,7 +74,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Callable, List, Mapping, Sequence, Tuple
 
-from .datacenter import AdjustFactorPoint, DailyBar
+from .datacenter import AdjustFactorPoint, DailyBar, DividendPoint
 from .datasources import SourceAdapter, normalize_symbol
 from .enums import SourcePriority
 from .errors import (
@@ -76,11 +84,18 @@ from .errors import (
     InvalidParamError,
     QuanAutoError,
 )
-from .pgstore import IngestReport, PgBarIngestor, PgFactorIngestor, SqlConnection
+from .pgstore import (
+    IngestReport,
+    PgBarIngestor,
+    PgDividendIngestor,
+    PgFactorIngestor,
+    SqlConnection,
+)
 
 LOGGER = logging.getLogger("quanauto.ingest")
 
 __all__ = (
+    "DIVIDEND_CHANNEL",
     "FACTOR_CHANNEL",
     "DAILY_CHANNEL",
     "INGEST_PRIORITIES",
@@ -95,6 +110,7 @@ __all__ = (
     "IngestRunLog",
     "ingest_adjust_factors",
     "ingest_daily_bars",
+    "ingest_dividends",
 )
 
 # ── 语汇：照抄 `db/data_center.sql` 的 CHECK，不许在这里发明新值 ──────────────
@@ -110,6 +126,9 @@ INGEST_PRIORITIES = (SourcePriority.PRIMARY.value, SourcePriority.FALLBACK.value
 
 DAILY_CHANNEL = "日线"
 FACTOR_CHANNEL = "复权因子"
+#: 第三条通道（2026-10-01，附录 B22）。与 DDL 里 `dc_ingest_run` 的列注释一样用**中文**：
+#: 这三个字会直接进错误消息（`%s 取回的%s帧没通过校验`），中文比 `DIVIDEND` 好认。
+DIVIDEND_CHANNEL = "分红"
 
 #: 开批次。`status` 也走参数（不写死在 SQL 里），这样「状态字面量一共出现在几个
 #: 地方」答案是「模块顶部那五个常量」，而不是「常量 + 两条 SQL 的字符串里」。
@@ -336,13 +355,14 @@ def _ingest_batch(adapter: SourceAdapter, *, channel: str, row_class: Any,
                   write: Callable[[Sequence[Any]], IngestReport],
                   symbols: Sequence[str], start: date, end: date, data_version: str,
                   conn: SqlConnection, priority: Any) -> IngestRun:
-    """日线 / 复权因子两条通道共用的编排。
+    """日线 / 复权因子 / 分红三条通道共用的编排。
 
-    刻意**不做成模板方法**（不在 `IngestRunLog` 或适配器上加钩子）：两条通道的差别
+    刻意**不做成模板方法**（不在 `IngestRunLog` 或适配器上加钩子）：各条通道的差别
     只有「取哪个方法 / 建哪个行对象 / 调哪个 upsert」三件事，各写一个三行的公开函数
     比一个带 `channel=` 判断的通用入口更好读 ——
-    `pgstore` 里 `PgBarIngestor` / `PgFactorIngestor` 不合并也是同一个理由（判等列
-    集合 6 vs 1、标度 4 vs 8 是真的，合并会把它们变成两个布尔参数）。
+    `pgstore` 里 `PgBarIngestor` / `PgFactorIngestor` / `PgDividendIngestor` 不合并也是
+    同一个理由（判等列集合 6 vs 1 vs 2，且分红的主键日期列是 `ex_date` 而不是
+    `trade_date` —— 合并会把它们变成一串布尔参数）。
     """
     requested = _requested_symbols(symbols)
     _check_window(start, end)
@@ -408,7 +428,7 @@ def _record_failure(log: IngestRunLog, run_id: int, exc: BaseException) -> None:
                        run_id, exc_info=True)
 
 
-# ── 两个公开入口 ─────────────────────────────────────────────────────────────
+# ── 三个公开入口 ─────────────────────────────────────────────────────────────
 def ingest_daily_bars(adapter: SourceAdapter, symbols: Sequence[str], start: date, end: date,
                       *, conn: SqlConnection, data_version: str,
                       priority: SourcePriority = SourcePriority.PRIMARY) -> IngestRun:
@@ -438,12 +458,35 @@ def ingest_adjust_factors(adapter: SourceAdapter, symbols: Sequence[str], start:
     """采集一批**复权因子**并落进 `dc_adjust_factor`（走的是 2026-09-29 晚 Ⅲ 接上的
     `fetch_adjust_factor` 那条通道）。
 
-    例外同 `ingest_daily_bars`。**没有 `get_dividend` 的对应物** —— 分红缺口（
-    `DbDataFeed.get_dividend()` 恒 `0.0`）不在这里关。
+    例外同 `ingest_daily_bars`。（**2026-10-01 订正**：此处原写「**没有 `get_dividend` 的
+    对应物** —— 分红缺口（`DbDataFeed.get_dividend()` 恒 `0.0`）不在这里关」；那条缺口
+    已在附录 B22 里关闭，对应物就是同批加上的 `ingest_dividends`。）
     """
     return _ingest_batch(
         adapter, channel=FACTOR_CHANNEL, row_class=AdjustFactorPoint,
         fetch=adapter.fetch_adjust_factor, symbols=symbols, start=start,
         end=end, data_version=data_version, conn=conn, priority=priority,
         write=lambda rows: PgFactorIngestor(conn).upsert_adjust_factors(rows),
+    )
+
+
+def ingest_dividends(adapter: SourceAdapter, symbols: Sequence[str], start: date, end: date,
+                     *, conn: SqlConnection, data_version: str,
+                     priority: SourcePriority = SourcePriority.PRIMARY) -> IngestRun:
+    """采集一批**分红**并落进 `dc_dividend`（第三条通道，2026-10-01 随附录 B22 接上）。
+
+    窗口语义：`start` / `end` 比的是**除权除息日 `ex_date`**（与 `fetch_dividend` 的过滤键
+    同一列，契约 §3.2）；`announce_date` 原样落库，不参与筛选 —— 它是**读侧**的可见性
+    依据（D4，`DbDataFeed._select_dividends` 把它交给 `PITGuard`），在写入侧做任何
+    推导都会让同一条分红出现两个可能的写入值。
+
+    例外同 `ingest_daily_bars`。⚠️ 本函数**只主张调用点存在**：分红那条通道与另外两条
+    一样从没在真库上跑过（`tests/test_ingest.py` 用假连接），tushare 的 `dividend`
+    接口也没在真实券源上跑过（附录 B22.6）。
+    """
+    return _ingest_batch(
+        adapter, channel=DIVIDEND_CHANNEL, row_class=DividendPoint,
+        fetch=adapter.fetch_dividend, symbols=symbols, start=start,
+        end=end, data_version=data_version, conn=conn, priority=priority,
+        write=lambda rows: PgDividendIngestor(conn).upsert_dividends(rows),
     )

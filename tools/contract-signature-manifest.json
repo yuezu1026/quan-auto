@@ -474,11 +474,13 @@
           "adjust_type",
           "fill_policy",
           "pit_guard",
-          "factor_store"
+          "factor_store",
+          "dividend_store"
         ],
         "_require_visible": ["self", "when", "where"],
         "_row_to_bar": ["self", "row"],
         "_select": ["self", "symbol", "start", "end"],
+        "_select_dividends": ["self", "symbol", "start", "end"],
         "get_adjustment_factor": ["self", "symbol", "datetime"],
         "get_available_dates": ["self", "symbol"],
         "get_available_symbols": ["self"],
@@ -489,7 +491,7 @@
         "get_trading_calendar": ["self", "start", "end"],
         "is_symbol_available": ["self", "symbol", "datetime"]
       },
-      "reason": "契约里的 DataFeed 是抽象基类，本类是它唯一带 as_of 的实现体；契约文档用项目符号描述取数语义（§3.3/§3.4），没有可解析的类块，所以按实现侧登记。登记的价值是：I2 S1 定下的「显式日期参数 = 抛，列表方法 = 裁剪」这一组签名与语义，不会被后续迭代悄悄改成另一种形状。I2 A6 收口时 `__init__` 末尾追加了 `factor_store`（关键字参数、带默认值 `None`，位置调用点不受影响）—— 追加本身**不判红**（这条登记只查「记下来的成员还在、参数没变」），但把它记进来是有价值的：`factor_store=None` 与「给了存储但没有这一天的行」是**两条不同的失败路径**（都抛 DATA_001，消息可区分），谁要是把它挪到中间或改成必填，这里会立刻报参数漂移。",
+      "reason": "契约里的 DataFeed 是抽象基类，本类是它唯一带 as_of 的实现体；契约文档用项目符号描述取数语义（§3.3/§3.4），没有可解析的类块，所以按实现侧登记。登记的价值是：I2 S1 定下的「显式日期参数 = 抛，列表方法 = 裁剪」这一组签名与语义，不会被后续迭代悄悄改成另一种形状。I2 A6 收口时 `__init__` 末尾追加了 `factor_store`（关键字参数、带默认值 `None`，位置调用点不受影响）—— 追加本身**不判红**（这条登记只查「记下来的成员还在、参数没变」），但把它记进来是有价值的：`factor_store=None` 与「给了存储但没有这一天的行」是**两条不同的失败路径**（都抛 DATA_001，消息可区分），谁要是把它挪到中间或改成必填，这里会立刻报参数漂移。**2026-10-01（附录 B22）** 在它后面又追加了 `dividend_store`，并新增私有取数口 `_select_dividends` —— 两者一起构成第三条通道的读侧，且 `dividend_store=None` 与「有存储但没有这一天的行」**不是**两条路径（都返回 0.0，见 B22.5 的订正）：判据是「同一条缝、两种实现体同口径」，所以这里记的是**形状**（谁把它改成必填、或把 `_select_dividends` 的参数顺序换掉）而不是语义。",
       "source": "quanauto/datacenter.py"
     },
     "EastMoneyAdapter": {
@@ -503,6 +505,22 @@
       },
       "reason": "同前两个源适配器，另外单独登记它有一个额外理由：它的 _default_fetch 只有 **kwargs 一个参数，是全项目唯一「取数入口不做位置参数约束」的地方 —— 这个差异是刻意的（分支参数由子类自己解释），登记它正好把「不要为了统一形状给它加位置参数」固化成一条可见的约束。",
       "source": "quanauto/datasources.py"
+    },
+    "DividendPoint": {
+      "extras": [],
+      "impl_fields": null,
+      "impl_params": {},
+      "reason": "dc_dividend（db/data_center.sql）的行对象 —— 与 `AdjustFactorPoint` 完全同一形状的登记（@dataclass 的类体里没有 def，所以这条实际只等于一句「类还在」）。**本仓库第一张「两个日期不是同一件事」的表**：`ex_date`（事件日）进主键、也是存储层窗口键；`announce_date`（公告日）是交给 `PITGuard.record_access` 的可见性依据（D4）—— 所以它**故意不是** `AdjustFactorPoint` 上加一个日期字段，两条日期一旦被合并成一个，`_select_dividends` 里那两处刻意的不同（窗口问 `ex_date`、守卫问 `announce_date`）就没有落脚点。有牙的那一半在别处：列名与 DDL 的逐列对应由 `tests/test_data_center_store.py` 对着 `db/data_center.sql` 比，两条日期语义由 `tests/test_data_center_pit.py` 的分红用例钉住。",
+      "source": "quanauto/datacenter.py"
+    },
+    "DividendStore": {
+      "extras": [],
+      "impl_fields": null,
+      "impl_params": {
+        "select_dividends": ["self", "symbol", "start", "end"]
+      },
+      "reason": "分红的读接口，与 `BarStore` / `FactorStore` **并列**（第三个协议）；契约里没有类块，按实现侧登记它的那一个方法。登记的价值与 `FactorStore` 那条同源，但多一层：窗口必须接受**且打在 `ex_date` 上** —— 不接受窗口，第二层防护（`PITGuard`）就没有触发场景；打在 `announce_date` 上，会把「除权除息日 = T」的那条分红在 T 之前就放进结果（窗口整体前移）。刻意**不把 `select_dividends` 并进 `FactorStore`**：两张表的窗口列名不同、分红还多一个要交给守卫的日期，合并会让实现体必须知道「这个 `date` 参数在哪张表上叫什么名字」—— 那正是把两边都搞错的那种设计（理由原写在类的 docstring 里）。",
+      "source": "quanauto/datacenter.py"
     },
     "FactorStore": {
       "extras": [],
@@ -522,6 +540,16 @@
         "select_symbols": ["self"]
       },
       "reason": "同上：契约没有这个测试替身。登记它是为了让「窗过滤发生在 store 而不是 feed」这条设计决定（PIT 守卫要逐行看得到越界行）保持可见。",
+      "source": "quanauto/datacenter.py"
+    },
+    "InMemoryDividendStore": {
+      "extras": [],
+      "impl_fields": null,
+      "impl_params": {
+        "__init__": ["self", "rows"],
+        "select_dividends": ["self", "symbol", "start", "end"]
+      },
+      "reason": "同上：契约没有这个测试替身。与 `InMemoryFactorStore` 成对 —— 窗过滤发生在 store 而不是 feed（PIT 守卫要逐行看得到越界行），过滤键是 `ex_date`。与那两个替身有一处**形状上的不同**值得记：它默认不必给夹具 `as_of()` 的 `HFQ` 口径提供因子，所以「不给分红存储」是**合法**的构造（`get_dividend` 返回 0.0，而不是抛 DATA_001）—— 谁要是照抄 `InMemoryFactorStore` 的必需件待遇给它加一条「缺它就抛」，分红通道的每条用例都会红，而这里会先报参数漂移。",
       "source": "quanauto/datacenter.py"
     },
     "InMemoryFactorStore": {
@@ -544,7 +572,8 @@
           "versions",
           "active_version",
           "session_mode",
-          "factor_store"
+          "factor_store",
+          "dividend_store"
         ],
         "as_of": [
           "self",
@@ -557,7 +586,7 @@
         "live": ["self", "account_mode"],
         "trading_calendar": ["self", "as_of_date"]
       },
-      "reason": "契约没有 InMemoryDataCenter（测试替身，非契约类型）。按实现侧登记，保证 D3 的唯一合法入口 DataCenter.as_of() 与 D6/D7 的拒绝分支不会消失。I2 A6 收口时 `__init__` 末尾追加了 `factor_store`（带默认值，`as_of()` 把它透传给 `DbDataFeed`）—— 这一条比 `DbDataFeed` 那条更值得记：它是**每个用例唯一的接缝**，`as_of()` 默认口径 `HFQ` 又要求因子存储必须存在，所以谁把透传那一步删掉，用例会集体红而不是这里红；这条登记至少让「参数被挪动/改必填」当场报出来。",
+      "reason": "契约没有 InMemoryDataCenter（测试替身，非契约类型）。按实现侧登记，保证 D3 的唯一合法入口 DataCenter.as_of() 与 D6/D7 的拒绝分支不会消失。I2 A6 收口时 `__init__` 末尾追加了 `factor_store`（带默认值，`as_of()` 把它透传给 `DbDataFeed`）—— 这一条比 `DbDataFeed` 那条更值得记：它是**每个用例唯一的接缝**，`as_of()` 默认口径 `HFQ` 又要求因子存储必须存在，所以谁把透传那一步删掉，用例会集体红而不是这里红；这条登记至少让「参数被挪动/改必填」当场报出来。**2026-10-01（附录 B22）** 在它后面又追加了 `dividend_store`，同样是带默认值的关键字参数、同样由 `as_of()` 透传；与 `factor_store` 的关键差别是**它不必给** —— 缺它不抛 DATA_001（B22.5 的订正），所以「谁把它挪到 `factor_store` 前面并改成必填」这类改动的后果与因子那条不同，两条参数都得各自记着。",
       "source": "quanauto/datacenter.py"
     },
     "LeakagePoint": {
@@ -697,12 +726,13 @@
       "impl_params": {
         "fetch_adjust_factor": ["self", "symbols", "start", "end"],
         "fetch_daily_bar": ["self", "symbols", "start", "end"],
+        "fetch_dividend": ["self", "symbols", "start", "end"],
         "fetch_financial": ["self", "symbols", "period_end"],
         "fetch_index_members": ["self", "index_code", "as_of_date"],
         "source_name": ["self"],
         "validate": ["self", "frame"]
       },
-      "reason": "契约里没有这一层的类块（契约把「取数」写成 DataCenter 的语义，不写源适配器接口），所以按实现侧登记。它比那几张具体适配器条目更该被登记：这 6 个抽象方法是「新增一种数据源必须实现什么」的全部答案，改一个名字（例如 fetch_financial → fetch_fundamental）会让下游按旧名调用时才炸，而不是在门禁里被提前看见。`fetch_adjust_factor` 是 2026-09-29 随契约 §3.2 第 6 个抽象方法一起进来的（附录 B21，复权因子通道）—— 注意它是**手写**登记：verify_contract_signature.py 的清单只查「记了的是否还在」，**不会**因为代码里多了一个抽象方法就报缺，所以漏登会彻底隐身。本类的静态形状由 verify_data_center_adapter.py 的 A0~A11 守着 —— 那个门禁不执行适配器，所以它证明不了「映射出来的数据是对的」，只证明「形状与列名集合对得上」。",
+      "reason": "契约里没有这一层的类块（契约把「取数」写成 DataCenter 的语义，不写源适配器接口），所以按实现侧登记。它比那几张具体适配器条目更该被登记：这 7 个抽象方法是「新增一种数据源必须实现什么」的全部答案，改一个名字（例如 fetch_financial → fetch_fundamental）会让下游按旧名调用时才炸，而不是在门禁里被提前看见。`fetch_adjust_factor` 是 2026-09-29 随契约 §3.2 第 6 个抽象方法一起进来的（附录 B21，复权因子通道），`fetch_dividend` 是 2026-10-01 随第 7 个进来的（附录 B22，分红通道）—— 注意它是**手写**登记：verify_contract_signature.py 的清单只查「记了的是否还在」，**不会**因为代码里多了一个抽象方法就报缺，所以漏登会彻底隐身。本类的静态形状由 verify_data_center_adapter.py 的 A0~A11 守着 —— 那个门禁不执行适配器，所以它证明不了「映射出来的数据是对的」，只证明「形状与列名集合对得上」。",
       "source": "quanauto/datasources.py"
     },
     "TencentAdapter": {
@@ -724,6 +754,7 @@
         "_default_fetch": ["**kwargs"],
         "fetch_adjust_factor": ["self", "symbols", "start", "end"],
         "fetch_daily_bar": ["self", "symbols", "start", "end"],
+        "fetch_dividend": ["self", "symbols", "start", "end"],
         "fetch_financial": ["self", "symbols", "period_end"],
         "fetch_index_members": ["self", "index_code", "as_of_date"]
       },
@@ -754,10 +785,12 @@
       "extras": [],
       "impl_fields": null,
       "impl_params": {
-        "__init__": ["self", "fetch"],
-        "_call": ["self", "**kwargs"],
+        "__init__": ["self", "fetch", "dividend_fetch"],
+        "_call": ["self", "_fetch", "**kwargs"],
         "_default_fetch": ["self", "**kwargs"],
+        "_default_dividend_fetch": ["self", "**kwargs"],
         "fetch_adjust_factor": ["self", "symbols", "start", "end"],
+        "fetch_dividend": ["self", "symbols", "start", "end"],
         "source_name": ["self"],
         "validate": ["self", "frame"]
       },

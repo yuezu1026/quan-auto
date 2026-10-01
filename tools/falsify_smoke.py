@@ -35,7 +35,7 @@ db/*.sql 全部用 `CREATE TABLE IF NOT EXISTS`，种子行也 `ON CONFLICT DO N
 **整条语句静默空转** —— 表上还是旧约束。于是那个案例的 B 段样本照旧被拒、
 触发测试照旧全绿 ⇒ 判定 MISSED。**这不是「触发测试没用」，是工具自己没把变异
 送进数据库。** 之前只有 2 个案例、且分属两份 DDL（各建各的表名），所以侥幸没
-暴露；扩到全量（现 31 个案例 / 30 条命名 CHECK）立刻会撞上 —— 而撞上的方式恰好是
+暴露；扩到全量（现 33 个案例 / 32 条命名 CHECK）立刻会撞上 —— 而撞上的方式恰好是
 「多报 MISSED」，方向安全但会让整个覆盖矩阵变成噪声。修法：每案例前
 `DROP SCHEMA public CASCADE; CREATE SCHEMA public;` 并断言表数为 0。
 
@@ -53,7 +53,9 @@ expect 的比对先把定义归一化：PostgreSQL 会把它展开成 `'ACCOUNTS
 
 当前覆盖
 --------
-31 个案例 / 30 条命名 CHECK（风控 14 + 数据中心 16；ck_risk_rule_ratio_range 上下界各一个案例）。
+33 个案例 / 32 条命名 CHECK（风控 14 + 数据中心 18；ck_risk_rule_ratio_range 上下界各一个案例）。
+（2026-10-01 分红那一批 `dc_dividend` 落地后由 31 个案例 / 30 条命名 CHECK 扩到这里 —— 这两个数
+会随 CASES 变，改 CASES 就同批改这里。）
 **不覆盖**的 3 个守门（靠 tools/verify_data_center.py 的 C7 核对，不靠本工具）：
 risk_rule.threshold 的 NOT NULL、两个单例表的 PK、uq_dc_data_version_active 部分唯一索引。
 它证明的是「放宽哪条就红哪条」（靠 `n_fail == 1` 这个签名），**不是**逐值证明
@@ -97,7 +99,7 @@ class SelfAssert(Exception):
 #            不证明改的是那个表达式（片段可能命中注释，或改错了表）。
 #   cname  : 必须是 pg_constraint.conname 里的字面名字（不是 CREATE TABLE 里的别名）。
 #
-# 覆盖统计：31 个案例 / 30 条命名 CHECK（ck_risk_rule_ratio_range 上下界各一例）。
+# 覆盖统计：33 个案例 / 32 条命名 CHECK（ck_risk_rule_ratio_range 上下界各一例）。
 # 没覆盖的：PRIMARY KEY、uq_dc_data_version_active、uq_dc_quality_issue、
 #           risk_rule.threshold 的 NOT NULL —— 本工具的手法只对 CHECK 表达式成立。
 RISK_DDL = 'db/risk_control.sql'
@@ -106,7 +108,7 @@ DC_DDL = 'db/data_center.sql'
 DC_SMOKE = 'db/data_center.smoke.sql'
 
 CASES = [
-    # ---------------- 数据中心：16 条 CHECK，16 个案例 ----------------
+    # ---------------- 数据中心：18 条 CHECK，18 个案例 ----------------
     # 放宽 ck_dc_version_format 的锚定：去掉开头的 v 也可。B1 样本 '2026.09.23'
     # （上游把 v-号写成了点号）本该被拒。
     ('dc-version-format-anchor', DC_DDL, DC_SMOKE,
@@ -218,6 +220,20 @@ CASES = [
      [("severity IN ('CRITICAL', 'WARNING', 'INFO')",
        "severity IN ('CRITICAL', 'WARNING', 'INFO', 'ERROR')")],
      'ERROR'),
+
+    # 放宽每股派息必须非负：-1 及以上的负数也放行。B17 样本（cash = -0.5）本该被拒。
+    # C9a 的 cash = 0 边界样本不受影响（0 >= -1 仍然成立）。
+    ('dc-dividend-cash-nonneg', DC_DDL, DC_SMOKE,
+     'ck_dc_dividend_cash_nonneg',
+     [('cash_per_share >= 0', 'cash_per_share >= -1')],
+     'cash_per_share >= -1'),
+
+    # 放宽公告日不得晚于除权除息日：B18 样本把公告日写在除权日后 31 天，
+    # 因此容差必须 > 31 ⇒ 给 60。（C9a 的 announce == ex 与 C9b 的 announce < ex 不受影响。）
+    ('dc-dividend-announce-not-after-ex', DC_DDL, DC_SMOKE,
+     'ck_dc_dividend_announce_not_after_ex',
+     [('announce_date <= ex_date', 'announce_date <= ex_date + 60')],
+     '+ 60'),
 
     # ---------------- 风控：14 条 CHECK，15 个案例 ----------------
     # 放宽 scope 枚举，多收一个 'ACCOUNTS'。B18 样本本该被拒。
@@ -584,8 +600,13 @@ def _main():
         return EXIT_SMOKE_FAIL
     print('')
     print('verdict: OK -- 每个被放宽的约束都被触发测试抓到了；触发测试确有效力。')
-    print('         覆盖: %d 个案例 / 30 条命名 CHECK 约束' % len(CASES))
-    print('               （ck_risk_rule_ratio_range 上下界各一例，所以案例数比约束数多 1）')
+    # 两个数都**数出来**，不写死：写死的分母在加第 3 个案例时会静默漂移，
+    # 而「报告里的计数比真实覆盖漂亮」正是本仓库反复踩过的那一类假绿。
+    n_cases = len(CASES)
+    n_checks = len({c[3] for c in CASES})
+    print('         覆盖: %d 个案例 / %d 条命名 CHECK 约束' % (n_cases, n_checks))
+    print('               （ck_risk_rule_ratio_range 上下界各一例，所以案例数比约束数多 %d）'
+          % (n_cases - n_checks))
     print('         未覆盖: PRIMARY KEY、uq_dc_data_version_active、uq_dc_quality_issue、')
     print('                 risk_rule.threshold 的 NOT NULL —— 它们不是 CHECK 表达式，')
     print('                 而本工具的手法只对 CHECK 成立。')

@@ -1,4 +1,4 @@
-"""数据中心落库侧（I2 S3）—— `dc_daily_bar` 的读写实现。
+"""数据中心落库侧（I2 S3）—— `dc_daily_bar` / `dc_adjust_factor` / `dc_dividend` 的读写实现。
 
 ## 与读侧的分工
 
@@ -66,6 +66,22 @@ extra 里，**但 extra 是 opt-in，CI 只装 `.[dev]`**），所以这条「�
 
 代价写在这里而不是留着让人猜：每行 1~2 个往返。批量化（多值 `VALUES` / `COPY`）留到
 数据量真的成问题时再做 —— 现在做的幂等语义，换实现时不必改。
+
+## 约定 7：分红表的「事件日 / 可见性」是两个日期，落库层两个都存、只用一个做窗口
+
+`dc_dividend`（2026-10-01，附录 B22）是本仓库第一张**可见性依据 ≠ 事件日**的表（D4）：
+`ex_date`（除权除息日）是**事件日**，`announce_date`（公告日）是**可见性依据**。落库层的分工：
+
+* **读窗口打在 `ex_date`**：`select_dividends(symbol, start, end)` 的闭区间说的是
+  「哪几天发生了事件」—— 与契约 §3.2 `fetch_dividend` 的过滤键同一列
+  （⚠️ **不是** `announce_date`：拿公告日当窗口，会让「除权除息日 = T 的那条分红」
+  在 T 之前就落进窗口，`get_dividend(T)` 于是拿到一条还没到账的现金）；
+* **`announce_date` 原样存下来、并交给 `PITGuard`**（`DbDataFeed._select_dividends` 把每一行的
+  它当 `record_access` 的日期）：可见性是**读侧判据**，SQL 里一个字都不判 —— 在 SQL 里判
+  就得知道 `as_of_date`，而那正是 S1/S3 分工要避免的（本模块一点 PIT 逻辑都没有）。
+
+⚠️ 两列都进 `INSERT`，谁都不许省：只存 `ex_date` 会让「这条信息当时公不公开」无从判定
+（D4 全部的意义就在这一列），只存 `announce_date` 则让「现金哪天到账」无从判定。
 """
 
 from __future__ import annotations
@@ -76,7 +92,14 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, Iterator, List, Mapping, Protocol, Sequence, runtime_checkable
 
-from .datacenter import AdjustFactorPoint, BarStore, DailyBar, FactorStore
+from .datacenter import (
+    AdjustFactorPoint,
+    BarStore,
+    DailyBar,
+    DividendPoint,
+    DividendStore,
+    FactorStore,
+)
 from .errors import (
     DataStoreError,
     DataVersionError,
@@ -87,18 +110,24 @@ from .errors import (
 
 __all__ = [
     "BAR_COLUMNS",
+    "DIVIDEND_COLUMNS",
     "FACTOR_COLUMNS",
     "VALUE_FIELDS",
     "SQL_SELECT_BARS",
+    "SQL_SELECT_DIVIDENDS",
+    "SQL_SELECT_DIVIDEND_EXISTING",
     "SQL_SELECT_EXISTING",
     "SQL_SELECT_FACTORS",
     "SQL_SELECT_FACTOR_EXISTING",
     "SQL_SELECT_SYMBOLS",
     "SQL_UPSERT_BAR",
+    "SQL_UPSERT_DIVIDEND",
     "SQL_UPSERT_FACTOR",
     "IngestReport",
     "PgBarIngestor",
     "PgBarStore",
+    "PgDividendIngestor",
+    "PgDividendStore",
     "PgFactorIngestor",
     "PgFactorStore",
     "PsycopgConnection",
@@ -137,6 +166,22 @@ FACTOR_COLUMNS = (
 # `adjust_factor`（见 `_raise_if_factor_divergent`）。一个元素的清单只会让人
 # 以为它可以随便加 —— 而这里每加一列都要同时改 DDL、SQL 与标度。
 
+#: `dc_dividend` 被本模块读写的列（顺序 = `INSERT` 的列序 = `%s` 的绑定顺序）。
+#: 三日期模型（D4）里**可见性依据 ≠ 事件日**的那一张表：`ex_date` 是事件日（读窗口的键），
+#: `announce_date` 是可见性依据（`DbDataFeed` 把它交给 `PITGuard`）。两列都在这里，见约定 7。
+DIVIDEND_COLUMNS = (
+    "symbol",
+    "ex_date",
+    "announce_date",
+    "cash_per_share",
+    "source",
+    "data_version",
+)
+
+# 分红表同样**没有** `VALUE_FIELDS` 的兄弟常量，理由与因子表那段相同：判等的列是
+# `announce_date` + `cash_per_share` 两列（见 `_raise_if_dividend_divergent`），写成常量
+# 只会让人以为「再加一列判等」是改一个清单的事 —— 那要同时改 DDL、SQL 与这里。
+
 #: `dc_daily_bar` 六个数值列在库里的标度（`numeric(18,4)` / `numeric(20,4)`，**都是 4**）。
 #: 写入/判等前把值量化到这个标度，是 D10「同一批次重跑结果必须与跑一次相同」的前提：
 #: 库会按 `numeric(_,4)` 四舍五入后再存，若本批带子标度的浮点尾巴，两侧就不是同一个数。
@@ -152,6 +197,14 @@ _VALUE_QUANTUM = Decimal(1).scaleb(-_VALUE_SCALE)
 #: （这不是假设：`dc_daily_bar` 的 `amount` 就是同一种尾巴咬过一次，见附录 B18.3。）
 _FACTOR_SCALE = 8
 _FACTOR_QUANTUM = Decimal(1).scaleb(-_FACTOR_SCALE)
+
+#: `dc_dividend.cash_per_share` 的库内标度（DDL 里是 `numeric(18,4)` —— 与日线价格同标度，
+#: 与因子的 8 位**不同**）。为什么不复用一个 `_VALUE_QUANTUM` 了事：那是**两列各自的决定**
+#: （日线六列 vs 分红一列），共用会让「改日线标度」顺手改掉分红，而 DDL 里两者是各写各的。
+#: 标度传错的后果是静默的 —— 拿 8 位量子去量 4 位列，`1.23456000` 会与库里存的
+#: `1.2346` 永久不等 ⇒ 每轮重采都在第 1 行报 DATA_007，而数据其实一个字没变（同 `_FACTOR_SCALE`）。
+_DIVIDEND_SCALE = 4
+_DIVIDEND_QUANTUM = Decimal(1).scaleb(-_DIVIDEND_SCALE)
 
 # ── SQL ──────────────────────────────────────────────────────────────────
 #: 读一个 (标的, 版本, 闭区间窗口) 的日线，按交易日升序。
@@ -215,6 +268,41 @@ SQL_UPSERT_FACTOR = (
     "ON CONFLICT (symbol, trade_date, data_version) DO UPDATE "
     "SET source = EXCLUDED.source, ingested_at = CURRENT_TIMESTAMP(3) "
     "WHERE dc_adjust_factor.adjust_factor IS DISTINCT FROM EXCLUDED.adjust_factor "
+    "RETURNING symbol"
+)
+
+#: 读一个标的在一个版本里的分红窗口（闭区间，打在**除权除息日**上，见约定 7），
+#: 按 `ex_date` 升序。与 `SQL_SELECT_FACTORS` 同形，换的是表与「窗口那一列」。
+SQL_SELECT_DIVIDENDS = (
+    "SELECT symbol, ex_date, announce_date, cash_per_share, source, data_version "
+    "FROM dc_dividend "
+    "WHERE symbol = %s AND data_version = %s "
+    "AND ex_date >= %s AND ex_date <= %s "
+    "ORDER BY ex_date"
+)
+
+#: 按主键取现有分红行 —— 「同值不写」与「异值报冲突」都靠它。
+#: 只取**参与判等的那两列**（约定 3）：`ex_date`/`symbol`/`data_version` 在主键里，
+#: `source` 是溯源信息不参与判等。`cash_per_share` 是数值列、`announce_date` 是日期列。
+SQL_SELECT_DIVIDEND_EXISTING = (
+    "SELECT announce_date, cash_per_share FROM dc_dividend "
+    "WHERE symbol = %s AND ex_date = %s AND data_version = %s"
+)
+
+#: 与 `SQL_UPSERT_FACTOR` 同形（约定 1/6），表/列/判等字段换成分红。
+#: `ON CONFLICT` 的主键列与 DDL 的 `pk_dc_dividend (symbol, ex_date, data_version)` 逐字对应；
+#: `IS DISTINCT FROM` 里库侧写成 `dc_dividend.announce_date` 而不是裸列名，理由同因子那条
+#: （「库里的值与本批不同才更新」必须能被人从 SQL 文本上读出来）。
+#: ⚠️ 公告日在判等里**不是凑数**：改公告日（「公告日写错了」）恰好是最常见的一次重采，
+#: 漏掉它会让新值被静默丢掉，库里留下一行与源不再一致的记录。
+SQL_UPSERT_DIVIDEND = (
+    "INSERT INTO dc_dividend "
+    "(symbol, ex_date, announce_date, cash_per_share, source, data_version) "
+    "VALUES (%s, %s, %s, %s, %s, %s) "
+    "ON CONFLICT (symbol, ex_date, data_version) DO UPDATE "
+    "SET source = EXCLUDED.source, ingested_at = CURRENT_TIMESTAMP(3) "
+    "WHERE (dc_dividend.announce_date, dc_dividend.cash_per_share) IS DISTINCT FROM "
+    "(EXCLUDED.announce_date, EXCLUDED.cash_per_share) "
     "RETURNING symbol"
 )
 
@@ -328,6 +416,17 @@ def _as_factor_decimal(value) -> Decimal:
     是静默的**（见 `_FACTOR_SCALE` 那段）。名字里带 `factor`，写侧读侧一眼能对上 DDL。
     """
     return _to_decimal(value, _FACTOR_QUANTUM, _FACTOR_SCALE, "复权因子")
+
+
+def _as_dividend_decimal(value) -> Decimal:
+    """`dc_dividend.cash_per_share` → `Decimal`，标度 `_DIVIDEND_SCALE`（4 位）。
+
+    与 `_as_factor_decimal` 同样的理由单独立名：**标度传错的后果是静默的**，而分红列的
+    标度（`numeric(18,4)`）与因子的 8 位不同、与日线价格的 4 位**碰巧**相同。「碰巧相同」
+    正是最不该靠复用表达的东西：DDL 改了日线那一列时，分红这一列会不会跟着改是一个
+    **决定**，而共用一个常量会让这个决定消失。
+    """
+    return _to_decimal(value, _DIVIDEND_QUANTUM, _DIVIDEND_SCALE, "每股派息")
 
 
 def _row_to_bar(row: Mapping[str, Any]) -> DailyBar:
@@ -494,6 +593,90 @@ def _raise_if_factor_divergent(
     )
 
 
+# ── 分红：两日期模型（D4），判等两列、窗口打在事件日上（约定 7）─────────────────
+
+def _row_to_dividend(row: Mapping[str, Any]) -> DividendPoint:
+    """分红行 → dataclass。与 `_row_to_factor` 同形状：缺列 ⇒ DATA_008，不静默补默认值。
+
+    `announce_date` **原样**转 `date`，不做「其后首个交易日」之类的推导：本表没有
+    `available_date` 列（D4：`announce_date` 本身就是可见性依据），而「公告日是不是交易日」
+    是数据质量的问题，不是这一层该猜的 —— 猜了就会与库里存的那一列分家，
+    下游的 `record_access` 也就跟着变成另一条时间线。
+    """
+    try:
+        return DividendPoint(
+            symbol=str(row["symbol"]),
+            ex_date=_as_date_value(row["ex_date"]),
+            announce_date=_as_date_value(row["announce_date"]),
+            cash_per_share=_as_dividend_decimal(row["cash_per_share"]),
+            source="" if row["source"] is None else str(row["source"]),
+            data_version=str(row["data_version"]),
+        )
+    except KeyError as exc:
+        raise DataStoreError(
+            "按主键取回的分红行缺少列 %s —— 读的列清单与 db/data_center.sql 不一致" % (exc,)
+        ) from exc
+
+
+def _dividend_insert_params(point: DividendPoint) -> tuple:
+    """按 `DIVIDEND_COLUMNS` 的顺序绑定 —— 列序与值序必须同源（同 `_insert_params`）。"""
+    return (
+        point.symbol,
+        _as_date_value(point.ex_date),
+        _as_date_value(point.announce_date),
+        _as_dividend_decimal(point.cash_per_share),
+        "" if point.source is None else str(point.source),
+        _require_version(
+            point.data_version, "分红行 %s/%s" % (point.symbol, point.ex_date)
+        ),
+    )
+
+
+def _dividend_primary_key(point: DividendPoint) -> tuple:
+    """主键 = `pk_dc_dividend (symbol, ex_date, data_version)` —— **事件日**进键，不是公告日。
+
+    与 DDL 逐字对应：同一标的、同一除权除息日、同一版本只有一行。用公告日当键的一局部
+    会让「同一除权日的两个公告」变成两行（而现金只能到账一次）。
+    """
+    return (
+        point.symbol,
+        _as_date_value(point.ex_date),
+        _require_version(
+            point.data_version, "分红行 %s/%s" % (point.symbol, point.ex_date)
+        ),
+    )
+
+
+def _raise_if_dividend_divergent(
+    point: DividendPoint, row: Mapping[str, Any], concurrent: bool = False
+) -> None:
+    """同主键异值 ⇒ DATA_007（约定 3 / D8）。**两列参与判等** —— 见 `DIVIDEND_COLUMNS`。
+
+    `source` 不参与（与日线/因子同一条理由）；`ex_date`/`symbol`/`data_version` 在主键里。
+    公告日参与判等是本表与因子表在判等形状上的**唯一**区别，理由写在 `SQL_UPSERT_DIVIDEND` 上。
+    """
+    mine_date = _as_date_value(point.announce_date)
+    mine_cash = _as_dividend_decimal(point.cash_per_share)
+    try:
+        theirs_date = _as_date_value(row["announce_date"])
+        theirs_cash = _as_dividend_decimal(row["cash_per_share"])
+    except KeyError as exc:
+        raise DataStoreError(
+            "按主键取回的分红行缺少列 %s —— 列清单与 db/data_center.sql 不一致" % (exc,)
+        ) from exc
+    if mine_date == theirs_date and mine_cash == theirs_cash:
+        return
+    symbol, ex_date, data_version = _dividend_primary_key(point)
+    raise IngestConflictError(
+        "主键 (symbol=%s, ex_date=%s, data_version=%s) 已存在且值不同："
+        "库内 announce_date=%s / cash_per_share=%s，本批 %s / %s%s —— "
+        "D8：同一版本的行不可变，DATA_007 提示可能并发跑了两份采集。"
+        "要改写历史请换一个新的 data_version 重采，不要用 upsert 把冲突盖掉。"
+        % (symbol, ex_date, data_version, theirs_date, theirs_cash, mine_date, mine_cash,
+           "（并发写入后复查发现）" if concurrent else "")
+    )
+
+
 class PgBarStore(BarStore):
     """PostgreSQL 支撑的 `BarStore`：按窗口 + 版本读日线。"""
 
@@ -639,6 +822,91 @@ class PgFactorIngestor:
                 "不能当作成功" % (key,)
             )
         _raise_if_factor_divergent(point, again[0], concurrent=True)
+        return False
+
+
+class PgDividendStore(DividendStore):
+    """PostgreSQL 支撑的 `DividendStore`：按**除权除息日**窗口 + 版本读分红（约定 7）。
+
+    与 `PgBarStore` / `PgFactorStore` 一样**必须绑 `data_version`**（约定 2 / D8）：不绑的话
+    同一 `(symbol, ex_date)` 会按版本数重复出现，而 `DbDataFeed.get_dividend` 取的是
+    `rows[0]` —— 它拿到的是**哪一个版本**就成了执行顺序的函数（更糟：两个版本的值会被
+    当成两笔现金，而报告里分不出来）。
+
+    ⚠️ 窗口打在 `ex_date` 上而**不是** `announce_date` 上，两条对不上的口径别抄错：
+    「哪几天发生了事件」由本方法回答；「这条当时公不公开」由 `PITGuard` 回答
+    （`DbDataFeed._select_dividends` 把每行的 `announce_date` 交给它）。
+    """
+
+    def __init__(self, conn: SqlConnection, data_version: str):
+        self.conn = conn
+        self.data_version = _require_version(data_version, "PgDividendStore")
+
+    def select_dividends(self, symbol: str, start: date, end: date) -> List[DividendPoint]:
+        rows = _run(
+            self.conn,
+            SQL_SELECT_DIVIDENDS,
+            (symbol, self.data_version, _as_date_value(start), _as_date_value(end)),
+            "读分红窗口",
+        )
+        return [_row_to_dividend(row) for row in rows]
+
+
+class PgDividendIngestor:
+    """按 D10 幂等写分红：同值不写、异值抛 `IngestConflictError`。
+
+    形状与 `PgBarIngestor` / `PgFactorIngestor` 逐条对齐（先过形状、整批一个事务、
+    `_write_one` 返回布尔、`_run` 收口异常），同样**刻意不抽成「通用 upsert 引擎」**：
+    三张表的判等列集合不同（六列 / 一列 / 两列含一列日期）、标度不同（4 / 8 / 4）、
+    主键的语义也不一样（分红的主键里是**事件日**）。真正该共用的部分
+    （`_to_decimal` / `_run` / `_require_version`）已经共用了。
+
+    ⚠️ 本类**不**自己判 `announce_date <= ex_date`（D4 那条规则）：那是
+    `ck_dc_dividend_announce_not_after_ex` 的职责，库会以 CHECK 拒绝；在这里再判一次
+    会让「谁拒的」变模糊，而库拒绝的判据还要在 `quanauto/ingest.py` 里被翻译成我们的错误码。
+    """
+
+    def __init__(self, conn: SqlConnection):
+        self.conn = conn
+
+    def upsert_dividends(self, rows: Sequence[DividendPoint]) -> IngestReport:
+        points = list(rows)
+        # 与另两张表同序：先一次过掉形状问题（不写一行、不开事务），再整批一个事务。
+        for point in points:
+            _require_version(
+                point.data_version, "分红行 %s/%s" % (point.symbol, point.ex_date)
+            )
+        inserted = 0
+        skipped = 0
+        with self.conn.transaction():
+            for point in points:
+                if self._write_one(point):
+                    inserted += 1
+                else:
+                    skipped += 1
+        return IngestReport(inserted=inserted, skipped=skipped)
+
+    def _write_one(self, point: DividendPoint) -> bool:
+        """返回 True 表示这一行是新写入的，False 表示本来就在库里且值相同。"""
+        key = _dividend_primary_key(point)
+        existing = _run(self.conn, SQL_SELECT_DIVIDEND_EXISTING, key, "按主键查现有分红行")
+        if existing:
+            _raise_if_dividend_divergent(point, existing[0])
+            return False
+        written = _run(
+            self.conn, SQL_UPSERT_DIVIDEND, _dividend_insert_params(point), "写入分红"
+        )
+        if written:
+            return True
+        # 与另两张表同一条推理（见 `PgBarIngestor._write_one`）：
+        # upsert 没返回行 ⇒ 只能是并发写者在这一瞬间插进去的同一主键。
+        again = _run(self.conn, SQL_SELECT_DIVIDEND_EXISTING, key, "并发写入后复查（分红）")
+        if not again:
+            raise DataStoreError(
+                "主键 %s 的分红 upsert 既没返回行、复查也查不到 —— 驱动/事务语义与预期不符，"
+                "不能当作成功" % (key,)
+            )
+        _raise_if_dividend_divergent(point, again[0], concurrent=True)
         return False
 
 

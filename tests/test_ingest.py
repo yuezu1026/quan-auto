@@ -42,10 +42,11 @@ from datetime import date, datetime
 import pandas as pd
 import pytest
 
-from quanauto.datacenter import AdjustFactorPoint, DailyBar
+from quanauto.datacenter import AdjustFactorPoint, DailyBar, DividendPoint
 from quanauto.datasources import (
     ADJUST_FACTOR_COLUMNS,
     DAILY_BAR_COLUMNS,
+    DIVIDEND_COLUMNS,
     SourceAdapter,
     validate_frame,
 )
@@ -60,6 +61,7 @@ from quanauto.errors import (
 )
 from quanauto.ingest import (
     DAILY_CHANNEL,
+    DIVIDEND_CHANNEL,
     FACTOR_CHANNEL,
     INGEST_PRIORITIES,
     INGEST_STATUSES,
@@ -69,8 +71,14 @@ from quanauto.ingest import (
     IngestRunLog,
     ingest_adjust_factors,
     ingest_daily_bars,
+    ingest_dividends,
 )
-from quanauto.pgstore import IngestReport, PgBarIngestor, PgFactorIngestor
+from quanauto.pgstore import (
+    IngestReport,
+    PgBarIngestor,
+    PgDividendIngestor,
+    PgFactorIngestor,
+)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DC_DDL_REL = os.path.join("db", "data_center.sql")
@@ -78,6 +86,9 @@ DC_DDL_REL = os.path.join("db", "data_center.sql")
 START = date(2026, 1, 5)
 END = date(2026, 1, 6)
 VERSION = "v2026-01-06"
+
+#: 分红夹具的公告日：**早于** `ex_date`（DDL 的 CHECK 就是这个方向）。
+ANNOUNCE = date(2025, 12, 22)
 
 INSERT_COLUMNS_RE = re.compile(r"INSERT INTO (\w+)\s*\(([^)]*)\)")
 
@@ -102,9 +113,10 @@ def _insert_columns(sql: str) -> tuple:
 
 
 class FakeConn:
-    """按列语义记账的假连接：`dc_ingest_run` / `dc_daily_bar` / `dc_adjust_factor`。
+    """按列语义记账的假连接：`dc_ingest_run` / `dc_daily_bar` / `dc_adjust_factor` /
+    `dc_dividend`。
 
-    三张表都是「主键 → 本文」的字典，于是「重跑同一批 ⇒ 全部 skipped」与「同主键异值
+    四张表都是「主键 → 本文」的字典，于是「重跑同一批 ⇒ 全部 skipped」与「同主键异值
     ⇒ 冲突」这两条不需要任何脚本就能自然发生 —— 它们本来就该由数据决定，而不是由
     「第几次调用该返回什么」决定。
 
@@ -118,6 +130,7 @@ class FakeConn:
         self.runs: dict = {}
         self.bars: dict = {}
         self.factors: dict = {}
+        self.dividends: dict = {}
         self.break_sql = tuple(break_sql)
         self._next_run_id = 1
 
@@ -163,12 +176,25 @@ class FakeConn:
                 self.factors[key] = dict(values)
             return [{"symbol": values["symbol"]}]
 
+        if flat.startswith("INSERT INTO dc_dividend"):
+            values = dict(zip(_insert_columns(flat), params))
+            # 主键的日期列是 `ex_date`（事件日），不是 `trade_date` —— 与日线/因子表
+            # 在**键的形状**上不同，抄错就会让「同键异值」永远撞不上。
+            key = (values["symbol"], values["ex_date"], values["data_version"])
+            if key not in self.dividends:
+                self.dividends[key] = dict(values)
+            return [{"symbol": values["symbol"]}]
+
         if flat.startswith("SELECT open, high, low, close, volume, amount"):
             row = self.bars.get(tuple(params))
             return [dict(row)] if row else []
 
         if flat.startswith("SELECT adjust_factor"):
             row = self.factors.get(tuple(params))
+            return [dict(row)] if row else []
+
+        if flat.startswith("SELECT announce_date, cash_per_share"):
+            row = self.dividends.get(tuple(params))
             return [dict(row)] if row else []
 
         raise AssertionError("假连接收到没预期的 SQL：%s" % flat)
@@ -196,6 +222,8 @@ class FakeConn:
                 kinds.append("bar")
             elif flat.startswith("INSERT INTO dc_adjust_factor"):
                 kinds.append("factor")
+            elif flat.startswith("INSERT INTO dc_dividend"):
+                kinds.append("dividend")
             else:
                 kinds.append("select")
         return kinds
@@ -210,11 +238,12 @@ class FakeAdapter(SourceAdapter):
     """离线适配器：`fetch_*` 返回固定的帧，`validate` 走**真的** `validate_frame`。"""
 
     def __init__(self, frame=None, *, name="fake", daily_error=None, factor_error=None,
-                 probe=None) -> None:
+                 dividend_error=None, probe=None) -> None:
         self._frame = frame
         self._name = name
         self._daily_error = daily_error
         self._factor_error = factor_error
+        self._dividend_error = dividend_error
         self._probe = probe
         self.fetches: list = []
         self.validated: int = 0
@@ -238,6 +267,13 @@ class FakeAdapter(SourceAdapter):
         self._check_probe()
         if self._factor_error is not None:
             raise self._factor_error
+        return self._frame
+
+    def fetch_dividend(self, symbols, start, end):
+        self.fetches.append(("dividend", tuple(symbols), start, end))
+        self._check_probe()
+        if self._dividend_error is not None:
+            raise self._dividend_error
         return self._frame
 
     def fetch_financial(self, symbols, period_end):
@@ -270,6 +306,25 @@ def factor_frame(symbols=("600000.SH",), days=(date(2026, 1, 5),), factor=1.0):
     rows = [{"symbol": symbol, "trade_date": day, "adjust_factor": factor}
             for symbol in symbols for day in days]
     return pd.DataFrame(rows, columns=list(ADJUST_FACTOR_COLUMNS))
+
+
+def dividend_frame(symbols=("600000.SH",), days=(date(2026, 1, 5),), cash=0.35):
+    """合法分红帧（4 列标准列）。
+
+    `announce_date` 一律早于 `ex_date`（`ck_dc_dividend_announce_not_after_ex` 就是这个
+    方向）—— 夹具故意把两列**分开**写，因为「拿公告日还是拿事件日当可见性依据」正是这张表
+    存在的理由，用同一个日期做夹具会把那个区分抹掉。
+    """
+    rows = [{"symbol": symbol, "ex_date": day, "announce_date": ANNOUNCE,
+             "cash_per_share": cash}
+            for symbol in symbols for day in days]
+    return pd.DataFrame(rows, columns=list(DIVIDEND_COLUMNS))
+
+
+def bad_cash_frame():
+    frame = dividend_frame()
+    frame.loc[0, "cash_per_share"] = -0.01
+    return frame
 
 
 def bad_price_frame():
@@ -821,8 +876,14 @@ def test_ingest_run_row_count_and_complete_are_derived_not_stored():
 
 
 def test_the_channels_have_names_so_the_log_message_is_readable():
-    assert DAILY_CHANNEL and FACTOR_CHANNEL
-    assert DAILY_CHANNEL != FACTOR_CHANNEL
+    """三条通道的名字两两不同 —— 判据是**两两**，不是「不等于第一个」。
+
+    只断言 `DAILY != FACTOR` 的话，第三条通道叫成两者之一也会全绿，而日志里
+    「取回的日线帧没通过校验」就会指向另一张表。
+    """
+    names = (DAILY_CHANNEL, FACTOR_CHANNEL, DIVIDEND_CHANNEL)
+    assert all(names), "通道名不能为空：%r" % (names,)
+    assert len(set(names)) == len(names), "通道名撞了：%r" % (names,)
 
 
 def test_adjust_factor_rows_are_the_factor_dataclass(monkeypatch):
@@ -842,3 +903,121 @@ def test_adjust_factor_rows_are_the_factor_dataclass(monkeypatch):
     assert isinstance(row, AdjustFactorPoint)
     assert row.source == "fake" and row.data_version == VERSION
     assert row.adjust_factor == 1.0
+
+
+# ── 10. 第三条通道：分红（2026-10-01，附录 B22）──────────────────────────────
+# 同样的判据在第三条通道上各来一遍。只覆盖日线/因子两条，会把「分红这条通道到
+# 底有没有被真的接上」留在零覆盖里 —— 而它正是本轮新增的那件事。
+#
+# 与另两条通道的差别一共四处，全部各有一条用例钉着：
+#   ① 主键的日期列是 `ex_date`（事件日）而不是 `trade_date` ⇒ 键的形状要单独断言
+#      （抄日线的 `trade_date` 会让「同键异值」永远撞不上）；
+#   ② 判等列是**两列**（`announce_date` + `cash_per_share`）⇒ 改公告日也算冲突，
+#      这是本表与因子表在判等形状上的唯一区别；
+#   ③ 行对象是 `DividendPoint`（4 个帧标准列 + 本层盖的两个戳）；
+#   ④ 写入口是 `PgDividendIngestor.upsert_dividends`。
+def test_dividend_channel_writes_the_dividend_table():
+    conn = FakeConn()
+    adapter = FakeAdapter(dividend_frame())
+    run = ingest_dividends(adapter, ["600000.SH"], START, END,
+                           conn=conn, data_version=VERSION)
+
+    assert run.status == "SUCCESS"
+    assert (run.inserted, run.skipped, run.row_count) == (1, 0, 1)
+    assert conn.bars == {} and conn.factors == {}, "分红这条路不许顺手写别的表"
+    assert len(conn.dividends) == 1
+    key, row = next(iter(conn.dividends.items()))
+    assert key == ("600000.SH", START, VERSION), \
+        "主键的日期列必须是 ex_date（事件日），实际键：%r" % (key,)
+    assert row["announce_date"] == ANNOUNCE, "公告日原样落库，不许在库里被推导成别的日子"
+    assert row["source"] == "fake" and row["data_version"] == VERSION
+    assert adapter.fetches[0] == ("dividend", ("600000.SH",), START, END), \
+        "走的必须是 fetch_dividend，且采集窗口原样传下去，实际：%r" % (adapter.fetches,)
+    assert conn.sql_kinds().count("dividend") == 1
+
+
+def test_a_bad_dividend_value_writes_nothing_and_marks_the_run_failed():
+    """负的现金分红（`ck_dc_dividend_cash_nonneg`）—— 校验门在分红帧上同样生效。"""
+    conn = FakeConn()
+    adapter = FakeAdapter(bad_cash_frame())
+    with pytest.raises(DataQualityError) as excinfo:
+        ingest_dividends(adapter, ["600000.SH"], START, END, conn=conn,
+                         data_version=VERSION)
+    assert "ck_dc_dividend_cash_nonneg" in str(excinfo.value), \
+        "异常里应当带上校验器给出的原因，实际：%s" % (excinfo.value,)
+    assert conn.dividends == {}, "校验没过却写了分红：%r" % (conn.dividends,)
+    assert conn.only_run()["status"] == "FAILED"
+    assert adapter.validated == 1, "校验器根本没被调用 ⇒ 上面那条判据是空转的"
+
+
+def test_the_same_dividend_batch_twice_is_idempotent():
+    conn = FakeConn()
+    first = ingest_dividends(FakeAdapter(dividend_frame()), ["600000.SH"], START, END,
+                             conn=conn, data_version=VERSION)
+    before = dict(conn.dividends)
+    second = ingest_dividends(FakeAdapter(dividend_frame()), ["600000.SH"], START, END,
+                              conn=conn, data_version=VERSION)
+
+    assert (first.inserted, first.skipped) == (1, 0)
+    assert (second.inserted, second.skipped) == (0, 1)
+    assert conn.dividends == before, "第二遍不该改到库里的行"
+    assert conn.runs[2]["status"] == "SUCCESS"
+
+
+def test_a_changed_announce_date_on_the_same_key_is_a_conflict_too():
+    """改**公告日**也算冲突：这是分红表与因子表在判等形状上的唯一区别。
+
+    只比 `cash_per_share` 的实现会在这里放行，库内那行的公告日就与源永久不一致了 ——
+    而「公告日写错了」正是最常见的一次重采理由。
+    """
+    conn = FakeConn()
+    ingest_dividends(FakeAdapter(dividend_frame()), ["600000.SH"], START, END,
+                     conn=conn, data_version=VERSION)
+    before = dict(conn.dividends)
+
+    later = dividend_frame()          # 现金一个数没变
+    later.loc[0, "announce_date"] = date(2026, 1, 2)
+    with pytest.raises(IngestConflictError) as excinfo:
+        ingest_dividends(FakeAdapter(later), ["600000.SH"], START, END,
+                         conn=conn, data_version=VERSION)
+
+    assert "announce_date" in str(excinfo.value), \
+        "冲突消息里应当指出是公告日对不上，实际：%s" % (excinfo.value,)
+    assert conn.dividends == before, "冲突批次不许改到已有行"
+    assert conn.runs[2]["status"] == "FAILED"
+
+
+def test_a_changed_cash_per_share_on_the_same_key_is_a_conflict():
+    conn = FakeConn()
+    ingest_dividends(FakeAdapter(dividend_frame(cash=0.35)), ["600000.SH"], START, END,
+                     conn=conn, data_version=VERSION)
+    with pytest.raises(IngestConflictError):
+        ingest_dividends(FakeAdapter(dividend_frame(cash=0.99)), ["600000.SH"], START,
+                         END, conn=conn, data_version=VERSION)
+    assert conn.runs[2]["status"] == "FAILED"
+
+
+def test_dividend_rows_are_the_dividend_dataclass(monkeypatch):
+    """行对象 = 「帧里的 4 个标准列」+「本层盖的两个戳」，与 `test_the_row_objects_...`
+    用的是同一个形状判据。"""
+    conn = FakeConn()
+    seen = {}
+    real = PgDividendIngestor.upsert_dividends
+
+    def spy(self, rows):
+        seen["rows"] = list(rows)
+        return real(self, rows)
+
+    monkeypatch.setattr(PgDividendIngestor, "upsert_dividends", spy)
+    ingest_dividends(FakeAdapter(dividend_frame()), ["600000.SH"], START, END,
+                     conn=conn, data_version=VERSION)
+
+    assert len(seen["rows"]) == 1
+    row = seen["rows"][0]
+    assert isinstance(row, DividendPoint) and row.__class__ is DividendPoint
+    assert (row.symbol, row.ex_date, row.announce_date) == ("600000.SH", START, ANNOUNCE)
+    assert row.cash_per_share == 0.35
+    assert row.source == "fake" and row.data_version == VERSION
+    assert {field.name for field in DividendPoint.__dataclass_fields__.values()} == \
+        set(DIVIDEND_COLUMNS) | {"source", "data_version"}, \
+        "DividendPoint 的字段清单与帧的标准列不再一一对应"

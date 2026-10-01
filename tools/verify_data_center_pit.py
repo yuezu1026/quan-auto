@@ -18,9 +18,12 @@ Why a second, structural check is needed at all:
   `record_access` call. Existing pytest cases cannot see either degeneration. Only an
   AST check can.
 
-Detectors (each fires independently; `--selftest` has one MUT sample per detector, **three**
-P3 samples -- one per store seam plus one that keeps a `record_access` alive for the wrong
-field -- one "extraction is empty" sample, and one clean synthetic sample):
+Detectors (each fires independently; `--selftest` has one MUT sample per detector, one P3
+sample per store seam -- four seams, with `select_symbols` sharing the bar sample and the
+factor + dividend seams each also getting a "kept the call, changed the field" sample --
+one "extraction is empty" sample, and one clean synthetic sample. Take the sample count
+from a run, not from this line: it went from four to eight without anything here going
+red, which is the GATE-COUNT rot in miniature):
 
   P1  STRUCT-NO-AS-OF-ON-FEED
       No *query* method of `DataFeed` or a subclass may declare a parameter named
@@ -123,7 +126,14 @@ DATE_PARAMS = ('datetime', 'start', 'end')
 # name absent here, **P3 could not see that read at all** -- the gate stayed green whether or
 # not the factor rows went through `record_access`. A guard that does not know about the new
 # seam reports "nothing to guard".
-STORE_READERS = ('select_bars', 'select_symbols', 'select_factors')
+#
+# `select_dividends` was added 2026-10-01 with the dividend read path (附录 B22), and it is
+# the third time the same hole would have opened: without the name here, `_select_dividends`
+# could drop its `record_access` and P3 would still print `0 issue(s)`. It is also the seam
+# where "which field" is easiest to get wrong, because the row carries **two dates** -- the
+# window uses `ex_date` while the guard must be told `announce_date`, so a copy-paste of the
+# bar seam (`trade_date`) is a live possibility, not a contrived one. See NEG3d / NEG3e.
+STORE_READERS = ('select_bars', 'select_symbols', 'select_factors', 'select_dividends')
 
 # Every store seam => the `field` values that count as "this seam's guard". Two spellings
 # per seam on purpose: the real modules pass a **constant** (`BAR_FIELD`), while the
@@ -148,7 +158,13 @@ SEAM_FIELDS = {
     'select_bars': ('BAR_FIELD', 'bar'),
     'select_symbols': ('BAR_FIELD', 'bar'),
     'select_factors': ('FACTOR_FIELD', 'adjust_factor'),
+    'select_dividends': ('DIVIDEND_FIELD', 'cash_per_share'),
 }
+# `select_dividends` -> `cash_per_share`: the field is the **amount column**, not the date.
+# `DbDataFeed._select_dividends` calls `record_access(row.symbol, row.announce_date,
+# DIVIDEND_FIELD)` -- the date argument is `announce_date` (D4: visibility follows the
+# announcement) while the *window* on the store is `ex_date` (the event day). Neither of
+# those two dates belongs in this tuple: a seam is paired with the field it READS.
 
 STAT_KEYS = ('scanned_modules', 'feed_classes', 'pit_feeds', 'unbounded_feeds',
              'feed_methods', 'feed_instantiations', 'store_touchers', 'date_takers',
@@ -785,6 +801,47 @@ def selftest():
             print('  [NEG3c-factor-guard-wrong-field] keeps all %d record_access call(s); '
                   'only the field changed' % live)
         scenario('NEG3c-factor-guard-wrong-field', feed, bad, 'P3', extras)
+
+    # P3, third seam: the dividend read path (2026-10-01, 附录 B22). Same shape as NEG3b --
+    # delete the DIVIDEND_FIELD `record_access` and `_select_dividends` is reachable from no
+    # guarded method. The sample exists for the reason the factor one does: the seams are
+    # disjoint, so a mutation here cannot be seen by the bar/factor samples, and without a
+    # sample of its own this seam would be registered but unproven.
+    bad = _mutate(center,
+                  '            self.pit_guard.record_access(row.symbol, row.announce_date, '
+                  'DIVIDEND_FIELD)\n',
+                  '            pass  # MUT: dividend read is no longer guarded\n',
+                  'NEG3d-dividend-guard-unwired')
+    if bad is None:
+        ok = False
+    else:
+        scenario('NEG3d-dividend-guard-unwired', feed, bad, 'P3', extras)
+
+    # P3, dividend seam, wrong field: the row has TWO dates and the guard must be told the
+    # announcement one. This sample keeps the call and records the bar field instead, which
+    # is what a copy-paste of the bar seam produces. It has to go red on the field question
+    # specifically: `BAR_FIELD` is a live guard for a *different* seam, so a detector asking
+    # "did this path reach any record_access" answers YES and stays green.
+    bad = _mutate(center,
+                  '            self.pit_guard.record_access(row.symbol, row.announce_date, '
+                  'DIVIDEND_FIELD)\n',
+                  '            self.pit_guard.record_access(row.symbol, row.announce_date, '
+                  'BAR_FIELD)  # MUT: right call, wrong field\n',
+                  'NEG3e-dividend-guard-wrong-field')
+    if bad is None:
+        ok = False
+    else:
+        live = bad.count('record_access')
+        if live != center.count('record_access'):
+            print('  [NEG3e-dividend-guard-wrong-field] HARNESS-FAIL: record_access calls '
+                  '%d -> %d -- this sample must keep every guard call and change only the '
+                  'field one of them records'
+                  % (center.count('record_access'), live))
+            ok = False
+        else:
+            print('  [NEG3e-dividend-guard-wrong-field] keeps all %d record_access call(s); '
+                  'only the field changed' % live)
+        scenario('NEG3e-dividend-guard-wrong-field', feed, bad, 'P3', extras)
 
     # P4: layer 1 unwired on one public method.
     bad = _mutate(center,

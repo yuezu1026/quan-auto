@@ -22,6 +22,7 @@ I2 的 DoD 那条「构造一条 `available_date > as_of_date` 的数据，确�
 
 from __future__ import annotations
 
+import os
 from datetime import date, datetime
 from typing import List
 
@@ -31,18 +32,24 @@ from quanauto.datacenter import (
     AdjustFactorPoint,
     DailyBar,
     DbDataFeed,
+    DividendPoint,
     InMemoryBarStore,
     InMemoryDataCenter,
+    InMemoryDividendStore,
     InMemoryFactorStore,
     LeakagePoint,
     SessionMode,
 )
+from quanauto.datafeed import CsvDataFeed
 from quanauto.enums import AdjustType, FillPolicy, MarketStatus
 from quanauto.errors import DataNotAvailableError, DataVersionError, FutureDataAccessError
 
 SYMBOL = "600000.SH"
 OTHER = "000001.SZ"
 VERSION = "v2026.09.23"
+
+#: 本文件里唯一一处「另一条实现体」：用来把 D9（同一协议两条实现体同口径）变成断言。
+CSV_FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "sample_prices.csv")
 
 VISIBLE = date(2026, 1, 2)  # 早于 as_of，必须可见
 MISSING = date(2026, 1, 3)  # 落在区间里但库里没有 —— 用来证明"空"和"被挡住"不是一回事
@@ -342,8 +349,15 @@ def test_default_data_version_is_the_active_one():
 # ⇒ 开着的**只剩一半**：分红（就是下面 `get_dividend` 那条）。**「缺口没关」这句话本身继续成立。**
 # ⚠️ 它只主张「调用点接上了」：`quanauto/cli.py` 没开采集子命令、这条路径在任何真实 PostgreSQL 上没跑过。
 #
-# 另一半（`get_dividend` 仍恒 0.0）改由文件末尾那条单独的用例钉住 —— 同一条测试里
-# 钉着两件事，其中一件关闭时只能拆开，不能整条留着也不能整条删掉。
+# **订正（2026-10-01，I2 收口 ①ⓐ「分红读取」）**：上面那「只剩一半」里的**分红那一半也关了** ——
+# `DbDataFeed.get_dividend()` 从 `dc_dividend` 真的读库（缺行 / 缺源都返回 `0.0`，与主契约
+# §2.2.1 的 `CsvDataFeed` 同口径，理由见附录 B22.3）⇒ **I2 收口条件① 的三条到这里全关**
+# （复权价 2026-09-29 晚 Ⅱ、写入路径 2026-09-30、分红今天）。
+# ⇒ 照原先写好的收尾命令，那一条「另一半」的用例 `test_known_gap_dividend_is_still_zero`
+# 在这里**删除**（不是把期望值改成新数），新行为的判据在文件末尾那一组。
+# ⚠️ 「①全关」**不是**「I2 收工」：②（各通道「哪些位置已实测、哪些仍是推断」的未确认
+# 清单）照旧开着；而且分红**读得出来** ≠ 引擎在绩效里**计**分红（`quanauto/engine.py`
+# 一行没动，附录 B22.2）。
 
 
 def _factor_rows():
@@ -461,21 +475,12 @@ def test_factor_read_is_guarded_by_pit_too():
     )
 
 
-# ── 已知缺口：钉住，不让它悄悄变成「看起来对」（复权价那半）────────────────
-
-
-def test_known_gap_dividend_is_still_zero():
-    """⚠️ 这条**故意**断言一个「还没实现」的结果：分红数据源没接，`get_dividend` 恒 0.0。
-
-    它从原先那条 `test_known_gap_hfq_factor_is_identity_in_s1` 里**拆**出来：那条同时钉着
-    「HFQ 因子恒 1.0」与「分红恒 0.0」，前一件已关闭 ⇒ 整条留着会锁住一个已经正确的实现，
-    整条删掉则会让后一件失去警钟。
-
-    触发条件与原先一致，只认**产物**（`get_dividend` 不再恒 0.0），不认「哪一层接了」——
-    直接删掉这条测试，不要先把期望值改成新数再当成一条通过的测试留着。
-    """
-    feed = _feed()
-    assert feed.get_dividend(SYMBOL, datetime(2026, 1, 5)) == 0.0
+# ── （原「已知缺口：分红恒 0.0」那一条已于 2026-10-01 删除）─────────────────
+#
+# `test_known_gap_dividend_is_still_zero` 就在这里。它**故意**断言 `get_dividend` 恒 0.0，
+# 并写明自己的收尾命令是「直接删掉这条测试，不要先把期望值改成新数」。缺口已关 ⇒ 照命删掉。
+# 分红现在的判据在文件末尾那一组 `test_dividend_*`：钉的是**新**行为 —— `0.0` 只在
+# 「库里没有那一天的行」与「本 feed 没接分红源」两种情形下出现。
 
 
 # ── 复权价读数：D6 第二句「读取时按 as_of_date 现算」（2026-09-29 晚 · I2 收口）──
@@ -602,3 +607,139 @@ def test_qfq_over_the_same_view_is_relative_to_the_last_visible_factor():
     assert qfq_first == pytest.approx(9.9 / 1.25, rel=1e-12)
     assert qfq_first != hfq_first, "QFQ 与 HFQ 在这个视图里不是同一个数"
     assert qfq_first / qfq_last == pytest.approx(hfq_first / hfq_last, rel=1e-12)
+
+
+# ── D4 读侧：分红真的从存储里读出来（I2 收口 ①ⓐ，2026-10-01）────────────────
+#
+# 与上面两组同一条思路：`get_dividend` 的返回值只在**真的查了库**时才有意义。
+# 这一组的探针各钉一件事：
+#   * `_feed_with_dividends()`（接线完整）—— 有那一天的行 ⇒ 返回那一行的值（逐日不同）；
+#   * `InMemoryDividendStore([一行别的日子])` —— 那一天没行 ⇒ `0.0`；
+#   * `dividend_store=None` —— 压根没接 ⇒ 同样 `0.0`，且与 `CsvDataFeed` **同口径**（D9）；
+#   * `LyingDividendStore`（窗口过滤坏了）—— 守卫必须炸，且按 `announce_date` 判可见性。
+# ⚠️ 「`0.0`」在这一组里出现三次而含义不同：**那一天没有事件** / **本 feed 没接源**。
+# 两者返回值相同是**有意的决定**（附录 B22.3 那张表：分红是稀疏事件流，"没有"是常态），
+# 与 `get_adjustment_factor` 缺行抛 DATA_001 **刻意不对称**。
+
+#: 除权除息日 = `as_of` 当天 ⇒ 这一次事件必须可见。
+DIVIDEND_EX = ON_AS_OF
+#: 公告日早于除权日（DDL 的 `ck_dc_dividend_announce_not_after_ex` 就是这个方向）。
+DIVIDEND_ANNOUNCE = VISIBLE
+#: 一次**未来**的除权：除权日与公告日都在 `as_of` 之后。两列**故意不相等** ——
+#: 相等的话，「守卫记的是公告日还是除权日」就断言不出来了。
+FUTURE_EVENT = date(2026, 1, 9)
+FUTURE_ANNOUNCE = date(2026, 1, 6)
+
+
+def _dividend_rows() -> List[DividendPoint]:
+    """两次可见事件（0.12 / 0.35，值不同 ⇒ 能抓「恒返回第一个值」）+ 一次未来事件。"""
+    return [
+        DividendPoint(SYMBOL, VISIBLE, DIVIDEND_ANNOUNCE, 0.12,
+                      source="fixture", data_version=VERSION),
+        DividendPoint(SYMBOL, DIVIDEND_EX, DIVIDEND_ANNOUNCE, 0.35,
+                      source="fixture", data_version=VERSION),
+        DividendPoint(SYMBOL, FUTURE_EVENT, FUTURE_ANNOUNCE, 9.99,
+                      source="fixture", data_version=VERSION),
+    ]
+
+
+def _feed_with_dividends(rows=None, **kwargs) -> DbDataFeed:
+    return _feed(
+        dividend_store=InMemoryDividendStore(_dividend_rows() if rows is None else rows),
+        **kwargs
+    )
+
+
+class LyingDividendStore(InMemoryDividendStore):
+    """`select_dividends` 忽略窗口的分红存储 —— 与 `LyingBarStore` 同一个故障模型。"""
+
+    def select_dividends(self, symbol: str, start: date, end: date) -> List[DividendPoint]:
+        return sorted((r for r in self.rows if r.symbol == symbol), key=lambda r: r.ex_date)
+
+
+def test_dividend_without_a_dividend_store_returns_zero_like_the_csv_feed():
+    """🔴 没接分红源 ⇒ `0.0`，**不抛** —— 这条把「同一协议两条实现体同口径」钉住（D9）。
+
+    主契约 §2.2.1 的参考实现 `CsvDataFeed` 在「没有 symbol / 没有这一天 / 没有 `dividend`
+    列」三种情形下一律 `return 0.0`，**从不抛**（本仓库的 `CsvDataFeed.get_dividend` 逐字同形）。
+    库侧若在"没接源"时抛 DATA_001，同一个 `DataFeed` 协议就会在"分红数据不存在"这件事上
+    分裂成两种行为，调用方只能按实现类分别写代码 —— 那正是 D9 要消掉的东西。
+
+    所以这条**两边都断言**：库侧没接源时给 `0.0`，CSV 侧没有 `dividend` 列时也 `0.0`。
+    只断言一边时，"两边同口径"只是一句话。
+    """
+    feed = _feed(dividend_store=None)   # 显式指名"接线不完整"那个形态，不靠默认值撞上
+    assert feed.dividend_store is None, "这条要的恰恰是没接源那一支，夹具换了它就该红"
+    assert feed.get_dividend(SYMBOL, datetime(2026, 1, 5)) == 0.0
+
+    csv_feed = CsvDataFeed(CSV_FIXTURE)  # 夹具里**没有** `dividend` 列
+    assert csv_feed.get_dividend(OTHER, datetime(2024, 1, 2)) == 0.0, (
+        "两条实现体必须同口径：CSV 侧不抛，库侧也不许抛"
+    )
+
+
+def test_dividend_with_a_store_that_has_no_row_for_that_day_returns_zero():
+    """存储接上了、那一天**没有分红行** ⇒ `0.0`（不是报错，也不是拿别的日子顶）。
+
+    带控制样本（同一条 feed 上有行的那一天必须给真值）：只测"该给 0 的给了 0"会把一个
+    「整条通道没接上」的实现也判成 PASS —— 而本条要说的恰恰是"接上了、这一天没有"。
+    """
+    rows = [DividendPoint(SYMBOL, DIVIDEND_EX, DIVIDEND_ANNOUNCE, 0.35,
+                          source="fixture", data_version=VERSION)]
+    feed = _feed_with_dividends(rows=rows)
+    assert feed.dividend_store is not None, "这一支必须是「接上了」那个形态"
+    assert feed.get_dividend(SYMBOL, datetime(2026, 1, 3)) == 0.0, (
+        "MISSING 那天库里没有分红行 ⇒ `0.0`，而不是 DATA_001"
+    )
+    assert feed.get_dividend(SYMBOL, datetime(2026, 1, 5)) == 0.35, (
+        "同一条 feed 在有行的那天必须给真值：否则上面那个 0.0 也可以解释成「整条没接」"
+    )
+
+
+def test_dividend_reads_the_real_cash_per_share_per_event_day():
+    """控制样本 + 防空转：真读到那一天的值（0.12 / 0.35），且是**逐日**查的。
+
+    "恒返回第一个值"与"按窗口取"在只有一次事件的夹具上给出同一个数；两个不同日子各给
+    一个不同的非零值 + 一个没有事件的日子给 `0.0`，三件事合起来才能排除它们。
+    """
+    feed = _feed_with_dividends()
+    assert feed.get_dividend(SYMBOL, datetime(2026, 1, 2)) == 0.12
+    assert feed.get_dividend(SYMBOL, datetime(2026, 1, 5)) == 0.35
+    assert feed.get_dividend(SYMBOL, datetime(2026, 1, 3)) == 0.0  # 中间那天没有事件
+
+
+def test_dividend_read_is_guarded_by_pit_too():
+    """分红读取也在 PIT 面上：存储忽略窗口 ⇒ 守卫必须炸，且**按公告日**判可见性。
+
+    "拿除权日还是拿公告日当可见性依据"不是学术问题：拿除权日判，会在公告日**晚于**
+    `as_of` 时放过一次真实的未来函数（那条分红当时还没公告）。所以夹具里那一天的两列
+    **故意不相等**（除权 1/9 / 公告 1/6），断言泄露点的日期**正是公告日** —— 实现里两个
+    都写对了这一条才绿。
+
+    这条对应 `tools/verify_data_center_pit.py` 里那条**静态**判据（分红读取也要被守卫
+    点名）；静态判据管「有没有写」，这条管「写了到底拦不拦得住」。
+    """
+    feed = _feed(dividend_store=LyingDividendStore(_dividend_rows()))
+    with pytest.raises(FutureDataAccessError) as excinfo:
+        feed.get_dividend(SYMBOL, datetime(2026, 1, 5))
+    assert excinfo.value.code == "DATA_002"
+    points = feed.pit_guard.leakage_points()
+    assert [p.trade_date for p in points] == [FUTURE_ANNOUNCE], (
+        "记的必须是**公告日**（D4 的可见性依据），不是除权日 %s" % (FUTURE_EVENT,)
+    )
+    assert points[0].field == "cash_per_share", (
+        "分红是**单列**读取 ⇒ field 记真实列名（`DIVIDEND_FIELD`），不是日线那个整行的 'bar'"
+    )
+
+
+def test_dividend_rejects_a_point_after_as_of():
+    """`_require_visible` 在**最前面**：问一句"那一天的分红是多少"本身就是一次未来访问。
+
+    夹具里 1/9 那一天**真的有行** ⇒ 这一条同时证明它在问库**之前**就拒了（拿"库里没这一行"
+    当解释的实现会在这里返回 0.0）。后半句是控制样本：同一条 feed 在可见日照常给价。
+    """
+    feed = _feed_with_dividends()
+    with pytest.raises(FutureDataAccessError) as excinfo:
+        feed.get_dividend(SYMBOL, datetime(2026, 1, 9))
+    assert excinfo.value.code == "DATA_002"
+    assert feed.get_dividend(SYMBOL, datetime(2026, 1, 5)) == 0.35

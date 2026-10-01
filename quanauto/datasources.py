@@ -76,6 +76,13 @@
 不做正确性依赖**：`period_end` 在归一化之后**仍然**筛一遍（见 `fetch_financial`），
 请求侧那份过滤哪天被源静默忽略，结果也不会多一行。
 
+**tushare 的两张映射表（`TUSHARE_ADJ_FACTOR` / `TUSHARE_DIVIDEND`）同样没被真调用过**
+（本机没有 `TUSHARE_TOKEN`，也不装 SDK）⇒ 它们的**键名照源文档写**，
+`TUSHARE_DIVIDEND` 里 `ann_date` → `announce_date`、`cash_div_tax` → `cash_per_share`
+两格尤其只是**读文档得出的口径**（税前/税后两列长得像，取错不报错）。这条与
+`TUSHARE_ADJ_FACTOR` 的地位**完全一样**（B21 也没在真实券源上跑过，见附录 B21.3 末段），
+额度不足/无凭证这件事在 B21/B22 里是同一条边界。
+
 ## 一处契约缺口（本切片不擅自补）
 
 契约 §3.2 的表说 `BaostockAdapter` 覆盖「行情（**含停牌/涨跌停标记**）」「质量标记更全」，
@@ -131,6 +138,13 @@ INDEX_MEMBER_COLUMNS = (
 # （`numeric(18,8)`、`ck_dc_factor_positive`）同义（契约 §2.3 / D6）。
 ADJUST_FACTOR_COLUMNS = ('symbol', 'trade_date', 'adjust_factor')
 
+# 分红：契约 §3.2 的 `fetch_dividend` 把 4 个列名写全了（2026-10-01 追加，附录 B22）。逐字相等。
+# `cash_per_share` 是**每股税前现金分红（元/股）**，不是总额、不是比例、不是股息率；
+# `0` 合法（只送转不派现的预案，`ck_dc_dividend_cash_nonneg` 允许 `>= 0`）。
+# `ex_date` 是**事件日**（也是本条通道的过滤键），`announce_date` 是**唯一合法的可见性依据**
+# （D4）—— 两者不能互相替代，也不能不去区分（见 `dc_dividend` 的三日期形状）。
+DIVIDEND_COLUMNS = ('symbol', 'ex_date', 'announce_date', 'cash_per_share')
+
 # 全量标准列：用来判「泄漏」——任何不在此集合里的列都是源字段名。
 #
 # `ADJUST_FACTOR_COLUMNS` 曾是**刻意排除**在外的（2026-09-29 随附录 B21 落地时）：
@@ -138,8 +152,11 @@ ADJUST_FACTOR_COLUMNS = ('symbol', 'trade_date', 'adjust_factor')
 # 让「校验通过」看起来比实际覆盖的多。**2026-09-29 晩 Ⅳ 判据接上后，排除它的理由
 # 就没了** —— 而继续排除会**把那个误诊重新造出来**：`adjust_factor` 是契约 §3.2
 # 写明的标准列，不在集合里就会被报成「源字段名泄漏到输出列」。
+#
+# `DIVIDEND_COLUMNS` 落地时（2026-10-01）**一次就把判据和它写在一起**（`_CHECK_SPECS`
+# 的 `dividend` 那一支），所以它没有经历过那段「先排除、后补回」的过程。
 STANDARD_COLUMNS = (DAILY_BAR_COLUMNS + FINANCIAL_COLUMNS + INDEX_MEMBER_COLUMNS
-                    + ADJUST_FACTOR_COLUMNS)
+                    + ADJUST_FACTOR_COLUMNS + DIVIDEND_COLUMNS)
 
 # 契约 §3.6.1 的 `ck_dc_fin_report_type`。适配器必须在**写库前**就把源的口径
 # 映射到这个枚举，否则那条第 5 个取值出现时，报错地点会跑到数据库那一层。
@@ -296,9 +313,9 @@ TENCENT_MAX_PAGES = 40
 # 不能靠「反正测试时是对的」。由映射表算出，不手写数字（手写的那个会和表慢慢分家）。
 _TENCENT_MIN_WIDTH = max(int(key) for key in TENCENT_DAILY_BAR) + 1
 
-# tushare pro（`api.tushare.pro`）—— 本仓库第一个**要凭证**的源，本迭代只接复权因子
-# 这一条通道。它是**表外源**（契约 §3.2 那张表上是三个子类，理由见 `TushareAdapter`
-# 的类注释与 DC 契约附录 B21）。
+# tushare pro（`api.tushare.pro`）—— 本仓库第一个**要凭证**的源，本迭代接**两条**通道：
+# 复权因子（`adj_factor`）与分红（`dividend`，2026-10-01 追加）。它是**表外源**（契约 §3.2
+# 那张表上是三个子类，理由见 `TushareAdapter` 的类注释与 DC 契约附录 B21 / B22）。
 # `ts_code` 的形状与标准符号**恰好相同**（`600000.SH`）⇒ 这一格是「改名字」，
 # 不是「换口径」；也正因为它不是标准列名，A2 不会把它当恒等映射放行。
 TUSHARE_API = 'https://api.tushare.pro'
@@ -313,6 +330,26 @@ TUSHARE_ADJ_FACTOR = {
     'ts_code': 'symbol',
     'trade_date': 'trade_date',
     'adj_factor': 'adjust_factor',
+}
+# `dividend` 接口（2026-10-01 追加，附录 B22）。
+#
+# ⚠️ `ann_date` → `announce_date` 与 `cash_div_tax` → `cash_per_share` 两格是**口径**，
+# 不是改名字：
+#   · tushare 同时给 `cash_div`（**税后**）与 `cash_div_tax`（**税前**），契约 §2.3 定的
+#     是**税前** ⇒ 取后者。拿错那一列不会报错，只会让每股派息整体偏小。
+#   · `ex_date` / `ann_date` 都不是标准列名 ⇒ A2 不会把它们当恒等映射放行。
+#
+# ⚠️ **过滤键**：本接口的参数是**按日**的（`ex_date` / `ann_date` / `end_date` 各自是
+# 单个日期），**表达不了区间** ⇒ `start` / `end` 只能落在**本地**（`normalize_dividend`
+# 的区间筛选）。这与 `fetch_financial` 对 `period_end` 的态度是同一条理由（附录 B12：
+# 请求侧过滤只当省流量用，规范化之后**仍然筛一遍**）—— 区别是这里连「请求侧那份」都
+# 不存在，所以本地这一遍是**唯一**的过滤点，不是第二道保险。
+TUSHARE_DIVIDEND_API = 'dividend'
+TUSHARE_DIVIDEND = {
+    'ts_code': 'symbol',
+    'ex_date': 'ex_date',
+    'ann_date': 'announce_date',
+    'cash_div_tax': 'cash_per_share',
 }
 
 EXCHANGES = ('SH', 'SZ', 'BJ')
@@ -579,7 +616,88 @@ def normalize_adjust_factor(
     return frame.loc[:, list(ADJUST_FACTOR_COLUMNS)]
 
 
-# ── 四个 normalize_* 共用的机械步骤 ────────────────────────────────────────────
+def normalize_dividend(
+    raw: pd.DataFrame,
+    column_map: Mapping[str, str],
+    *,
+    symbol: Optional[str] = None,
+    start: Optional[date] = None,
+    end: Optional[date] = None,
+) -> pd.DataFrame:
+    """源分红帧 → 标准帧（只含 `DIVIDEND_COLUMNS`，顺序固定）。2026-10-01 追加（附录 B22）。
+
+    参数:
+        raw: 源返回的原始帧。
+        column_map: 源列名 → 标准列名的映射。
+        symbol: 源不返回 symbol 列时用请求参数回填的标的代码。
+        start / end: 按 **`ex_date`** 的区间（契约 §3.2）。两端都不给 ⇒ **不筛**。
+
+    与 `normalize_adjust_factor` 的关系：同样是「选列 → 转类型」，同样**不做值域判断**
+    （`cash_per_share >= 0` 与 `announce_date <= ex_date` 归 `validate_frame` 与 DDL）。
+    多出来的只有两件，且都不是口径换算：
+
+    * **区间筛选**（`_window_by_ex_date`）：本通道的源接口都是「按单个日期查」，
+      表达不了区间 ⇒ 这一遍是**唯一**的过滤点（见 `TUSHARE_DIVIDEND` 的注释）。
+    * **三个 NOT NULL 列的显式失败**：`ex_date` / `announce_date` / `cash_per_share`
+      在 DDL 里都是 `NOT NULL`。其中 `ex_date` 为空的行由区间筛选天然排除（没有事件日
+      的分红不属于任何 `ex_date` 区间）；**另两列空了就抛** —— 用 `ex_date` 冒充
+      `announce_date`会让未来信息漏进 PIT（D4），而把空的派息当成 `0` 会把一个数据空洞
+      变成「这只票当天没派钱」，两者都是安静错。
+
+    异常:
+        SourceAdapterError: 缺少必需的源列、日期/数值解析不了、或三个 NOT NULL 列
+            里除 `ex_date` 外有空值。
+    """
+    context = '分红归一化'
+    source_required = [src for src, std in column_map.items() if std in DIVIDEND_COLUMNS]
+    frame = _select(raw, column_map, DIVIDEND_COLUMNS, source_required, context)
+    if frame.shape[0] == 0:
+        return _empty(*DIVIDEND_COLUMNS)
+    if 'symbol' not in frame.columns:
+        if symbol is None:
+            raise SourceAdapterError('%s：帧里没有 symbol 列，也没有传 symbol= 回填参数'
+                                     % context)
+        frame['symbol'] = symbol
+    frame['symbol'] = _symbols(frame['symbol'], context)
+    frame['ex_date'] = _to_dates(frame['ex_date'], 'ex_date', context)
+    frame['announce_date'] = _to_dates(frame['announce_date'], 'announce_date', context)
+    frame = _window_by_ex_date(frame, start, end)
+    if frame.shape[0] == 0:
+        return _empty(*DIVIDEND_COLUMNS)
+    _require_present(frame['ex_date'], 'ex_date', context)
+    _require_present(frame['announce_date'], 'announce_date', context)
+    frame['cash_per_share'] = _to_numbers(frame['cash_per_share'], 'cash_per_share', context)
+    _require_present(frame['cash_per_share'], 'cash_per_share', context)
+    return frame.loc[:, list(DIVIDEND_COLUMNS)].reset_index(drop=True)
+
+
+def _window_by_ex_date(frame: pd.DataFrame, start: Optional[date],
+                       end: Optional[date]) -> pd.DataFrame:
+    """把分红帧收到 `[start, end]`（按 **`ex_date`**，契约 §3.2 的过滤键）。
+
+    * 两端都不给 ⇒ **原样返回**（不筛）：调用方没要区间，就不许在这里替它发明一个
+      「默认最近一年」—— 那会让「我没给区间」与「这段真的没有分红」长得一样。
+    * `ex_date` 为空的行**必然落在区间之外**，所以天然被筛掉：源会把**还没实施**的
+      预案也带回来，而那些行没有除权日。⚠️ 这不是「顺手清脏数据」，是同一件事的另一面：
+      一条没有事件日的分红不属于任何 `ex_date` 区间。
+    * 只带一端也行（只要 `start` 或只要 `end`）—— 另一端为 `None` 就那一侧不设限。
+    """
+    if start is None and end is None:
+        return frame
+    mask = []
+    for value in frame['ex_date']:
+        if value is None:
+            mask.append(False)
+        elif start is not None and value < start:
+            mask.append(False)
+        elif end is not None and value > end:
+            mask.append(False)
+        else:
+            mask.append(True)
+    return frame.loc[pd.Series(mask, index=frame.index), :].reset_index(drop=True)
+
+
+# ── 五个 normalize_* 共用的机械步骤 ────────────────────────────────────────────
 # 这些函数只做「机械」的事（选列、转类型、换算），**不做判断**。判断（缺列怎么办、
 # 越界算不算失败）留在调用它的函数里，或者留在 `validate_frame` 里。
 
@@ -680,10 +798,11 @@ def validate_frame(frame: Any) -> ValidationReport:
     **具名 CHECK 约束**（`ck_dc_bar_price_positive` 等），这样「适配器拦下了什么」
     和「数据库会拒掉什么」是同一份规则的两个执行点，而不是两套口径。
 
-    认**四张** schema（日线 / 财务 / 指数成分 / **复权因子**），每一张的判据都写在
+    认**五张** schema（日线 / 财务 / 指数成分 / **复权因子** / **分红**），每一张的判据都写在
     `_CHECK_SPECS` 里 —— 判据是**数据**，所以「哪些规则真的被检查过」可以被打印出来、
     被触发测试逐一打中。复权因子这一张是 2026-09-29 晩 Ⅳ 补上的（DC 契约附录 B21.6）：
     在那之前它走一支显式拒绝的专支（报「判据尚未实现」），**从没被任何判据判过**。
+    分红这一张（2026-10-01）**落地时就带判据**，不是又一个「登记了但没有判据」的 schema。
 
     **空帧不是通过**：0 行意味着没有可校验的东西，`is_valid=False` 并带一条硬错误。
     契约 §2.4 总原则写明「所有『找不到数据』的分支都必须显式失败，不允许返回空集」，
@@ -717,9 +836,10 @@ def validate_frame(frame: Any) -> ValidationReport:
     kind, required, checks = _match_schema(frame.columns)
     if kind is None:
         errors.append('列集合不匹配任何标准 schema（日线 %s / 财务 %s / 成分股 %s / '
-                      '复权因子 %s）：实际 %s'
+                      '复权因子 %s / 分红 %s）：实际 %s'
                       % (list(DAILY_BAR_COLUMNS), list(FINANCIAL_REQUIRED_COLUMNS),
                          list(INDEX_MEMBER_COLUMNS), list(ADJUST_FACTOR_COLUMNS),
+                         list(DIVIDEND_COLUMNS),
                          [str(name) for name in frame.columns]))
         return ValidationReport(is_valid=False, row_count=frame.shape[0], errors=errors,
                                 warnings=warnings, missing_ratio=missing_ratio)
@@ -754,6 +874,13 @@ def validate_frame(frame: Any) -> ValidationReport:
 #: `(symbol, trade_date)` 的重复行真的会被报出来。
 _ADJUST_FACTOR_PRIMARY_KEY = ('symbol', 'trade_date')
 
+#: 分红的**帧级自然键**。同一种形状：`db/data_center.sql` 里是
+#: `pk_dc_dividend PRIMARY KEY (symbol, ex_date, data_version)`，多出来的
+#: `data_version` 由**写入侧**盖戳 ⇒ 帧里能判的只有前两列。
+#: ⚠️ 这里用的是 `ex_date`（**事件日**）而不是 `announce_date`（可见性依据）：
+#: 自然键回答的是「哪一行是同一件事」，同一事件重复公告两次不会变成两条分红。
+_DIVIDEND_PRIMARY_KEY = ('symbol', 'ex_date')
+
 #: 各 schema 的**帧级自然键** = DDL 主键去掉写入侧盖戳的那一列（见上面那条注释）。
 #: 这张表同时是「`validate_frame` **真的判过**哪几类帧」的登记处 —— 每加一项，
 #: `_CHECK_SPECS` 与 `_match_schema` 必须同步加，否则新 schema 会以「无判据」
@@ -763,6 +890,7 @@ _PRIMARY_KEYS = {
     'financial': ('symbol', 'report_type', 'period_end'),
     'index': ('index_code', 'symbol', 'effective_from'),
     'factor': _ADJUST_FACTOR_PRIMARY_KEY,
+    'dividend': _DIVIDEND_PRIMARY_KEY,
 }
 
 #: 校验项写成一列 `(标签, 判据)` 而不是一串 if：判据是**数据**，于是「哪些规则被检查过」
@@ -790,6 +918,12 @@ _CHECK_SPECS = {
     'factor': (
         ('factor-positive', 'adjust_factor 必须 > 0（`ck_dc_factor_positive`）'),
     ),
+    'dividend': (
+        ('dividend-cash-nonneg',
+         'cash_per_share 必须 >= 0（`ck_dc_dividend_cash_nonneg`）'),
+        ('dividend-announce-not-after-ex',
+         'announce_date 必须 <= ex_date（`ck_dc_dividend_announce_not_after_ex`）'),
+    ),
 }
 
 
@@ -798,12 +932,17 @@ def _match_schema(columns: Any):
 
     顺序有意如此：日线的 8 列最具体，先判它不会被财务帧误命中。复权因子放最后 ——
     它的 3 列里有 `adjust_factor`，与前三类的必需列**互不包含**，所以位置不改变结论。
+    分红接在复权因子之后（2026-10-01）：它的 4 列里既无 `report_type` 也无
+    `index_code`、也**不要求** `adjust_factor` ⇒ 与前四类**互不包含**，位置同样不改变结论。
+    「互不包含」这件事是判据，不是感觉：`tools/verify_data_center_adapter.py` 的 A8/A9
+    把三张表（契约列名 / `*_COLUMNS` 常量 / `_PRIMARY_KEYS`）对起来查。
     """
     have = set(map(str, columns))
     for kind, required in (('daily', DAILY_BAR_COLUMNS),
                            ('financial', FINANCIAL_REQUIRED_COLUMNS),
                            ('index', INDEX_MEMBER_COLUMNS),
-                           ('factor', ADJUST_FACTOR_COLUMNS)):
+                           ('factor', ADJUST_FACTOR_COLUMNS),
+                           ('dividend', DIVIDEND_COLUMNS)):
         if set(required) <= have:
             return kind, required, _CHECK_SPECS[kind]
     return None, (), ()
@@ -820,7 +959,7 @@ def _check_dates(frame: pd.DataFrame, kind: str, errors: List[str]) -> None:
         if column not in fields or column not in STANDARD_COLUMNS:
             continue
         if not any(name == column for name in (
-                'trade_date', 'period_end', 'announce_date',
+                'trade_date', 'period_end', 'announce_date', 'ex_date',
                 'effective_from', 'effective_to')):
             continue
         bad = [value for value in frame[column] if value is not None and type(value) is not date]
@@ -904,6 +1043,24 @@ def _violation(frame: pd.DataFrame, tag: str) -> Optional[str]:
         for position, value in enumerate(frame['adjust_factor']):
             if pd.isna(value) or value <= 0:
                 return '第 %d 行 adjust_factor=%r' % (position, value)
+        return None
+    if tag == 'dividend-cash-nonneg':
+        # 与 `daily-price-positive` / `factor-positive` 同一种写法：**NaN 也算违规**。
+        # `dc_dividend.cash_per_share` 是 NOT NULL，帧里的 NaN 落库就是 NULL，一样会被库拒。
+        # ⚠️ 但 `0` **合法**（只送转不派现的预案）—— 所以这里是 `<= 0` 而不是 `< 0` 的**否定**：
+        # 判据是 `value < 0` 才违规，写成「`value <= 0` 算违规」会把契约 §2.3 明写合法的 `0` 误杀。
+        for position, value in enumerate(frame['cash_per_share']):
+            if pd.isna(value) or value < 0:
+                return '第 %d 行 cash_per_share=%r' % (position, value)
+        return None
+    if tag == 'dividend-announce-not-after-ex':
+        for position, (announce, ex_date) in enumerate(
+                zip(frame['announce_date'], frame['ex_date'])):
+            if announce is None or ex_date is None:
+                continue    # NULL 由 DDL 的 NOT NULL 与 normalize_* 的显式失败管
+            if announce > ex_date:
+                return ('第 %d 行 announce_date=%s > ex_date=%s'
+                        % (position, announce, ex_date))
         return None
     raise AssertionError('未知的校验标签 %r：判据表与实现脱节，沉默的 None 会伪造出绿'
                          % tag)
@@ -1097,6 +1254,19 @@ class SourceAdapter(ABC):
     def fetch_adjust_factor(self, symbols: List[str], start: date,
                             end: date) -> pd.DataFrame:
         """拉取复权因子，列名必须是 `ADJUST_FACTOR_COLUMNS`（见附录 B21）。"""
+        raise NotImplementedError
+
+    @abstractmethod
+    def fetch_dividend(self, symbols: List[str], start: date, end: date) -> pd.DataFrame:
+        """拉取分红（每股税前派息），列名必须是 `DIVIDEND_COLUMNS`（见附录 B22）。
+
+        与 `fetch_adjust_factor` 同一种形状，但**区间键不同**：这里按 `ex_date`
+        （除权除息日 = 事件日）过滤，不是按 `announce_date`；`announce_date`
+        （公告日）单独一列，是 D4 的可见性依据 —— 两者不能互相代替。
+
+        契约 §3.2（2026-10-01 追加）把签名与 4 个列名写全了；为什么它不是
+        `_AdapterBase` 里又一条默认实现，见基类 `fetch_adjust_factor` 的注释。
+        """
         raise NotImplementedError
 
     @abstractmethod
@@ -1306,11 +1476,18 @@ def _tencent_rows(payload: Any, code: str) -> List[Any]:
 class _AdapterBase(SourceAdapter):
     """各子类共用的管道。**不是契约类** —— 契约 §3.2 只画了基类与三个子类。
 
-    放这里而不复制进每个子类的东西只有三样：`validate` 的委托、
-    「源这一侧的任何异常都翻译成 `SourceAdapterError`」的包装，以及
-    `fetch_adjust_factor` 的默认实现（= 这一源没有这条通道）。第二样尤其不该复制 ——
+    放这里而不复制进每个子类的东西只有四样：`validate` 的委托、
+    「源这一侧的任何异常都翻译成 `SourceAdapterError`」的包装、
+    `fetch_adjust_factor` 的默认实现（= 这一源没有这条通道），以及
+    `fetch_dividend` 的默认实现（同一种理由，2026-10-01 追加）。第二样尤其不该复制 ——
     漏掉一处，那一处就会开始向上层抛 `ModuleNotFoundError` / `KeyError` / `ValueError`，
     而那些类型在上层读起来是「调用方写错了」，会被当成 bug 去查错地方。
+
+    ⚠️ 上面那句里的「四样」是**现在的**数目，不是契约的一部分：`fetch_dividend`
+    落地时这行从「三样」改成「四样」。下一个只覆盖单个数据面的源落地时，它会再变 ——
+    所以**别把这里的数字当判据用**，要看的是「默认实现都有哪几个」这件事本身。
+    而这件事的可核对形式不在注释里，在**继承结构**里：谁的 `fetch_*` 直接继承
+    `_AdapterBase` 那一版，谁就是「这个源没有这条通道」。
 
     **子类不止三个**：契约表上的三个之外还有 `TencentAdapter`（它为何存在见自己的
     类注释与附录 B16）与 `TushareAdapter`（附录 B21）。子类数量与契约那张表
@@ -1321,13 +1498,23 @@ class _AdapterBase(SourceAdapter):
     #: 一个私有常量，由子类的 `source_name()` 返回 —— 形状对契约负责，取值只写一处。
     _SOURCE = ''
 
-    def __init__(self, fetch: Optional[Callable[..., pd.DataFrame]] = None) -> None:
+    def __init__(self, fetch: Optional[Callable[..., pd.DataFrame]] = None,
+                 dividend_fetch: Optional[Callable[..., pd.DataFrame]] = None) -> None:
         """参数:
         fetch: 真实取数函数。**注入**而不是在方法体里写死网络调用，是这一层能被
             离线测试的唯一原因（测试注入假函数，永不联网）。传 None 时用模块里
             那个未经调用验证的默认实现。
+        dividend_fetch: 分红通道的取数函数，与 `fetch` **分开**。
+            为什么不复用同一个可调用对象：`fetch_daily_bar` / `fetch_adjust_factor` /
+            `fetch_dividend` 在同一源上是**不同接口**（tushare 是 `daily`/`adj_factor`/
+            `dividend` 三个 api_name），签名里的 `symbol=` 一样、返回的列完全不同 ⇒
+            挤进同一个函数只能靠 `**kwargs` 里的开关分派，而那个开关就是「两条通道
+            其实共用一套判据」的假象来源。
+            不传时用 `_default_dividend_fetch`（基类那一版**显式抛 UNSUPPORTED**）。
         """
         self._fetch = fetch if fetch is not None else self._default_fetch
+        self._fetch_dividend = (dividend_fetch if dividend_fetch is not None
+                                else self._default_dividend_fetch)
 
     def source_name(self) -> str:
         return self._SOURCE
@@ -1361,8 +1548,18 @@ class _AdapterBase(SourceAdapter):
             '%s 适配器没有注入 fetch 函数，也没有默认实现' % type(self).__name__,
             source=self._SOURCE, kind='UNSUPPORTED')
 
-    def _call(self, **kwargs: Any) -> pd.DataFrame:
+    def _call(self, _fetch: Optional[Callable[..., pd.DataFrame]] = None,
+              **kwargs: Any) -> pd.DataFrame:
         """调用注入的取数函数，并把源侧异常统一翻译成 `SourceAdapterError`。
+
+        参数:
+        _fetch: 覆盖要调用的取数函数（分红通道传 `self._fetch_dividend`）。
+            **刻意做成参数而不是第二个方法**：本模块只有**一处** try/except 在做
+            异常翻译（`tools/verify_data_center_adapter.py` 的 A11 就盯这一处），
+            拆成两个方法会让「两条通道的失败分类由同一个函数算」变成一句注释里的承诺，
+            而哪天其中一份被改动，两份的措辞仍然都读得通。名字带下划线是为了让它
+            不可能与源侧参数撞车（源侧 kwarg 都是列名/日期，不会以 `_` 开头）。
+        **kwargs: 传给取数函数的参数（`symbol=` / `start=` / `end=` / `opener=` / `token=`）。
 
         `SourceAdapterError` 原样透传（它已经是这个类型的语义，而且带着适配器
         自己判定好的类别）；其余一律包一层，并在消息里保留原异常类型名 ——
@@ -1371,8 +1568,9 @@ class _AdapterBase(SourceAdapter):
         类别由 `classify_source_failure` 判定，`retryable` 由类别推出来，
         `source` 由适配器自己填。这三样加起来才写得成重试策略。
         """
+        fetch = self._fetch if _fetch is None else _fetch
         try:
-            return self._fetch(**kwargs)
+            return fetch(**kwargs)
         except SourceAdapterError:
             raise
         except Exception as exc:  # noqa: BLE001 —— 这一层的职责就是兜住源侧的一切
@@ -1381,6 +1579,32 @@ class _AdapterBase(SourceAdapter):
                 source=self._SOURCE,
                 kind=classify_source_failure(exc),
             ) from exc
+
+    def _default_dividend_fetch(self, **kwargs: Any) -> pd.DataFrame:
+        """基类这一版 = **没有分红通道**：直接复用 `fetch_dividend` 的那条拒绝。
+
+        为什么不在这里再写一遍 `raise`：两条只差一句措辞的拒绝会在某次改动后分歧，
+        而调用方看到哪一条取决于「注入点走对了没有」—— 那是两个不同的缺陷却给同一个症状。
+        参数三个位都是占位（`fetch_dividend` 的默认实现不看参数就抛）。
+        """
+        return self.fetch_dividend([], date(1970, 1, 1), date(1970, 1, 1))
+
+    def fetch_dividend(self, symbols: List[str], start: date, end: date) -> pd.DataFrame:
+        """默认 = **这一源没有分红数据这条通道**（2026-10-01 追加，附录 B22）。
+
+        理由与 `fetch_adjust_factor` 的默认实现逐字相同：那三条抽象方法
+        （日线 / 财务 / 成分股）是「一个源适配器至少要能做的是什么」，而复权因子与
+        分红目前**只有 tushare 有**（B21.1 / B22.1）。留成抽象方法，会让另外四个源
+        各写一份一模一样的 `raise`，而重复的 `raise` 在下次有人加源时不会提醒他任何事。
+
+        **必须显式抛，绝不返回空帧**：空帧会被下游读成「这段区间没有分红事件」
+        （= `get_dividend()` 返回 `0.0`），而真相是「这个源不给分红数据」——
+        两件事在回测里的后果相反，而报告里长得一样。
+        """
+        raise SourceAdapterError(
+            '%s 这条通道没有分红数据（本迭代只接了 tushare 的 dividend，见 DC 契约附录 B22）'
+            % self._SOURCE,
+            source=self._SOURCE, kind='UNSUPPORTED')
 
 
 def _empty(*columns: str) -> pd.DataFrame:
@@ -1860,18 +2084,26 @@ class TushareAdapter(_AdapterBase):
     """tushare pro（`api.tushare.pro`）—— 本仓库第一个**要凭证**的源。
 
     **它不在契约 §3.2 那张表里**（与 `TencentAdapter` 同一种情况：表上写的是「MVP 阶段
-    必须实现的三个子类」，表外的源是接进来的事实，不能从表里读出来）。本迭代只接一条
-    通道：复权因子（`adj_factor`）。这条通道是 `dc_adjust_factor` 到目前为止**唯一的**
-    采集路径（我看到的采集路径只有它；写入侧与读数侧在 **2026-09-29 晚**也接上了 ——
+    必须实现的三个子类」，表外的源是接进来的事实，不能从表里读出来）。本迭代接**两条**
+    通道：复权因子（`adj_factor`）与**分红**（`dividend`，2026-10-01 追加，附录 B22）。
+    复权因子这条通道是 `dc_adjust_factor` 到目前为止**唯一的**采集路径（我看到的采集路径
+    只有它；写入侧与读数侧在 **2026-09-29 晚**也接上了 ——
     因子从 `dc_adjust_factor` 读得出来、写入口是 `quanauto/pgstore.py` 的 `PgFactorIngestor`。
     订正（2026-09-29 晚 Ⅱ）：这里原写「但**复权价仍未实施**：`BarData` 的 OHLC 仍是不复权价」，
     **那句已作废** —— `DbDataFeed._row_to_bar` 现在会乘 `datacenter._price_scale()` 给的倍数
     （唯一一处算式在 `quanauto/datafeed.py`：`_rescale_price`，全仓库**两个**调用点 ——
     `DbDataFeed._row_to_bar` 与 `CsvDataFeed._load_data`，2026-09-29 晩 Ⅲ 补上第二条），`volume`/`amount` 刻意不乘。
-    逐条见 DC 契约附录 B21.3 / A6 的订正块）。
+    逐条见 DC 契约附录 B21.3 / A6 的订正块）。分红这条同理，是 `dc_dividend` 目前**唯一的**
+    采集路径（写入侧 `PgDividendIngestor` 与读数侧 `DbDataFeed.get_dividend` 在 2026-10-01 同批接上）。
 
-    它是本模块**第一个只覆盖一个数据面的源**，所以另外三个面必须在类里显式写出来
-    （不能靠基类兜 —— 基类只给 `fetch_adjust_factor` 默认实现，那三条仍是抽象方法，
+    ⚠️ **两条通道的区间键不同**：复权因子按 `trade_date`，分红按 `ex_date`（除权除息日）。
+    这不是命名差异 —— 分红多一个 `announce_date`（公告日）承载 D4 的可见性，而因子帧里
+    没有这一列（因子按交易日可见）。两者共用一个 `start`/`end` 签名是契约的统一入口形状，
+    不意味着它们筛的是同一列。
+
+    它是本模块**第一个只覆盖部分数据面的源**（最初只覆盖一个面，2026-10-01 起两个），
+    所以其余的面必须在类里显式写出来（不能靠基类兜 —— 基类只给
+    `fetch_adjust_factor` / `fetch_dividend` 两个默认实现，那三条仍是抽象方法，
     不写就**实例化不了**；见下面那三条前的注释）。
 
     凭证**不从签名传入**（契约 §3.2 的签名里没有凭证参数，也不打算加 —— 加上去每一处
@@ -1929,11 +2161,64 @@ class TushareAdapter(_AdapterBase):
             return _empty(*ADJUST_FACTOR_COLUMNS)
         return pd.concat(frames, ignore_index=True)
 
+    @staticmethod
+    def _default_dividend_fetch(**kwargs: Any) -> pd.DataFrame:
+        """真实取数：**单标的**全部历史（`api_name='dividend'`）。
+
+        2026-10-01 追加（附录 B22）。
+
+        ⚠️ **这里刻意不传区间参数**：`dividend` 接口的日期参数是**按日**的
+        （`ex_date` / `ann_date` / `end_date` 各是单个日期），**表达不了 `[start, end]`**。
+        传一个它不识别的参数名（比如照抄 `adj_factor` 的 `start_date`）会得到两种结果：
+        要么被忽略、要么报参数错 —— 而这两种在报告里长得一样，且都不是我们要的东西。
+        ⇒ 区间筛选**全部**落在 `normalize_dividend` 的 `start=`/`end=` 上（那才是
+        契约 §3.2 说的「按 `ex_date` 过滤」）。代价：`ts_code` 单独一个参数的返回
+        可能很长（含未实施的预案），分页由 `has_more` 那套兜底（见 `_tushare_rows`）。
+
+        `symbols` 的展开在 `fetch_dividend` 里做（与其它源同一分工）。
+        `opener` 只给测试用；生产路径不传。
+        """
+        symbol = normalize_symbol(kwargs['symbol'])
+        fields, items = _tushare_rows(_http_post_json(
+            TUSHARE_API,
+            {'api_name': TUSHARE_DIVIDEND_API,
+             # 凭证只出现在这一行；它不进消息、不进日志。
+             'token': kwargs.get('token') or tushare_token(),
+             'params': {'ts_code': symbol},
+             'fields': ''},
+            opener=kwargs.get('opener')))
+        if not items:
+            # 空区间：把**列名**带上（同 `_default_fetch` 那条注释的理由）。
+            return pd.DataFrame(columns=fields or sorted(TUSHARE_DIVIDEND))
+        return pd.DataFrame(items, columns=fields)
+
+    def fetch_dividend(self, symbols: List[str], start: date, end: date) -> pd.DataFrame:
+        """逐标的取数后拼接（与其它源同一形状）。
+
+        与 `fetch_adjust_factor` 的两处差别都来自「分红是**事件流**」：
+
+        * 区间交给 `normalize_dividend(start=, end=)` —— 见 `_default_dividend_fetch`
+          那段注释（接口给不了区间，所以本地这一遍是唯一的过滤点）。
+        * 某一段区间没有分红**不是失败**：这是一个**合法的空结果**（那只票那段时间就是
+          没分红），与「这个源不给分红数据」不同。区别在于后者由基类的
+          `fetch_dividend` 显式抛 `UNSUPPORTED`，而这里返回一个**列名齐全的空帧**。
+          ⚠️ 这两种空在上层读出来都是「没有分红」，所以**分辨它们只能靠「有没有异常」**——
+          这也是为什么基类那条默认实现绝不返回空帧。
+        """
+        frames = [normalize_dividend(self._call(self._fetch_dividend, symbol=symbol,
+                                                start=start, end=end),
+                                     TUSHARE_DIVIDEND, symbol=symbol,
+                                     start=start, end=end)
+                  for symbol in symbols]
+        if not frames:
+            return _empty(*DIVIDEND_COLUMNS)
+        return pd.concat(frames, ignore_index=True)
+
     # ── 本类**不覆盖**的三个数据面 ───────────────────────────────────────────
     # 这三段不是「照抄基类」：`_AdapterBase` **故意**只给了 `fetch_adjust_factor`
-    # 一个默认实现，另外三个留在 `SourceAdapter` 里当抽象方法（理由见基类注释：
-    # 那三条是「一个源适配器至少要能做的是什么」）。于是**一个只覆盖单个数据面的
-    # 源必须自己把这三条写出来** —— 不写就实例化不了。
+    # 与 `fetch_dividend` 两个默认实现，另外三个留在 `SourceAdapter` 里当抽象方法
+    # （理由见基类注释：那三条是「一个源适配器至少要能做的是什么」）。于是
+    # **一个只覆盖部分数据面的源必须自己把这三条写出来** —— 不写就实例化不了。
     #
     # 2026-09-29 实测：本类第一版**没写**这三条，而 `TushareAdapter` 此前从未被
     # 导入、从未被实例化（只被 `ast` 解析过），所以门禁全绿、用例全绿，直到实测
@@ -1942,7 +2227,8 @@ class TushareAdapter(_AdapterBase):
     # `tests/test_data_center_adapter.py::test_every_concrete_adapter_can_be_constructed`。
     def fetch_daily_bar(self, symbols: List[str], start: date, end: date) -> pd.DataFrame:
         raise SourceAdapterError(
-            'tushare 这条通道只有复权因子（附录 B21.1）—— 日线走腾讯或东财，见契约 §3.2',
+            'tushare 这条通道只有复权因子与分红（附录 B21.1 / B22.1）—— '
+            '日线走腾讯或东财，见契约 §3.2',
             source=self._SOURCE, kind='UNSUPPORTED')
 
     def fetch_financial(self, symbols: List[str], period_end: date) -> pd.DataFrame:

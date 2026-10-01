@@ -16,7 +16,7 @@ I1 交付了第一条端到端竖切（CSV → MA 双均线 → 撮合 → 绩�
 I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**、**S2 已落采集侧适配器
 `quanauto/datasources.py`**、**S3 已落落库侧 `quanauto/pgstore.py` 与回测改读接线**（引擎只吃 `DataCenter.as_of()` 产出的 feed，`tests/test_backtest_db_feed.py` 守着 11 条端到端不变量）；此后 I2a/I2b 真的联调过（腾讯日线、东财财务表、一次真入库），**I2c 于 2026-09-29 接上复权因子的第一条采集路径**（tushare `adj_factor` + §3.2 第 6 个抽象方法，DC 契约附录 B21））。
 **2026-09-29 晩 Ⅱ 把「复权价」实施了**：`DbDataFeed._row_to_bar` 按 `_price_scale()` 给的倍数对 OHLC **四列各乘一次**（唯一一处算式是 `quanauto/datafeed.py` 的 `_rescale_price`，全仓库**两个**调用点：`DbDataFeed._row_to_bar` 与 `CsvDataFeed._load_data`；`NONE` ⇒ 1.0 **不查库**、`HFQ` ⇒ 该日累计因子、`QFQ` ⇒ 该日因子 ÷ 视图末日因子），`volume` / `amount` **刻意不乘** ⇒ **回测口径不再是「不复权」**。订正：这一段此前写的是「**仍未收口的是复权价的实施**…`BarData` 的 OHLC 仍是不复权价…」——那句话**已作废**。
-⚠️ **别把「复权价已实施」读成「I2 收口」**：还开着**一条**，且不在价格这条线上 —— ①**分红**（`get_dividend()` 恒 `0.0`）。~~②两个 ingestor 在 `quanauto/` 内**零调用者**（有实现，没有产品写入路径）~~ **已于 2026-09-30 收口** —— `quanauto/ingest.py` 就是那条缺的编排层（取数 → 校验 → 盖戳 → 落库 → 写 `dc_ingest_run` 批次留痕），两个 ingestor 各有一个调用点，`tests/test_ingest.py` 45 条压着它；⚠️ **它只主张「调用点接上了」** —— `quanauto/cli.py` 没开采集子命令、真库上没跑过，「真源能不能通 / 覆盖面够不够」仍归 I2 的「产物」行（那一行照旧不打勾）。~~③`validate_frame` 对**复权帧**一条判据都没有（B21.6）~~ **已于 2026-09-29 晩 Ⅳ 收口** —— 现在真的判值域（对齐 `ck_dc_factor_positive`）/ 帧级自然键重复 / 认 schema；⚠️ 帧层面**仍未判覆盖率**（只给缺失率 warning，**不**算第四条缺口）。另有一条**Ⅱ 那轮新登记**的缺口（`CsvDataFeed` **不做**任何乘法 ⇒ CSV 侧仍是不复权口径，与 DB 侧**不同量纲**且不报错）**已于 2026-09-29 晩 Ⅲ 收口** —— CSV 侧现在也乘因子、与 DB 侧同口径（DC 契约附录 A6 的 Ⅲ 块与 `docs/迭代计划.md`「A6 收口 Ⅲ」那一节）⇒ **现值是上面 ① 一条**（②③ 都已收口，分别见 `docs/迭代计划.md` 的 I2 收口节与「A6 收口 Ⅳ」那一节）。
+⚠️ **别把「复权价已实施」读成「I2 收口」**：~~①**分红**（`get_dividend()` 恒 `0.0`）~~ **已于 2026-10-01 收口** —— `DataFeed.get_dividend()` 现在读真值（落库侧 `dc_dividend` 表 + `PgDividendStore`；**可见性用公告日、取值与窗口用事件日**；DC 契约附录 **B22**、`docs/迭代计划.md`「十二、I2 收口 ①ⓐ：分红」那一节）；⚠️ **它不等于「I2 收口」** —— 仍开着的是**收口条件 ②**（未确认清单）。~~②两个 ingestor 在 `quanauto/` 内**零调用者**（有实现，没有产品写入路径）~~ **已于 2026-09-30 收口** —— `quanauto/ingest.py` 就是那条缺的编排层（取数 → 校验 → 盖戳 → 落库 → 写 `dc_ingest_run` 批次留痕），两个 ingestor 各有一个调用点，`tests/test_ingest.py` **51** 条压着它；⚠️ **它只主张「调用点接上了」** —— `quanauto/cli.py` 没开采集子命令、真库上没跑过，「真源能不能通 / 覆盖面够不够」仍归 I2 的「产物」行（那一行照旧不打勾）。~~③`validate_frame` 对**复权帧**一条判据都没有（B21.6）~~ **已于 2026-09-29 晩 Ⅳ 收口** —— 现在真的判值域（对齐 `ck_dc_factor_positive`）/ 帧级自然键重复 / 认 schema；⚠️ 帧层面**仍未判覆盖率**（只给缺失率 warning，**不**算第四条缺口）。另有一条**Ⅱ 那轮新登记**的缺口（`CsvDataFeed` **不做**任何乘法 ⇒ CSV 侧仍是不复权口径，与 DB 侧**不同量纲**且不报错）**已于 2026-09-29 晩 Ⅲ 收口** —— CSV 侧现在也乘因子、与 DB 侧同口径（DC 契约附录 A6 的 Ⅲ 块与 `docs/迭代计划.md`「A6 收口 Ⅲ」那一节）⇒ **现值是零条**（①ⓐ 分红 2026-10-01 收口；②③ 与 CSV 口径差更早已收口，分别见 `docs/迭代计划.md` 的「十一、I2 收口 ①ⓑ」「A6 收口 Ⅳ」「A6 收口 Ⅲ」那几节）。
 「哪些验过、哪些只是推断」一律现取 DC 契约附录 A6 / B14 / B16 / B17 / B21.3 / B21.6。
 依赖清单从 I2 S2 起**不再为空**：`dependencies = ["pandas>=2.0"]`（使用者 `quanauto/datasources.py`，
 数据中心契约 §3.2 的方法签名逐字写了 `pd.DataFrame`）+ `[datasources]` extra（`akshare` / `baostock`，
@@ -26,7 +26,7 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 
 | # | 约束 | 后果 |
 |---|---|---|
-| C1 | 本机**没有本地 PostgreSQL 实例**：`psql` 不在 PATH、无服务、无安装目录。容器通道**可用**（Docker Desktop 已跑起来） | 不要再说「从未执行」—— 2026-09-23 起 `db/*.sql` 已在容器上执行过（触测 23/0 与 42/0 PASS），2026-09-24 又在 `postgres:14` / `15` / `16` 上各跑一遍，四份快照 `tools/sql-smoke-report-pg14.txt` / `tools/sql-smoke-report-pg15.txt` / `tools/sql-smoke-report-pg16.txt` / `tools/sql-smoke-report.txt`。但也**不能反过来说「约束已验证」**：只覆盖这四个 tag，「PostgreSQL 14+」仍未证实；逐条证伪（`falsify_smoke.py` 31/31）仍只在 `postgres:17` 上做过；改过 SQL 后结论即作废 |
+| C1 | 本机**没有本地 PostgreSQL 实例**：`psql` 不在 PATH、无服务、无安装目录。容器通道**可用**（Docker Desktop 已跑起来） | 不要再说「从未执行」—— 2026-09-23 起 `db/*.sql` 已在容器上执行过（触测 23/0 与 42/0 PASS），2026-09-24 又在 `postgres:14` / `15` / `16` 上各跑一遍（四份快照 `tools/sql-smoke-report-pg14.txt` / `tools/sql-smoke-report-pg15.txt` / `tools/sql-smoke-report-pg16.txt` / `tools/sql-smoke-report.txt`），**2026-10-01 改过 `db/*.sql` 后四份又全部重跑**（数据中心侧 46/0）。但也**不能反过来说「约束已验证」**：只覆盖这四个 tag，「PostgreSQL 14+」仍未证实；逐条证伪（`falsify_smoke.py` 33/33）仍只在 `postgres:17` 上做过；改过 SQL 后结论即作废 |
 | C2 | `docs/` 下 3 个 `.md` 由 `.docx` 转换生成，**重新转换会覆盖** | 只能在其**之后追加**，禁止原地改已有段落。原地改 = 内容丢失 + md-fidelity 门禁失败。**追加的内容同样会被重新转换抹掉**，所以每个追加块（模块4 的「以契约为准」注、附录A、附录B）都登记在 `verify_md_coverage.py` 的 `ADDENDA` 清单里，被抹掉即 FAIL。⚠️ ADDENDA **只对「有 `.docx` 对应物」的文件成立**：`docs/智能量化交易平台-数据中心接口契约文档.md` 是**手写契约**（`docs/` 下没有同名 `.docx`），可以原地编辑，它的附录 A 也**不该**登记进去 —— 登记上去只会变成一条永远不会被检查的死条目 |
 | C3 | 控制台是 **cp936(GBK)** | stdout 出现 GBK 之外的字符（如 `↔`）会让 Python 抛 `UnicodeEncodeError` 并丢掉整段输出；PowerShell `>` 写的是 **UTF-16LE** 不是 UTF-8；含中文的 argv 会被破坏 |
 | C4 | `tools/` 下**只用标准库** | 不要引入任何第三方依赖 |
@@ -51,7 +51,7 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 | `docs/迭代计划.md` | ★ **交付节奏**：竖切 **I0~I4**（股票池那一轮已于 2026-09-23 裁决砍掉）、每个迭代的 DoD 四件套、B7 棘轮燃尽表、不采用的敏捷做法。原「待决」问题（迭代计划里那 5 条 + 更早的 Q1/Q7）已全部裁决并回填，**已无未决项** |
 | `docs/历史订正.md` | 本文件 §6 的**编年史外移档**（2026-09-29 外移）：外移前那一版 §6 在那里逐字存档，另按主题重排（提交链、各轮 `passed` 数、各轮交付都干了什么、「上一版写的是什么」的痕迹、门禁补盲区的三轮、CI 首次判红）。**它不是现状的权威来源** —— 想知道现在是什么，看本文件 §6 |
 | `docs/智能量化交易平台-风控层接口契约文档.md` | 风控层契约（补充主契约缺失的类型/异常），文末有 **§六**（I3 交付与裁决：交付边界 3 条 / 逐条裁决 15 条 / 咬出的真缺陷 / 已知限制 / 门禁对应）与 **§七**（I3b 小步：存储层真接线的交付边界、**留痕写入方与 §3.6 「异步批量」的偏离及理由**、实现侧新增的三个名字、真库探针抓到的 `pgstore` 包装层缺陷与修法、门禁/测试对应、两条新登记缺口）。两节都是**追加**记录，上文一个字没改。**手写契约，没有 `.docx`** ⇒ 可原地编辑；在那里「只追加不原地改」是审计约定，不进 C2 的 `ADDENDA` |
-| `docs/智能量化交易平台-数据中心接口契约文档.md` | 数据中心契约，含 D1~D10 设计决策 + **附录 A**（I2 S1 实现侧裁决与偏差登记：`DataFeedError` 继承、`SessionMode` 本地类型、越界两种语义、**因子读数已通、复权价已完成实施**（2026-09-29 晚 Ⅱ，算式**一份**在 `quanauto/datafeed.py` 的 `_rescale_price`，**两个**调用点 `DbDataFeed._row_to_bar` + `CsvDataFeed._load_data`（晚 Ⅲ 补上第二条 ⇒ CSV 侧口径差收口）；仍开着的是**分红**~~ / 两个 ingestor 零产品调用点~~（**2026-09-30 已接上**：`quanauto/ingest.py` 是那条编排层，两个 ingestor 各有一个调用点，登记在该契约附录 H）~~ / **复权帧无判据**~~（**2026-09-29 晩 Ⅳ 已收口**，见 B21.5 的 Ⅳ 块与 B21.6 表里那一行），看该契约附录 A6 / B7 / B21.3 的订正块））+ **附录 B**（I2 S2 适配器裁决与偏差：`ValidationReport` 升格为 5 字段、pandas 是显式依赖、源 SDK 只能惰性导入、符号后缀与指数歧义、两处“安静的事故”（手/股、百分号）、`report_type` 必须适配器层映射完，另记两条已知缺口：停牌/涨跌停标记无处可落（契约内部不一致）、龙虎榜/资金流向无标准 schema）+ **附录 C**（I2 S3 落库侧裁决与偏差：`DataStoreError`(DATA_008) 属实现侧新增异常码、假连接与真库的效力边界、`PsycopgConnection` 的复用与事务语义）+ **附录 B21**（I2c 复权因子采集通道：为什么用 stdlib 不用 SDK、凭证只读环境变量且不进签名、这条修订关闭了什么/没关闭什么、HTTP 200 也可能是失败、只归一化不换算、以及 B21.6 未确认清单）。**手写契约，没有 `.docx`** ⇒ 可原地编辑，不进 C2 的 `ADDENDA` |
+| `docs/智能量化交易平台-数据中心接口契约文档.md` | 数据中心契约，含 D1~D10 设计决策 + **附录 A**（I2 S1 实现侧裁决与偏差登记：`DataFeedError` 继承、`SessionMode` 本地类型、越界两种语义、**因子读数已通、复权价已完成实施**（2026-09-29 晚 Ⅱ，算式**一份**在 `quanauto/datafeed.py` 的 `_rescale_price`，**两个**调用点 `DbDataFeed._row_to_bar` + `CsvDataFeed._load_data`（晚 Ⅲ 补上第二条 ⇒ CSV 侧口径差收口）；收口条件 ① 的子项现已**全部收口**：**分红**（**2026-10-01 收口** —— 读侧接上 `dc_dividend`，见该契约附录 **B22**）、两个 ingestor 零产品调用点（**2026-09-30 已接上**：`quanauto/ingest.py` 是那条编排层，两个 ingestor 各有一个调用点，登记在该契约附录 H）~~ / **复权帧无判据**~~（**2026-09-29 晩 Ⅳ 已收口**，见 B21.5 的 Ⅳ 块与 B21.6 表里那一行），看该契约附录 A6 / B7 / B21.3 的订正块））+ **附录 B**（I2 S2 适配器裁决与偏差：`ValidationReport` 升格为 5 字段、pandas 是显式依赖、源 SDK 只能惰性导入、符号后缀与指数歧义、两处“安静的事故”（手/股、百分号）、`report_type` 必须适配器层映射完，另记两条已知缺口：停牌/涨跌停标记无处可落（契约内部不一致）、龙虎榜/资金流向无标准 schema）+ **附录 C**（I2 S3 落库侧裁决与偏差：`DataStoreError`(DATA_008) 属实现侧新增异常码、假连接与真库的效力边界、`PsycopgConnection` 的复用与事务语义）+ **附录 B21**（I2c 复权因子采集通道：为什么用 stdlib 不用 SDK、凭证只读环境变量且不进签名、这条修订关闭了什么/没关闭什么、HTTP 200 也可能是失败、只归一化不换算、以及 B21.6 未确认清单）。**手写契约，没有 `.docx`** ⇒ 可原地编辑，不进 C2 的 `ADDENDA` |
 
 ### C. 工程骨架（2026-09-23 I0 交付；守门门禁 = `skeleton`）
 
@@ -62,10 +62,10 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 | `quanauto/*.py`（**16 个模块**：15 个实现 + 入口 `cli.py`；条目数现取 `quanauto/*.py`） | I1 的产物：`models` / `enums` / `errors` / `events` / `datafeed` / `strategies` / `broker` / `engine` / `performance` / `cli`；**I2 S1 追加 `datacenter.py`**（PIT / `as_of` 边界层）、**I2 S2 追加 `datasources.py`**（采集侧适配器：源列名/取值 → 标准 schema + `ValidationReport`）、**I2 S3 追加 `pgstore.py`**（落库侧：`PgBarStore` 读 / `PgBarIngestor` 幂等 upsert / `PsycopgConnection` 惰性驱动适配）、**I3 追加 `risk.py`**（风控引擎：四层作用域优先级 + `KillSwitch` 熔断 + 阈值收紧/放宽与 LKG 回退，由 `tests/test_risk_engine.py` 守），**I3b 小步在 `risk.py` 里真接上存储层**（`DbRiskRuleStore` 三个读写方法 + 四个运行态方法 + `RiskInterceptLogWriter` 拦截留痕；写入方是**调用方** `BacktestEngine._record_risk_block()` 而不是 `RiskEngine`，偏离与理由见风控契约 §七），**I4 追加 `dashboard.py`**（绩效看板：读一份 `BacktestResult` → 按固定 14 行清单摆指标表 + 资金曲线，**纯读数**，一个指标都不重算；口径登记在核心契约 §F，由 `tools/verify_dashboard.py` 与 `tests/test_dashboard.py` 守），**I2 收口 ①ⓑ 追加 `ingest.py`**（采集 → 落库的编排层，见 DC 契约附录 H）。守门门禁 = `contract-signature`（签名不许偏离契约）+ `data-center-pit` + `data-center-adapter` + `dashboard-consistency` |
 | `tests/test_skeleton.py` | 骨架自检 3 条：版本与 `pyproject.toml` 一致 / import 不把重依赖拉进来 / 测试数不为 0 |
 | `tests/test_backtest_slice.py` | I1 的回归测试（**I1 当时 22 条**；**2026-09-29 晚 Ⅲ 现取 25 条** —— 新增 CSV 侧复权口径 3 条）：竖切的不变量（同种子可复现、成交价取下一根 K 线开盘价、拒单不抛异常…）。它**没有**红→绿的 git 证据（实现先于测试），替代证据是 `tools/pytest_mutation_check.py` |
-| `tests/test_data_center_pit.py` | I2 S1 的 PIT 回归测试 18 条：预取未来数据必须抛 `FutureDataAccessError`、窗口越界必须抛而**不是**裁剪、回测会话下 `QFQ`/`BFILL` 必须被拒。含 I2 DoD 点名的那条**触发测试**（让 store 无视窗口，确认取数真的被拒）。另有一条**故意断言已知缺口**的用例，**缺口真的关闭时**要**删掉它**而不是改期望值（原写「`S3` 落地后」；S3 已交付而缺口仍在 ⇒ 触发条件与「哪一步交付」解耦，订正记录见 DC 契约附录 A6）|
-| `tests/test_data_center_adapter.py` | 适配器回归测试：**S2 收工时 32 条，2026-09-25 现取 104 条**（`docs/迭代计划.md` 里 S2 那段「32 条」是**那一轮的收工快照**，不回改）：源列名不许透出下游、映射后必须是标准 schema、手→股与百分号两处换算、裸代码/指数后缀/`report_type` 越界必须抛。它测的是映射**机制**，不是映射**内容**（未联过网，见 DC 契约附录 B10） |
-| `tests/test_data_center_store.py` | 落库侧回归测试：**S3 收工时 29 条，2026-09-25 现取 37 条**：读必须按 `data_version` 过滤、窗口闭区间、upsert 的三条分支（新插入 / 同值不写 / 异值抛 `IngestConflictError`）与并发抢写、异常不许二次包装、驱动必须惰性导入。**一律不连库**：假连接只能证明「发出去的语句/参数是什么」，不能证明 PostgreSQL 接受它 —— 后者只有容器通道能证，两者不得互相冒充（DC 契约附录 C） |
-| `tests/test_backtest_db_feed.py` | I2 S3 **后半**的端到端回归测试 10 条：引擎只吃 `DataCenter.as_of()` 产出的 `DataFeed`、报告里的 `data_version` 必须是存储层版本且空版本必须抛 `DataVersionError`、`as_of` 之后的行必须被拒、存储层的 `Decimal` 必须在边界处收成 `float`。它守的是一条**缝**：S3 前半（落库）与后半（引擎）各自的用例都看不见对方那一侧，两边各自全绿不等于接起来能跑（实测当场咬出 3 个真缺陷） |
+| `tests/test_data_center_pit.py` | I2 S1 的 PIT 回归测试（**S1 收工时 18 条，2026-10-01 现取 34 条**）：预取未来数据必须抛 `FutureDataAccessError`、窗口越界必须抛而**不是**裁剪、回测会话下 `QFQ`/`BFILL` 必须被拒。含 I2 DoD 点名的那条**触发测试**（让 store 无视窗口，确认取数真的被拒）。⚠️ 那里曾有**两条故意断言已知缺口**的用例（HFQ 因子衡等 / 分红衡 `0.0`）：它们的规矩是「**缺口真的关闭时**要**删掉**而不是改期望值」（原写「`S3` 落地后」；S3 已交付而缺口仍在 ⇒ 触发条件与「哪一步交付」解耦，订正记录见 DC 契约附录 A6）—— **2026-09-29 因子那条、2026-10-01 分红那条，都按这条规矩删掉了** |
+| `tests/test_data_center_adapter.py` | 适配器回归测试：**S2 收工时 32 条，2026-10-01 现取 136 条**（`docs/迭代计划.md` 里 S2 那段「32 条」是**那一轮的收工快照**，不回改）：源列名不许透出下游、映射后必须是标准 schema、手→股与百分号两处换算、裸代码/指数后缀/`report_type` 越界必须抛。它测的是映射**机制**，不是映射**内容**（未联过网，见 DC 契约附录 B10） |
+| `tests/test_data_center_store.py` | 落库侧回归测试：**S3 收工时 29 条，2026-10-01 现取 67 条**（其中 14 条是分红那一批）：读必须按 `data_version` 过滤、窗口闭区间、upsert 的三条分支（新插入 / 同值不写 / 异值抛 `IngestConflictError`）与并发抢写、异常不许二次包装、驱动必须惰性导入。**一律不连库**：假连接只能证明「发出去的语句/参数是什么」，不能证明 PostgreSQL 接受它 —— 后者只有容器通道能证，两者不得互相冒充（DC 契约附录 C） |
+| `tests/test_backtest_db_feed.py` | I2 S3 **后半**的端到端回归测试 11 条：引擎只吃 `DataCenter.as_of()` 产出的 `DataFeed`、报告里的 `data_version` 必须是存储层版本且空版本必须抛 `DataVersionError`、`as_of` 之后的行必须被拒、存储层的 `Decimal` 必须在边界处收成 `float`。它守的是一条**缝**：S3 前半（落库）与后半（引擎）各自的用例都看不见对方那一侧，两边各自全绿不等于接起来能跑（实测当场咬出 3 个真缺陷） |
 | `tests/fixtures/sample_prices.csv` | 回归测试与可复现性门禁共用的小样本行情 |
 | `tests/test_risk_engine.py` | I3 前置的风控引擎本体回归测试 67 条（60 个测试函数，其中一条参数化出 8 组合）：规则装载与阈值校验（`RATIO` 不许写成百分数、全局规则缺一不可）、四层作用域优先级、`check()` 零 IO 且可重入、熔断与重启后峰值仍在、`KillSwitch` 没有一键清仓、阈值变更的收紧/放宽（放宽未确认转 PENDING）、LKG 回退与 `RISK_011`。它守的是**引擎**，看不见回测接线（那条缝由下一行守） |
 | `tests/test_backtest_risk_gate.py` | I3 的端到端回归测试 12 条：闸门**默认关闭**（不接线就不拦，I1 口径不变）、接上后每单必过一遍、缩到 0 股＝`REJECT`（不是 REDUCE）、`KillSwitch` 触发后**进市场的订单为 0**、「阈值全放宽 ≡ 不接闸门」这条等价关系、统计**不进**回测报告。含一条把 `_strategy_equity` 的**符号 bug** 钉死的用例（满仓时权益必须为正，否则假回撤→误熔断，症状是「第三笔单莫名被拒」） |
@@ -78,21 +78,21 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 | 文件 | 规模 | 状态 |
 |---|---|---|
 | `db/risk_control.sql` | 9 表 / 14 CHECK / 幂等种子 | ✅ **已执行**（2026-09-24 起四个镜像：14.24 / 15.18 / 16.15 / 17.11） |
-| `db/risk_control.smoke.sql` | 18 KB 约束触发测试 | ✅ **已执行**：23 passed / 0 failed（四个镜像各一次） |
-| `db/data_center.sql` | 9 表 / 16 CHECK / 1 部分唯一索引 | ✅ **已执行**（2026-09-24 起四个镜像：14.24 / 15.18 / 16.15 / 17.11） |
-| `db/data_center.smoke.sql` | 38 KB 约束触发测试（A 前置 / B 16 条必须拒绝 / C 枚举与边界必须接受） | ✅ **已执行**：42 passed / 0 failed（四个镜像各一次） |
+| `db/risk_control.smoke.sql` | 23 KB 约束触发测试 | ✅ **已执行**：23 passed / 0 failed（四个镜像各一次） |
+| `db/data_center.sql` | 10 表 / 18 CHECK / 1 部分唯一索引 | ✅ **已执行**（2026-09-24 起四个镜像：14.24 / 15.18 / 16.15 / 17.11；**2026-10-01 加第 10 张表 `dc_dividend` + 两条 CHECK 后四份快照全部重跑**） |
+| `db/data_center.smoke.sql` | 45 KB 约束触发测试（A 前置 / B 18 条必须拒绝 / C 枚举与边界必须接受） | ✅ **已执行**：46 passed / 0 failed（四个镜像各一次） |
 
 > 两份 `*.smoke.sql` 都已在**容器 PostgreSQL** 上跑过：`postgres:14`(14.24) / `15`(15.18) /
 > `16`(16.15) / `17`(17.11)，每版一份快照 `tools/sql-smoke-report-pg14.txt` /
 > `tools/sql-smoke-report-pg15.txt` / `tools/sql-smoke-report-pg16.txt` /
-> `tools/sql-smoke-report.txt`（均含镜像 digest），30 条 CHECK 不再是纸面防线。
+> `tools/sql-smoke-report.txt`（均含镜像 digest），32 条 CHECK 不再是纸面防线。
 > 注意：地图里写路径必须写成**能落到文件上的**形式。上面这几行原本用的是花括号速记
 > （pg1 + 花括号 4,5,6 + .txt）与斜杠速记（postgres:14/15/16），被 skeleton 门禁的
 > MAP-PATHS 当场判红：花括号不是文件系统通配、`postgres:14` 也不是目录 —— 是**地图**
 > 写错了而不是门禁太严。这两个速记形式在本文里**故意不加反引号**（MAP-PATHS 只扫反引号里的
 > 内容，加了就等于把坏地址重新递给它）。
 > 但要分清两件事：**绿色本身不会告诉你有牙** —— 那要靠 `tools/falsify_smoke.py` 去证伪
-> （逐条放宽 CHECK 表达式，看它是否变红；现已覆盖 **31/31**，但**只在 `postgres:17` 上做过**）。
+> （逐条放宽 CHECK 表达式，看它是否变红；现已覆盖 **33/33**，但**只在 `postgres:17` 上做过**）。
 > 同时记住边界：只跑过**这四个 tag**，其余 tag / 发行版从未跑过，改过 `db/*.sql` 后那轮结论即作废。
 > 每个 DDL 头部有一行 `-- PG-VERIFIED-ON:` 声明验过哪些版本，它由 `verify_data_center.py` 的 C6
 > 与 `verify_risk_config.py` 的 C17 拿 `tools/sql-smoke-report*.txt` 里的镜像名**双向**核对 ——
@@ -117,7 +117,7 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 | `tools/verify_platform_specs.py` | ★ **新门禁**（`platform-spec-parity`，2026-09-30 注册，tier-A）：把 **Java 侧** `platform/api/src/main/java/com/quanauto/dashboard/MetricSpec.java` 的 `METRIC_SPECS` 与 **Python 侧** `quanauto/dashboard.py` 的同一个表**双向**比对 —— 量纲 / 分组两组常量的**取值**、14 行的「键 / 分组 / 标签 / 量纲 / 小数位」**逐行**比、**行序**（只在键集合与条数都相同的前提下才比，否则不乱报漂移）、以及 `STRUCTURE_COUNTS` 的三段名。它关的是 `docs/智能量化交易平台.md` 附录C 里 C.5 第 2 条那条**登记**：「14 条规格表是**手抄副本**、没有任何门禁比对两者」⇒ 两端一旦不一致**当场红**（这正是手动脚本 `platform/check_text_parity.py` 做不到的：那个要一个活着的 JVM）。两侧提取为空、或任一侧行数低于门槛一律 FAIL（空转守卫）。**只解析文本 + Python AST**：不 import 被测代码、不编译、不启动 JVM、不渲染页面。**修复方向永远是改 Java 侧** —— `quanauto/dashboard.py` 是冻结的参照物。**边界**：只证明两侧**声明**一致，证明不了 Java 真的按这张表渲染（见 §3.G） |
 | `tools/verify_platform_build.py` | ★ **新门禁**（`platform-runtime`，2026-09-30 注册，tier-A）：在**一次性沙箱**里按 `npm ci` → `npm run build` → `mvn test` **真跑一遍**平台层切片 —— **三条命令的顺序本身就是判据**。四个判据：① 前端产物真的落进 `platform/api` 下的静态资源目录（src/main/resources/static，**该目录不入库**）；② **接缝**：`mvn test` **之前** Java 侧那份构建产物目录（target/classes/static，同样不入库）必须为空、**之后**必须出现与前端产物逐文件同名的文件（构建顺序反了会让页面 served 旧包，而这个错**不会**让任何一条 Java 测试变红）；③ surefire 的 `Tests run: N, Failures, Errors` 必须与 Java 源码里 `@Test` 的**声明数**对得上（**两个数都现取**：门禁每次运行都会把它自己数出来的声明数与 surefire 汇总行一起印出来，别在文档里抄这个数 —— 它改过一回，抄在文档里就是一句会过期的话），解析不到汇总行（例如编译不过）同样 FAIL；④ 沙箱**不写仓库一个字节**（把 `platform/` 去 `node_modules`/`target`/`dist`/`static` 后连同 `.rounds/i1` 复制到临时目录，另放一个**空的 `.git`** 供 `ReportCatalog.resolve()` 定位报告目录）⇒ harness 的指纹守卫不必为它放开任何跳过目录。**工具链（JDK 21 + Node）探不到时退 3 = SKIPPED**，harness 把 3 记成「**不算绿**」并单独出一条 `NOTE:`（「没装 JDK」与「测试红了」是两种红）。证伪：6 条注入变异全被抓（`PB-MVN-TESTS-RED` / `PB-SUREFIRE-NOT-PARSED` / `PB-NPM-BUILD-FAIL` / `PB-STATIC-EMPTY` ×2 / `PB-STITCH-PREEXISTING` / `PB-NPM-CI-FAIL`），见附录C §C.9。**边界**：不启动 JVM、不渲染页面、不比对两侧展示文本 ⇒ 「**页面本身**」仍然零覆盖 |
 | `tools/verify_data_center.py` | 数据中心契约 §3.6.1 与 DDL 约束清单双向一致（C1~C7）+ 对 `db/data_center.smoke.sql` 的触发测试覆盖核对（C7） |
-| `tools/verify_data_center_pit.py` | ★ **I2 S1 新门禁**：`DataFeed` 取数路径的 `as_of` **两层防线**（显式日期参数越界必须抛 / 经 guard 逐行登记 —— **2026-09-29 晚 Ⅱ 起第二层要求逐条写入口记它自己那个字段**，同一条写入口拿另一条的字段顶包不算接线完成，见 DC 契约 A4）+ 回测会话下 `QFQ`/`BFILL` 必须被拒 + 只有 `DataCenter.as_of()` 能产出 `DataFeed`。「越界＝抛而非裁剪」这条语义的机器判据就在这里。**只解析 AST，从不执行被检代码、不跑 pytest** |
+| `tools/verify_data_center_pit.py` | ★ **I2 S1 新门禁**：`DataFeed` 取数路径的 `as_of` **两层防线**（显式日期参数越界必须抛 / 经 guard 逐行登记 —— **2026-09-29 晚 Ⅱ 起第二层要求逐条写入口记它自己那个字段**，同一条写入口拿另一条的字段顶包不算接线完成，见 DC 契约 A4）+ 回测会话下 `QFQ`/`BFILL` 必须被拒 + 只有 `DataCenter.as_of()` 能产出 `DataFeed`。「越界＝抛而非裁剪」这条语义的机器判据就在这里。**2026-10-01 追加第 4 条缝**：`DataFeed.get_dividend()` 必须走 store 的 PIT 记账（`= 0.0` 只许在「没有 store」时出现；有 store 而无行也是 `0.0` —— 不许可达矩阵里那种「缺行必抛」的语义混进来；负样本 `NEG3d`/`NEG3e` 守着它）。**只解析 AST，从不执行被检代码、不跑 pytest** |
 | `tools/verify_data_center_adapter.py` | ★ **I2 S2 新门禁**（`data-center-adapter`）：采集侧适配器把源列名/取值翻成标准 schema（A1/A2/A4/A8）、采集层不含数据库驱动（A5）、源 SDK 只能惰性 import（A6）、行对象不暴露源字段名（A7）、新映射表/列名元组未登记即报错（A3/A9）、两个空转守卫（A0/A10）。**只解析源码文本**：不执行适配器、不联网、不 import pandas |
 | `tools/verify_iteration_plan.py` | 迭代计划里每个标「已交付」的迭代是否引用了一条**真实存在**的证据路径（防幽灵 ✅）+ DoD 四件套形状 |
 | `tools/verify_skeleton.py` | I0 骨架是否还在（pyproject / 包 / 测试 / CI 的 `run:` 接线），**不跑 pytest**；另守三件事不许过期 —— 状态陈述（`IMPL-STATUS`）、写死的门禁计数（`GATE-COUNT`）、**地图里的路径必须真实存在**（`MAP-PATHS`）。2026-09-25 起 `IMPL-STATUS` / `GATE-COUNT` 的扫描面扩到 **`.github/**/*.md`**（原先这一层零判据，而它是**自动加载层**，过期前提在这里最贵；扩面时给这层补了 4 个样本，含一个放在 skill 二级目录（references 子目录）的样本守着通配**递归**那一支），`MAP-PATHS` **仍只管 `CONTEXT.md`**（散文里的时区/字段对假阳性实测过）。报告里有一行 `status scan: fixed 3 + N .github markdown file(s)` 是这一层的可见分母。⚠️ 它们只管结构，**看不见错字/乱码**：改完中文文案要回读核对 |
@@ -127,7 +127,7 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 | `tools/verify_dashboard.py` | ★ **I4 新门禁**（`dashboard-consistency`）：C1~C10。C6 直接禁掉落进看板模块的统计函数与统计模块（`performance`/`statistics`/`numpy`/`pandas`/`scipy` 任一 import，或 16 个统计函数名之一 ⇒ FAIL）；C8 双向扫「改一个数，读数必须跟着动」；**C10 是这个门禁的参照物** —— 它用报告自带的 `trades`/`orders`/`account_history` **现场重跑真的 `PerformanceAnalyzer`**，与报告里存的 14 个指标逐字段比。没有 C10，整个门禁就是恒等式（C3 两端同源、手改报告会把两边一起改掉）。**边界**：C10 的参照物就是写出这些数的同一个分析器 ⇒ 「公式本身算错了」它看不见；它证明的是「报告新鲜、没被手改过」 |
 | `tools/dashboard_failure_demo.py` | I4 DoD「触发测试」的**可复查脚本**：手工把报告里的一个指标改掉，确认 C10 会红。跑一次落 `tools/dashboard-failure-report.txt`；**不是门禁**（改的是临时副本，不改仓库里的报告） |
 | `tools/dashboard-failure-report.txt` | 上一条的输出 —— **快照**：那一行 `ISSUE [C10] <字段>: the report stores … but re-running PerformanceAnalyzer … yields …` 就是 DoD 要的「一次真实的失败记录」 |
-| `tools/pytest_mutation_check.py` | 把实现逐处改坏，验证基线**九套件**（`tests/test_backtest_slice.py` / `tests/test_data_center_adapter.py` / `tests/test_data_center_store.py` / `tests/test_backtest_db_feed.py` / `tests/test_data_center_pit.py` / `tests/test_backtest_risk_gate.py` / `tests/test_risk_store.py` / `tests/test_dashboard.py` / `tests/test_ingest.py`）真的会红（**不是门禁**：它验证的是测试，且慢。**2026-09-30（采集编排层）现取**：`mutations=74 caught=74 control=7 env_limited=0`（基线九套件 `passed=433`）；**2026-09-29 晚 Ⅲ** 是 `mutations=63 caught=63 control=5 env_limited=0`（基线 `passed=252`，当时清单里**漏了** `tests/test_data_center_adapter.py`，所以「七套件」这个称呼与实际不符）、晚 Ⅱ 是 `mutations=61 caught=61 control=5 env_limited=0`（基线 249）；此前几轮记的是「`mutations=54 caught=54 control=5 env_limited=0`（基线 241）」「54 条样本 / 49 + 5 + 0」「43 条样本 / 39 + 4 + 0」「32 条样本 / 29 + 3 + 0」—— 那些行里的「N 条样本」是**当时的记法**（= caught + control + env_limited），**不同轮的记法不完全一致**，引用一律以报告文件为准。这一栏随环境变：`psycopg` 只声明在 `[postgres]` extra 里（opt-in）、本机 `.venv` 是手工装的、CI 只装 `.[dev]` ⇒ 那边驱动相关的变异会退回 `ENV-LIMIT` —— **`ENV-LIMIT` 逐条预写理由、不计入 CAUGHT 分母、绝不事后追认**） |
+| `tools/pytest_mutation_check.py` | 把实现逐处改坏，验证基线**九套件**（`tests/test_backtest_slice.py` / `tests/test_data_center_adapter.py` / `tests/test_data_center_store.py` / `tests/test_backtest_db_feed.py` / `tests/test_data_center_pit.py` / `tests/test_backtest_risk_gate.py` / `tests/test_risk_store.py` / `tests/test_dashboard.py` / `tests/test_ingest.py`）真的会红（**不是门禁**：它验证的是测试，且慢。**2026-10-01（分红）现取**：`mutations=84 caught=84 control=7 env_limited=0`（基线九套件 `passed=458`）；**2026-09-30（采集编排层）** 是 `mutations=74 caught=74 control=7 env_limited=0`（基线九套件 `passed=433`）；**2026-09-29 晚 Ⅲ** 是 `mutations=63 caught=63 control=5 env_limited=0`（基线 `passed=252`，当时清单里**漏了** `tests/test_data_center_adapter.py`，所以「七套件」这个称呼与实际不符）、晚 Ⅱ 是 `mutations=61 caught=61 control=5 env_limited=0`（基线 249）；此前几轮记的是「`mutations=54 caught=54 control=5 env_limited=0`（基线 241）」「54 条样本 / 49 + 5 + 0」「43 条样本 / 39 + 4 + 0」「32 条样本 / 29 + 3 + 0」—— 那些行里的「N 条样本」是**当时的记法**（= caught + control + env_limited），**不同轮的记法不完全一致**，引用一律以报告文件为准。这一栏随环境变：`psycopg` 只声明在 `[postgres]` extra 里（opt-in）、本机 `.venv` 是手工装的、CI 只装 `.[dev]` ⇒ 那边驱动相关的变异会退回 `ENV-LIMIT` —— **`ENV-LIMIT` 逐条预写理由、不计入 CAUGHT 分母、绝不事后追认**） |
 | `tools/pytest-mutation-report.txt` | 上一条的逐变异证据 —— **快照**，改实现或改测试后作废 |
 | `.rounds/i1/` | I1 可复现性门禁的证据样本（同种子两份 + 换种子一份，共三份）—— 由 `--record` 显式重录，**跑门禁不会改它们** |
 | `tools/ci_dryrun.py` | 在本地把 CI 的两条命令真跑一遍 + 两次红→绿往返（含清 `__pycache__`），写 `tools/ci-dryrun-report.txt`。**不是门禁**（需 .venv） |
@@ -137,9 +137,9 @@ I2 正在把数据换成真实数据源（**S1 已落 PIT / `as_of` 边界层**�
 | `docker-compose.smoke.yml` | 一次性 PostgreSQL 容器（无 `ports:`、无命名卷 ⇒ `down -v` 必得空库） |
 | `docker-compose.dev.yml` | **本机开发库**（发布 127.0.0.1:55432、带命名卷 ⇒ 数据会留在 `quan-auto-dev` 项目里，`down -v` 才清）。为「用客户端连库看数据」而建；项目名与 smoke 的 `quan-auto` 不同 ⇒ 与 `run_sql_smoke.py` 可同时存在、互不拆。**它不是证据通道**：那份文件的头部注释里写清了它一个字都不许被门禁/DoD/契约引用。它之所以另立一份而不是给 smoke 加 `ports:`，为了守住 smoke 头部那两条设计约束（不发布端口 = 不和真实实例抢端口；发布端口会让门禁在端口被占时以环境性失败变红） |
 | `tools/run_sql_smoke.py` | ★ **运行时验证通道**：起库 → 验空 → 两份 DDL+触发测试 → 落报告 |
-| `tools/falsify_smoke.py` | 证伪器：逐条放宽 CHECK 表达式，确认触测会变红（目前 31/31 CAUGHT / 30 条约束，**只在 `postgres:17` 上做过**） |
+| `tools/falsify_smoke.py` | 证伪器：逐条放宽 CHECK 表达式，确认触测会变红（**2026-10-01 现取 33/33 CAUGHT / 32 条命名 CHECK**，**只在 `postgres:17` 上做过**） |
 | `tools/sql-smoke-report.txt` | 运行时证据（含镜像 digest）—— **快照**，改 `db/*.sql` 后作废；这份是默认路径那份 = `postgres:17`(17.11) |
-| `tools/sql-smoke-report-pg14.txt` / `tools/sql-smoke-report-pg15.txt` / `tools/sql-smoke-report-pg16.txt` | 版本阶梯的另三份证据（`postgres:14` 14.24 / `15` 15.18 / `16` 16.15，各 23/0 与 42/0）—— 由 `--report=` 另存，互不覆盖；同样是**快照** |
+| `tools/sql-smoke-report-pg14.txt` / `tools/sql-smoke-report-pg15.txt` / `tools/sql-smoke-report-pg16.txt` | 版本阶梯的另三份证据（`postgres:14` 14.24 / `15` 15.18 / `16` 16.15，各 23/0 与 46/0）—— 由 `--report=` 另存，互不覆盖；同样是**快照** |
 | `tools/falsify-report.txt` | 上述证伪的逐案例证据 —— **快照**，改 `db/*.sql` 或 `*.smoke.sql` 后作废 |
 
 ### F. 渐进式披露层（2026-09-25 新增；给 agent 的作业规程，**不是判据**）
@@ -300,28 +300,31 @@ I3 风控真正介入下单路径（**默认关闭**）、I3b 风控存储层与
   登记在核心契约 §F，一致性靠「现场重跑 `PerformanceAnalyzer`」而不是比两个同源数字。
 
 **产物**：
-`.venv` + pytest（数量**现取** `python -m pytest -q`；**2026-09-30「采集编排层」后实测 `514 passed`**
-= 骨架 3 + 竖切 **25** + PIT 30 + 适配器 **136** + 采集凭证环境变量 11 + 落库侧 52 + 端到端接线 11
-+ 风控引擎 67 + 风控闸门 19 + 风控存储 79 + 看板 36 + 采集编排 **45** —— 这个分项构成是**那一刻**的实测，
-别的文件要引用时**按现值取**，别抄。此前几轮那几行写的是 `467 passed`（2026-09-29 晚 Ⅲ「CSV 侧复权口径」，适配器当时 134）、
+`.venv` + pytest（数量**现取** `python -m pytest -q`；**2026-10-01「分红」后实测 `539 passed`**
+= 骨架 3 + 竖切 **25** + PIT **34** + 适配器 **136** + 采集凭证环境变量 11 + 落库侧 **67** + 端到端接线 11
++ 风控引擎 67 + 风控闸门 19 + 风控存储 79 + 看板 36 + 采集编排 **51** —— 这个分项构成是**那一刻**的实测，
+别的文件要引用时**按现值取**，别抄。此前几轮那几行写的是 `514 passed`（2026-09-30「采集编排层」，落库侧 52 / 采集编排 45）、
+`467 passed`（2026-09-29 晚 Ⅲ「CSV 侧复权口径」，适配器当时 134）、
 `464 passed`（晚 Ⅱ）、`456 passed`（A6 收口，PIT 23 / 端到端接线 10 条）、`436 passed`、`414 passed`）、
 `pyproject.toml`（`dependencies = ["pandas>=2.0"]` —— S2 起**不再是空数组**，理由见 §1；源 SDK 在 `[datasources]` extra 里；
 **`psycopg` 声明在 `[postgres]` extra 里**（2026-09-25 裁决，同 [datasources] 的 opt-in 口径）：`pgstore.py` 里**惰性导入**，本机 `.venv` 是**手工装**的 3.3.6、CI 只装 `.[dev]` ⇒ 那条「驱动改成顶层导入」的变异在 CI 上仍是 `ENV-LIMIT`）、
 `quanauto/` 包（**16 个模块**：15 个实现 + 入口 `quanauto.cli`；条目数现取 `quanauto/*.py`）、
-`tests/`（骨架自检 3 条 + 竖切回归 **25** 条 + PIT 回归 **30** 条 + 适配器回归 **136** 条 + 采集凭证环境变量回归 **11** 条 + 落库侧回归 **52** 条 + 端到端接线回归 **11** 条 + 风控引擎回归 67 条 + 风控闸门回归 **19** 条 + 风控存储回归 **79** 条 + 看板回归 **36** 条 + 采集编排回归 **45** 条）、`.github/workflows/ci.yml`。
+`tests/`（骨架自检 3 条 + 竖切回归 **25** 条 + PIT 回归 **34** 条 + 适配器回归 **136** 条 + 采集凭证环境变量回归 **11** 条 + 落库侧回归 **67** 条 + 端到端接线回归 **11** 条 + 风控引擎回归 67 条 + 风控闸门回归 **19** 条 + 风控存储回归 **79** 条 + 看板回归 **36** 条 + 采集编排回归 **51** 条）、`.github/workflows/ci.yml`。
 
-**I2 仍未收口** —— 收口条件里现只剩**一条**没满足（明细见下，交付记录见 `docs/迭代计划.md` 的「I2 收口 ①ⓑ」那一节与 DC 契约附录 H）：
+**I2 仍未收口** —— 但开着的只剩**收口条件 ②**（**收口条件 ① 已于 2026-10-01 全关**；明细见下，交付记录见 `docs/迭代计划.md` 的「十一、I2 收口 ①ⓑ」与「十二、I2 收口 ①ⓐ：分红」那两节、以及 DC 契约附录 **B22** / **H**）：
 ① **复权价这一条已于 2026-09-29 晚 Ⅱ 实施**（订正：这里此前写的是「**复权价在回测里仍未实施**」，那句话**已作废**）：
 `DbDataFeed._row_to_bar` 按 `datacenter._price_scale()` 给的倍数对 OHLC **四列各乘一次**
 （唯一一处算式在 `quanauto/datafeed.py`：`_rescale_price`，**两个**调用点 `DbDataFeed._row_to_bar` + `CsvDataFeed._load_data`；`NONE` ⇒ 1.0 **不查库**、`HFQ` ⇒ 该日累计因子、`QFQ` ⇒ 该日因子 ÷ 视图末日因子），
 `volume` / `amount` **刻意不乘** ⇒ 读侧口径不再是「不复权」，守着它的是读侧 7 条 + 端到端控制组
 `test_adjusted_prices_reach_the_strategy_through_the_engine`（变异 `S11` / `A12`）。
-**收口条件①的现值** —— ⓐ**分红**：`get_dividend()` 恒 `0.0`，拆成 `test_known_gap_dividend_is_still_zero`，
-**那一条仍然不许删**（它守的缺口还没关闭）；ⓑ~~两个 ingestor 在 `quanauto/` 内**零调用者**（有实现，**没有产品写入路径**）~~
-**2026-09-30 已接上**（`quanauto/ingest.py` 编排层 + `tests/test_ingest.py` 45 条；**它只主张「调用点接上了」** ——
+**收口条件①的现值 = 零条** —— ⓐ~~**分红**：`get_dividend()` 恒 `0.0`，拆成 `test_known_gap_dividend_is_still_zero`，
+**那一条仍然不许删**（它守的缺口还没关闭）~~
+**已于 2026-10-01 收口**（读侧接上真值；5 条 PIT 用例 + 14 条落库侧用例 + 6 条采集编排用例压着它；
+守着旧缺口的那条用例**已按触发条件删除** —— **不是**改期望值）；ⓑ~~两个 ingestor 在 `quanauto/` 内**零调用者**（有实现，**没有产品写入路径**）~~
+**2026-09-30 已接上**（`quanauto/ingest.py` 编排层 + `tests/test_ingest.py` **51** 条（2026-10-01 现取；接上那天是 45 条）；**它只主张「调用点接上了」** ——
 `quanauto/cli.py` 不开采集子命令、真库上没跑过，「真源能不能通 / 覆盖面够不够」仍归 `docs/迭代计划.md` I2 的「产物」行，那一行照旧不打勾）；
-ⓒ~~`validate_frame` 对**复权帧**一条判据都没有~~（**2026-09-29 晩 Ⅳ 已收口**，见 DC 契约附录 B21.5 的 Ⅳ 块与「A6 收口 Ⅳ」那一节）。另有 Ⅱ 那轮**新登记**的一条 （`CsvDataFeed` 不做任何乘法 ⇒ CSV 侧仍是不复权口径）**已于 2026-09-29 晩 Ⅲ 收口** ⇒ 现值是上面 ⓐ **一条**（DC 契约附录 A6 的 Ⅲ / Ⅳ 块 + 附录 H）。
-逐条见 DC 契约附录 **A6**（收口）/ **B7**（缺口）/ **B21**（I2c 采集路径）/ **B21.3** / **B21.6** / **H**（采集编排层）。
+ⓒ~~`validate_frame` 对**复权帧**一条判据都没有~~（**2026-09-29 晩 Ⅳ 已收口**，见 DC 契约附录 B21.5 的 Ⅳ 块与「A6 收口 Ⅳ」那一节）。另有 Ⅱ 那轮**新登记**的一条 （`CsvDataFeed` 不做任何乘法 ⇒ CSV 侧仍是不复权口径）**已于 2026-09-29 晩 Ⅲ 收口** ⇒ **现值是零条**（DC 契约附录 A6 的 Ⅲ / Ⅳ 块、附录 **B22** 与附录 H）。
+逐条见 DC 契约附录 **A6**（收口）/ **B7**（缺口）/ **B21**（I2c 采集路径）/ **B21.3** / **B21.6** / **B22**（分红）/ **H**（采集编排层）。
 ② 各通道「哪些位置已实测、哪些仍是推断」的未确认清单没清空（登记在 DC 契约附录 **B14 / B16 / B17 / B21.6**）。
 ⇒ `docs/迭代计划.md` 里 I2 的「产物」行**没有打勾**是**如实**，不是漏填。另有两条永远不动的边界：
 真实取数天然不可复现、依赖外部站点存活，所以它**不得成为任何门禁或 DoD 的硬要求**；
@@ -361,9 +364,11 @@ tier-A 全绿；`core-contract-refs` 是仅剩的 tier-B 欠账，基线 **2**�
 
 **数据库侧已不再是「运行时未证实」**：两份触发测试 2026-09-23 先在容器 `postgres:17`（17.11）上
 各拿到 **23/0** 与 **42/0** PASS，2026-09-24 又在 `postgres:14`(14.24) / `15`(15.18) / `16`(16.15)
-上各跑一遍，同样是 **23/0** 与 **42/0** —— 即「四个 tag 上都通过」是实测的。
-这两份绿的**每一条命名 CHECK 都已被 `tools/falsify_smoke.py` 单独证伪（31/31 CAUGHT）** ——
+上各跑一遍，同样是 **23/0** 与 **42/0**；**2026-10-01（分红那一批改了 `db/*.sql`）四份快照全部重跑**，
+数据中心侧变成 **46/0**（风控侧仍 23/0）—— 即「四个 tag 上都通过」是实测的。
+这两份绿的**每一条命名 CHECK 都已被 `tools/falsify_smoke.py` 单独证伪（33/33 CAUGHT，覆盖 32 条命名 CHECK）** ——
 不再是抽样，但那次证伪**只在 `postgres:17` 上做过**，另三个镜像上只有冒烟层面的通过。
+⚠️ 这四份绿**只管到 2026-10-01 那一刻的 `db/*.sql`**：改过任何 DDL 后结论即作废（要重跑，不是改判据）。
 细节与编号一律以 `docs/开工前缺口清单.md` 为准，不要在本文件里复制它。
 
 ## 7. 工作纪律（每条都对应一次真实踩坑）
