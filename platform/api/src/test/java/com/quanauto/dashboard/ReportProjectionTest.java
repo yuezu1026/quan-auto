@@ -25,7 +25,7 @@ import org.junit.jupiter.api.Test;
  * 后者跑在本类同一个 {@code mvn test} 里）。下面这几条<b>不是</b>两侧一致性的判据：
  * 它们比的是「这一侧读得动真报告」，样本是手挑的。
  * 仍然只有手动脚本 {@code platform/check_text_parity.py} 的是「<b>活着的服务端</b>下发了什么」
- * （需要一个活着的 JVM ⇒ 不能当门禁）。分工见 {@code docs/智能量化交易平台.md} 附录C §C.8 / §C.9。
+ * （需要一个活着的 JVM ⇒ 不能当门禁）。分工见 {@code docs/智能量化交易平台.md} 附录C §C.8 / §C.9 / §C.11。
  */
 class ReportProjectionTest {
 

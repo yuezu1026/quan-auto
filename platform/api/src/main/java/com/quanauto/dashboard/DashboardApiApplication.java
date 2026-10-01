@@ -31,7 +31,8 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * 仍然只有手动脚本 {@code platform/check_text_parity.py} 的是<b>另一件事</b>：
  * 一个<b>活着的服务端</b>到底下发了什么（它需要一个活着的 JVM ⇒ 不能当门禁 ⇒ 不构成常驻证据）。
  * 分工与更正见 {@code docs/智能量化交易平台.md} 附录C §C.8（声明那层）、
- * §C.9（运行那层）与 §C.5 第 3 条的 2026-10-01 订正。别把「本地跑绿过」当证据。
+ * §C.9（运行那层）与 <b>§C.11</b>（显示规则那层，即 §C.5 第 3 条的 2026-10-01 订正）。
+ * 别把「本地跑绿过」当证据。
  */
 @SpringBootApplication
 public class DashboardApiApplication {

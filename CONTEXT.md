@@ -227,7 +227,7 @@ python tools/run_all_gates.py --selftest      # 证明这个 harness 自己会�
 | dashboard-consistency | `python tools/verify_dashboard.py` | 无参数。**只解析源码 + 跑真的 `PerformanceAnalyzer`**，不起浏览器、不联网。C10 的参照物是写出这些数的同一个分析器 ⇒ 「公式本身错了」它看不见（核心契约 §F5 记了这个边界） |
 | appendix-refs | `python tools/verify_appendix_refs.py` | 无参数。**只读文本**：不执行被检代码、不联网；文件清单取自 `git ls-files`，**拿不到就拒判**（不在 git 仓库里跑会红）。边界：只证明标签存在，**证明不了标签背后的裁决仍然成立** |
 | platform-spec-parity | `python tools/verify_platform_specs.py` | 无参数。**只解析文本 + Python AST**：不 import 被测代码、不编译、不启动 JVM、不渲染页面。它比的是两侧**声明**是否一致 ⇒ 红了先看 Java 侧那张手抄副本是不是旧了（方向是**改 Java**，Python 侧是冻结的参照物）；**别**把它读成「页面印对了」 |
-| platform-runtime | `python tools/verify_platform_build.py` | 无参数（另有 `--keep` 留下沙箱、`--repo-root=` 换根）。在临时沙箱里**真跑** `npm ci` → `npm run build` → `mvn test`，**不写仓库一个字节**。**需要 JDK 21 与 Node**：探不到工具链就退 **3 = SKIPPED**，而 harness 明确把 3 记成「**不算绿**」（两种红不合并：一种去装工具链、一种去看门禁本体）。它**不启动 JVM、不渲染页面** ⇒ 红了先看它打印的那条检查码（都以 `PB-` 开头），别把它读成「页面印对了」；沙箱会下 Maven/npm 依赖，所以它是这一批里最慢的一条 |
+| platform-runtime | `python tools/verify_platform_build.py` | 无参数（另有 `--keep` 留下沙箱、`--repo-root=` 换根）。在临时沙箱里**真跑** `npm ci` → `npm run build` → `mvn test`，**不写仓库一个字节**。**需要 JDK 21 与 Node**：探不到工具链就退 **3 = SKIPPED**，而 harness 明确把 3 记成「**不算绿**」（两种红不合并：一种去装工具链、一种去看门禁本体）。它**不起服务**（`mvn test` 会起 JVM，但跑完就退出、没有一个活着的 JVM 在监听端口）、**不渲染页面** ⇒ 红了先看它打印的那条检查码（都以 `PB-` 开头），别把它读成「页面印对了」；沙箱会下 Maven/npm 依赖，所以它是这一批里最慢的一条 |
 
 每个门禁都支持 `--selftest`。
 

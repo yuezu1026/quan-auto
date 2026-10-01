@@ -32,7 +32,7 @@ import org.junit.jupiter.api.Test;
  * 只有一份**按量纲 × 小数位 × 值**铺开的语料加一个自动比对能。
  *
  * <p>⚠️ 边界：本类只比 {@code formatMetric} 这一层。**页面本身**（渲染 / 布局 / 视觉）
- * 仍然零覆盖 —— 分工见 {@code docs/智能量化交易平台.md} 附录C §C.8 / §C.9。
+ * 仍然零覆盖 —— 分工见 {@code docs/智能量化交易平台.md} 附录C §C.8 / §C.9 / §C.11。
  */
 class FormatParityTest {
 
