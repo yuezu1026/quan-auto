@@ -16,6 +16,13 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
  * 本机文件路径（{@code ReportCatalog} 的异常里就有），直接吐给浏览器是没必要的暴露。
  * 想看细节的人去服务端日志里看（那里 {@code log.warn} 了同一个 cause）。
  *
+ * <p>⚠️ 上面那句「不回内部路径」第一版**没兑现**（2026-09-30 修）：当时下发的是
+ * {@link DashboardException#getMessage()}，而 {@code ReportCatalog} 的详细消息里拼着本机绝对目录
+ * ⇒ 真的吐出了 {@code {"error":"没有这份报告：nope（目录 D:\…\.rounds\i1）"}}。
+ * 现在下发的是 {@link DashboardException#clientMessage()}（详细消息照旧进日志），
+ * 由 {@link ApiExceptionHandlerTest} 钉住；那条用例还带一条**前提断言**
+ * （详细消息里必须真的带目录），免得它在前提消失后退化成一句永远为真的空转。
+ *
  * <p>状态码分工：
  * <ul>
  *   <li>{@code 404} —— 这个名字没有报告（用户敲错地址）</li>
@@ -31,14 +38,14 @@ public class ApiExceptionHandler {
     @ExceptionHandler(ReportNotFoundException.class)
     public ResponseEntity<Map<String, String>> handleNotFound(ReportNotFoundException exc) {
         log.warn("报告不存在：{}", exc.getMessage());
-        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", exc.getMessage()));
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", exc.clientMessage()));
     }
 
     @ExceptionHandler(DashboardException.class)
     public ResponseEntity<Map<String, String>> handleBadReport(DashboardException exc) {
         log.warn("报告读不懂：{}", exc.getMessage());
         return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
-                .body(Map.of("error", exc.getMessage()));
+                .body(Map.of("error", exc.clientMessage()));
     }
 
     /**

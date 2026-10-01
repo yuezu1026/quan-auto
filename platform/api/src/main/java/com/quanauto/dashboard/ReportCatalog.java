@@ -91,7 +91,9 @@ public class ReportCatalog {
                     .sorted(Comparator.naturalOrder())
                     .toList();
         } catch (IOException exc) {
-            throw new DashboardException("报告目录读取失败：" + directory + "（" + exc.getMessage() + "）");
+            throw new DashboardException(
+                    "报告目录读取失败：" + directory + "（" + exc.getMessage() + "）",
+                    "报告目录读取失败，详见服务端日志");
         }
     }
 
@@ -105,7 +107,9 @@ public class ReportCatalog {
             throw new DashboardException("报告路径越出报告目录：" + id);
         }
         if (!Files.isRegularFile(path)) {
-            throw new ReportNotFoundException("没有这份报告：" + id + "（目录 " + directory + "）");
+            throw new ReportNotFoundException(
+                    "没有这份报告：" + id + "（目录 " + directory + "）",
+                    "没有这份报告：" + id);
         }
         return path;
     }
@@ -115,7 +119,9 @@ public class ReportCatalog {
         try {
             return mapper.readTree(path.toFile());
         } catch (IOException exc) {
-            throw new DashboardException("报告读取失败：" + id + "（" + exc.getMessage() + "）");
+            throw new DashboardException(
+                    "报告读取失败：" + id + "（" + exc.getMessage() + "）",
+                    "报告读取失败：" + id);
         }
     }
 
@@ -146,7 +152,10 @@ public class ReportCatalog {
                 }
                 out.add(new ReportSummary(id, symbol, start, end, bars, null));
             } catch (DashboardException exc) {
-                out.add(new ReportSummary(id, null, null, null, null, exc.getMessage()));
+                // 这个 error 字段是**下发给浏览器**的（前端会把它印在下拉标题上）
+                // ⇒ 用 clientMessage()，本机路径只留在日志里。
+                log.warn("列表里这份报告读不出来：{}", exc.getMessage());
+                out.add(new ReportSummary(id, null, null, null, null, exc.clientMessage()));
             }
         }
         return out;

@@ -97,6 +97,17 @@ ADDENDA = {
         '新增门禁 `platform-runtime`（`tools/verify_platform_build.py`，tier-A，已接进',
         '**「页面本身」那半句仍然成立**，本门禁没有解除它。',
         '它探不到工具链时退出码 3、打印 `verdict: SKIPPED`，而 harness 把它记成「不算绿」。',
+        # C.10 是**声明兑现**的记录块（2026-09-30 追加）：ApiExceptionHandler 的类注释写着
+        # 「不回内部路径」，而实现把带本机绝对路径的 `getMessage()` 直接放进了响应体。
+        # 抹掉本块 = 那句声明又变回「无凭无据的话」，而**新的计数（Java 侧 @Test 声明数 15）**
+        # 会只剩在 Java 源码里 —— 本文件是 .docx 派生、重转换即抹，正是单向判据那种隐身。
+        # 四条锚各占一行、互不嵌套：① 标题即断言（发现的是声明与实现不一致，不是笔误）；
+        # ② 修法本身（两条消息、两个去处）；③ 常驻牙在哪（新测试类 + 那条门禁真的跑 mvn test）；
+        # ④ 诚实登记的那处缺口（`ids()` 没有覆盖）—— 最容易被顺手删掉的一条。
+        '### C.10 错误响应体里不许出现本机路径：声明兑现 + 常驻测试钉住（追加，2026-09-30）',
+        '- `getMessage()`（带路径）只进服务端日志；`clientMessage()`（不带路径）才进响应体。',
+        '- **这一层是常驻牙**：新增的 `platform/api/src/test/java/com/quanauto/dashboard/ApiExceptionHandlerTest.java`',
+        '- **仍然没覆盖的那一处（诚实登记）**：`ReportCatalog.ids()` 的「报告目录读取失败」走的是**同一个**',
     ],
     # 契约文档同样由 .docx 派生，所以 I1 的裁决也只能追加。追加块丢了 = 裁决没了，
     # 机器可读的那一份（tools/contract-signature-manifest.json）就变成孤儿，所以这里断言存在。

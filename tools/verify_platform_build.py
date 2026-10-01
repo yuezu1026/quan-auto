@@ -122,8 +122,9 @@ MVN_TIMEOUT = 1800
 NPM_TIMEOUT = 900
 
 # surefire 每个测试类印一行，末尾再印一行汇总 —— 取**最后**一条才是汇总。
-# 实测形态：`[INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0`
-#           `[ERROR] Tests run: 8, Failures: 1, Errors: 1, Skipped: 0`（失败时走 stderr）
+# 实测形态：`[INFO] Tests run: N, Failures: 0, Errors: 0, Skipped: 0`
+#           `[ERROR] Tests run: N, Failures: 1, Errors: 1, Skipped: 0`（失败时走 stderr）
+#           （N 只写形态不写数：真实 N 会随用例增删变，上面的用例数由本门禁自己数出来对拍。）
 SUREFIRE_RE = re.compile(
     r'Tests run:\s*(\d+),\s*Failures:\s*(\d+),\s*Errors:\s*(\d+),\s*Skipped:\s*(\d+)')
 TEST_ANNOTATION_RE = re.compile(r'^\s*@Test\b', re.M)

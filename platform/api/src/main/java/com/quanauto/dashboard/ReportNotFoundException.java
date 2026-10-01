@@ -12,4 +12,12 @@ public class ReportNotFoundException extends DashboardException {
     public ReportNotFoundException(String message) {
         super(message);
     }
+
+    /**
+     * 详细消息里带着「（目录 <绝对路径>）」那一截（只有日志该看），
+     * 这一条把下发给浏览器的那句单独说出来。
+     */
+    public ReportNotFoundException(String message, String clientMessage) {
+        super(message, clientMessage);
+    }
 }
