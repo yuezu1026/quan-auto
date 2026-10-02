@@ -1,0 +1,324 @@
+{
+  "note": "design-artifacts 的登记表。它同时是两件事：① 图纸骨架的期望计数；② 「哪个数被写在哪个 README 的哪句话里」的绑定 —— 前者由 DA-* 与现测对拍，后者由 DA-COUNT 双向核（该在的必须在、过期的必须不在）。改数字只改这里 + 对应 README，不要改 tools/verify_design_artifacts.py。caliber 写口径：口径不写清，两个数都能自圆其说（本 README 的 `—` 与方括号占位符都栽在这上面）。",
+  "artifacts": {
+    "high": "docs/high fidelity/design.html",
+    "low": "docs/low fidelity/index.html",
+    "proto": "docs/low fidelity/prototype.html",
+    "board": "docs/high fidelity/dashboard.html"
+  },
+  "upstream": {
+    "metrics": "quanauto/dashboard.py",
+    "rules": "quanauto/risk.py",
+    "fixture": "platform/web/test/report-view.fixture.json",
+    "styles": "platform/web/src/styles.css"
+  },
+  "frames": {
+    "total": 14,
+    "proposal": 13,
+    "delivered_ids": ["f5"],
+    "lowfi_delivered": ["F5"],
+    "lowfi_trace_section": "s6"
+  },
+  "wf": {
+    "frames": ["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8"],
+    "regions": 37
+  },
+  "proto": {
+    "screens": ["F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "STATES"]
+  },
+  "claims": [
+    {
+      "probe": "high_bytes",
+      "expected": 222633,
+      "template": "**{value:,}** 字节",
+      "forbidden": "222,618",
+      "doc": "docs/high fidelity/README.md",
+      "unit": "字节",
+      "caliber": "docs/high fidelity/design.html 的磁盘字节数（Python read_bytes()；PowerShell 的 .Length 数的是 UTF-16 码元，本仓库读错过一次）"
+    },
+    {
+      "probe": "high_lines",
+      "expected": 2708,
+      "template": "**{value:,}** 行",
+      "doc": "docs/high fidelity/README.md",
+      "unit": "行",
+      "caliber": "splitlines() 的行数；本文件是纯 CRLF（CR 数 == LF 数 == 行数）"
+    },
+    {
+      "probe": "high_frames",
+      "expected": 14,
+      "template": "**{value}** 个 `.frame`",
+      "doc": "docs/high fidelity/README.md",
+      "unit": "个",
+      "caliber": "class 词表里含 frame 的元素（4 个 div + 10 个 article）"
+    },
+    {
+      "probe": "high_sections",
+      "expected": 10,
+      "template": "**{value}** 个 `<section>`",
+      "doc": "docs/high fidelity/README.md",
+      "unit": "个",
+      "caliber": "全文件的 section 元素（1 个 HERO + 9 个 .wrap.sec.anchor）"
+    },
+    {
+      "probe": "high_proposal",
+      "expected": 13,
+      "template": "`.proposal` **{value}**",
+      "doc": "docs/high fidelity/README.md",
+      "unit": "个",
+      "caliber": "class 词表里含 proposal 的元素；不许用 class=\"frame delivered\" 这种字面串去数已交付帧"
+    },
+    {
+      "probe": "high_pills",
+      "expected": 9,
+      "template": "**{value}** 个 `.pill`",
+      "doc": "docs/high fidelity/README.md",
+      "unit": "个",
+      "caliber": "class 词表里含 pill 的元素（顶栏那排锚点样式）"
+    },
+    {
+      "probe": "high_anchor_links",
+      "expected": 82,
+      "template": "**{value}** 个 `<a href=\"#…\">`",
+      "doc": "docs/high fidelity/README.md",
+      "unit": "个",
+      "caliber": "带 href=\"#…\" 的 <a> 元素（§7.1 与 §7.3 都写「82 个」，两个数同源）；注意它不等于 href=\"#…\" 的总次数（那 302 次里绝大多数是 SVG <use>）",
+      "forbidden": "**10** 个锚点链接"
+    },
+    {
+      "probe": "high_symbols",
+      "expected": 37,
+      "template": "**{value}** 个 `<symbol>`",
+      "doc": "docs/high fidelity/README.md",
+      "unit": "个",
+      "caliber": "SVG sprite 里 <symbol id=…> 的个数"
+    },
+    {
+      "probe": "high_uses",
+      "expected": 220,
+      "template": "**{value}** 处 `<use href>`",
+      "doc": "docs/high fidelity/README.md",
+      "unit": "处",
+      "caliber": "<use href=\"#…\"> 的出现次数"
+    },
+    {
+      "probe": "high_use_missing",
+      "expected": 0,
+      "template": "**缺失 {value}**",
+      "doc": "docs/high fidelity/README.md",
+      "unit": "个",
+      "caliber": "<use href> 指向的 id 里，没有任何 <symbol id> 定义的那些"
+    },
+    {
+      "probe": "high_unused_count",
+      "expected": 3,
+      "template": "另有 **{value}** 个 symbol 定义了但当前无人引用",
+      "doc": "docs/high fidelity/README.md",
+      "unit": "个",
+      "caliber": "symbol id 集合减去 use href 集合（备用字形，不是缺口）"
+    },
+    {
+      "probe": "high_disabled",
+      "expected": 28,
+      "template": "`[disabled]` **{value}** 个",
+      "doc": "docs/high fidelity/README.md",
+      "unit": "个",
+      "caliber": "带独立 disabled 属性的元素（26 个 <button> + 2 个 <input>），不是 <button disabled> 的个数"
+    },
+    {
+      "probe": "high_clickable",
+      "expected": 1,
+      "template": "可点按钮恰好 **{value}** 个",
+      "doc": "docs/high fidelity/README.md",
+      "unit": "个",
+      "caliber": "没有 disabled 属性的 <button>"
+    },
+    {
+      "probe": "high_disabled_no_title",
+      "expected": 0,
+      "template": "带非空 `title`（{value} 个漏",
+      "doc": "docs/high fidelity/README.md",
+      "unit": "个",
+      "caliber": "带 disabled 却没有非空 title 属性的元素"
+    },
+    {
+      "probe": "high_css_sections",
+      "expected": 18,
+      "template": "**{value}** 节编号 CSS",
+      "doc": "docs/high fidelity/README.md",
+      "unit": "节",
+      "caliber": "匹配 /* ==== NN · 的段号注释（NN 从 00 到 17）；文件顶部那段列举小节的注释也算一节，所以是 18 不是 17"
+    },
+    {
+      "probe": "high_ids",
+      "expected": 57,
+      "template": "`id` 共 **{value}** 个",
+      "doc": "docs/high fidelity/README.md",
+      "unit": "个",
+      "caliber": "全文件所有开始标签上的 id 属性（含 <symbol>）；重复的另由 DA-DUP-ID 盯着"
+    },
+    {
+      "probe": "high_dup_ids_len",
+      "expected": 0,
+      "template": "重复 id **{value}** 个",
+      "doc": "docs/high fidelity/README.md",
+      "unit": "个",
+      "caliber": "同一个 id 值在文档里出现多次"
+    },
+    {
+      "probe": "high_dash_only",
+      "expected": 38,
+      "template": "整格只剩一个 `—` 的 `<td>` **{value}** 格",
+      "doc": "docs/high fidelity/README.md",
+      "unit": "格",
+      "caliber": "单元格文本（剥掉标签、strip 空白后）恰好等于 U+2014 的个数"
+    },
+    {
+      "probe": "high_dash_contains",
+      "expected": 49,
+      "template": "含 `—` 的 `<td>` **{value}** 格",
+      "doc": "docs/high fidelity/README.md",
+      "unit": "格",
+      "caliber": "单元格文本里含 U+2014 的个数（含「— 无」这种把破折号写在中间的）；38 是它的子集"
+    },
+    {
+      "probe": "high_bracket_kinds",
+      "probe2": "high_bracket_places",
+      "expected": 52,
+      "template": "方括号占位符 **{value}** 种 / **{value2}** 处",
+      "doc": "docs/high fidelity/README.md",
+      "unit": "种/处",
+      "caliber": "剥掉注释 / 样式 / 脚本后，正文里 [...] 的不同取值数与出现次数"
+    },
+    {
+      "probe": "high_bracket_whole_kinds",
+      "probe2": "high_bracket_whole_places",
+      "expected": 53,
+      "template": "整份文件（含样式表与脚本）是 **{value}** 种 / **{value2}** 处",
+      "doc": "docs/high fidelity/README.md",
+      "unit": "种/处",
+      "caliber": "整份文件（含样式表与脚本）里 [...] 的不同取值数与出现次数；与上一行的口径差就是样式表里那些不是占位符的方括号"
+    },
+    {
+      "probe": "high_bracket_n",
+      "expected": 39,
+      "template": "其中 `[n]` 一种占 **{value}** 处",
+      "doc": "docs/high fidelity/README.md",
+      "unit": "处",
+      "caliber": "正文口径下恰好等于 n 的那些占位符"
+    },
+    {
+      "probe": "high_bracket_places",
+      "expected": 184,
+      "template": "**{value}** 处（口径：剥掉注释",
+      "forbidden": "**195** 处（口径：剥掉注释",
+      "doc": "docs/high fidelity/README.md",
+      "unit": "处",
+      "caliber": "正文口径下的占位符总数；195 是整份文件的口径，两个数不能互相顶替"
+    },
+    {
+      "probe": "high_media",
+      "expected": 2,
+      "template": "`@media` 仍只有 **{value}** 条",
+      "doc": "docs/high fidelity/README.md",
+      "unit": "条",
+      "caliber": "本稿自己的 @media 条数（@media 后必须跟括号才算）"
+    },
+    {
+      "probe": "styles_bytes",
+      "expected": 3032,
+      "template": "`styles.css` {value:,} 字节",
+      "doc": "docs/high fidelity/README.md",
+      "unit": "字节",
+      "caliber": "platform/web/src/styles.css 的磁盘字节数"
+    },
+    {
+      "probe": "styles_media",
+      "expected": 0,
+      "template": "`platform/web/src/styles.css` 里 `@media` **{value}** 处",
+      "doc": "docs/high fidelity/README.md",
+      "unit": "处",
+      "caliber": "已交付那层样式表里 @media 的条数"
+    },
+    {
+      "probe": "metric_label_count",
+      "expected": 14,
+      "template": "`quanauto/dashboard.py` 的 **{value}** 条 `METRIC_SPECS` 标签",
+      "doc": "docs/high fidelity/README.md",
+      "unit": "条",
+      "caliber": "从 METRIC_SPECS 的 AST 里取第三个位置参（标签），不是 import 之后读。⚠️ 这里必须数**计数**而不是列表长度是否非空 —— 后者在列表非空时恒真，空转守卫会形同虚设"
+    },
+    {
+      "probe": "rule_id_count",
+      "expected": 6,
+      "template": "`quanauto/risk.py` 的 **{value}** 条 `GLOBAL_RULE_IDS`",
+      "doc": "docs/high fidelity/README.md",
+      "unit": "条",
+      "caliber": "RULE_SPECS 里每个 RuleSpec 的第一个位置参（GLOBAL_RULE_IDS 是同一份清单的顺序副本）"
+    },
+    {
+      "probe": "fixture_text_count",
+      "expected": 14,
+      "template": "`report-view.fixture.json` 的 **{value}** 条 `text`",
+      "doc": "docs/high fidelity/README.md",
+      "unit": "条",
+      "caliber": "夹具 metrics[].text 的条数"
+    },
+    {
+      "probe": "low_bytes",
+      "expected": 109225,
+      "template": "**{value:,}** 字节",
+      "doc": "docs/low fidelity/README.md",
+      "unit": "字节",
+      "caliber": "docs/low fidelity/index.html 的磁盘字节数"
+    },
+    {
+      "probe": "low_wf_frame_count",
+      "expected": 8,
+      "template": "`data-wf-frame` **{value}** 个",
+      "doc": "docs/low fidelity/README.md",
+      "unit": "个",
+      "caliber": "静态规格板上 data-wf-frame 属性的出现次数（F1~F8）"
+    },
+    {
+      "probe": "low_regions",
+      "expected": 37,
+      "template": "`data-wf-region` **{value}** 个",
+      "doc": "docs/low fidelity/README.md",
+      "unit": "个",
+      "caliber": "静态规格板上 data-wf-region 属性的出现次数（线框的抓手）"
+    },
+    {
+      "probe": "low_trace_count",
+      "expected": 8,
+      "template": "追溯表 **{value}** 行",
+      "doc": "docs/low fidelity/README.md",
+      "unit": "行",
+      "caliber": "§6 追溯表的数据行（表头不算）；列位置按表头文本定位，不按列下标"
+    },
+    {
+      "probe": "proto_bytes",
+      "expected": 203765,
+      "template": "**{value:,}** 字节",
+      "doc": "docs/low fidelity/README.md",
+      "unit": "字节",
+      "caliber": "docs/low fidelity/prototype.html 的磁盘字节数"
+    },
+    {
+      "probe": "proto_probes",
+      "expected": 43,
+      "template": "共 **{value}** 项",
+      "doc": "docs/low fidelity/README.md",
+      "unit": "项",
+      "caliber": "页内自检 probe(\"P-NN\", …) 的定义个数（去重）；页内自检不是仓库门禁，这一条数的只是它自己的条数"
+    },
+    {
+      "probe": "board_bytes",
+      "expected": 14084,
+      "template": "**{value:,}** 字节",
+      "doc": "docs/high fidelity/README.md",
+      "unit": "字节",
+      "caliber": "docs/high fidelity/dashboard.html 的磁盘字节数（派生文件的 DA-FRESH 另算）"
+    }
+  ]
+}
