@@ -429,6 +429,37 @@ GATES = [
         'selftest': ['tools/verify_risk_table_wiring.py', '--selftest'],
     },
     {
+        'name': 'data-center-table-wiring',
+        'tier': 'A',
+        # 上一条是**风控侧**的写入方门禁；数据中心侧当时没有对应的一条，于是「dc 表里有
+        # 6 张零写入者」这句话一直**只写在契约散文里**（B20.6 那一格 + 附录 J 的 J-10 +
+        # `quanauto/ingest.py` 里那句「`dc_quality_issue` 仍零写入者」），谁也没法核。
+        # 它的代价和风控侧那条一模一样：零写入
+        # 者的表是一个**观测空白** —— DDL 门禁照绿（表和约束都在）、SQL 冒烟照绿（约束真的
+        # 会拒绝）、pytest 照绿（没有测试碰它），于是关于这张表的每一份报告都是**空集上通过**。
+        # 而这一次多一层：那个「6」是**手抄的读数**，本轮之前没有任何东西在数它 —— 新加一张
+        # 没人写的表、或给某张表接上写入方，散文里的数会静默过期。
+        # 本门禁守五件事：① `db/data_center.sql` 里每张 dc 表要么有**产品写入方**、要么在
+        # 契约 `#### B20.7` 的登记表里登记了（带理由）——双向查，豁免过期（表有了写入方
+        # 却还挂着豁免）报 `DCW-EXEMPT-STALE`；② 「被提及」不算写入方（用 `ast` 解析并
+        # **丢弃 docstring** —— 实测那 6 张表在 `quanauto/*.py` 里的 5 处出现**全是**注释与
+        # docstring，其中 `quanauto/ingest.py:38` 自己就写着「`dc_quality_issue` 仍零写入者」）；
+        # ③ 写入方归属契约点名的组件（`PgBarIngestor` / `PgFactorIngestor` / `PgDividendIngestor` /
+        # `IngestRunLog`），并且 `tests/` `tools/` `platform/` 里的写入**不算**产品写入者；
+        # ④ 那条让这几行值得写的**能力**还在（`IS DISTINCT FROM` 的同值不写、批次 `run_id`
+        # 回写 …），能力判据钉在常量名上，改名会报 `DCW-CAP-MISSING` 而不是静默失效；
+        # ⑤ 契约 B20.7 里那**三个读数**（dc 表共 N 张 / 有写入者的 N 张 / 仍是零写入者的 N 张）
+        # 与现数逐一对账 —— 这一条才是本轮补的洞：读数不再是手抄的。
+        # 边界：它**不跑任何 SQL**（「语句存在」不等于「行落库」，那是 `run_sql_smoke.py` 与
+        # store 测试的活）；也**不判断「该不该有写入方」** —— 那 6 张表为什么现在可以没有
+        # 写入者是**人写的理由**（在 B20.7 的登记表里），本门禁只保证「理由在、且与代码同时
+        # 漂了会红」。**它不关闭附录 J 的 J-10**：J-10 要的是产品需求，而需求不是门禁能造的。
+        'what': 'db/data_center.sql 每张 dc 表都有产品写入方（或在契约 B20.7 登记豁免、并写明'
+                '理由）、写入方归属契约点名的组件、关键能力未被改掉，且 B20.7 的三个读数与现数一致',
+        'runner': ['tools/verify_data_center_table_wiring.py'],
+        'selftest': ['tools/verify_data_center_table_wiring.py', '--selftest'],
+    },
+    {
         'name': 'platform-spec-parity',
         'tier': 'A',
         # 平台层读取侧切片（`platform/`，2026-09-29 追加）把 `quanauto/dashboard.py` 的
