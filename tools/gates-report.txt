@@ -1,7 +1,7 @@
 SCOPE: FULL -- all 23 registered gate(s) ran.
 VERDICT: PASS -- 23 of 23 gate(s) ok.
 NOTE: core-contract-refs=RATCHET 2/2 report a body verdict other than PASS and still count as ok. A tier-B ratchet prints DRIFT+/DRIFT-/DRIFT~ in its GATE header when the debt moved, and RATCHET at baseline; the line under it says verdict: DIRTY in every one of those cases (DIRTY is that script's own word for found N findings; it prints CLEAN when the count is zero). Read the GATE header, not that word.
-SIDE-EFFECT: gates wrote nothing (2842 file(s) watched)
+SIDE-EFFECT: gates wrote nothing (2848 file(s) watched)
 
 ==============================================================================
 GATE md-fidelity (tier A) selftest=PASS verdict=PASS 0 finding(s)
@@ -29,7 +29,7 @@ GATE data-center-ddl (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 数据中心契约 §3.6.1 与 db/data_center.sql 约束清单双向一致；写侧量子常量与 DDL 列标度也双向对拍
 argv: tools/verify_data_center.py
 ------------------------------------------------------------------------------
-CRLF-normalised: contract=311712 bytes, ddl=23200 bytes, smoke=45269 bytes, writer=50780 bytes
+CRLF-normalised: contract=320449 bytes, ddl=23200 bytes, smoke=45269 bytes, writer=50780 bytes
 extracted: tables=10 documented=18 declared=18 in_body=18 mysqlisms=0 smoke_asserted=18 writer_scales=3 ddl_numeric=14 quanta=8 exempt=6 ladder_guards=194 exercised=37 registered=3 uncovered=0
 verdict: PASS (0 issue(s))
 NOTE: this gate never executes the DDL and never inspects a CHECK expression. Passing it does NOT mean the constraints reject bad values -- that is what db/data_center.smoke.sql has to print SMOKE PASS for. That run has happened (see tools/sql-smoke-report*.txt), and so has the per-constraint falsification (tools/falsify-report*.txt); both sets are SNAPSHOTS and are void the moment any db/*.sql or *.smoke.sql file changes. C8 reads the writer but only compares DECLARED scales: it cannot show that the values that arrive are within them, and it does not cross-check precision (the DDL uses numeric(18,4) and numeric(20,4) for the same constant).
@@ -49,7 +49,7 @@ GATE data-center-adapter (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 适配器把源列名/取值翻成标准 schema、采集层不含数据库驱动、上游 SDK 只在函数内惰性 import、且行对象不暴露源字段名
 argv: tools/verify_data_center_adapter.py
 ------------------------------------------------------------------------------
-CRLF-normalised: quanauto\datasources.py=147350 bytes, quanauto\datacenter.py=50036 bytes, quanauto\errors.py=17585 bytes, docs\智能量化交易平台-数据中心接口契约文档.md=311712 bytes
+CRLF-normalised: quanauto\datasources.py=147350 bytes, quanauto\datacenter.py=50036 bytes, quanauto\errors.py=17585 bytes, docs\智能量化交易平台-数据中心接口契约文档.md=320449 bytes
 extracted: scanned_modules=3 str_maps=9 column_maps=8 value_maps=1 schema_bindings=6 module_imports=15 lazy_source_imports=2 row_classes=5 denylist_names=37 contract_schemas=5 taxonomy_declared=8 taxonomy_producers=8 taxonomy_wiring=1
 verdict: PASS (0 issue(s))
 NOTE: 这个门禁只解析源码、从不执行、不导入 pandas、不跑 pytest。它证明的是「结构上没被绕过」，**不是**「映射表的内容是对的」—— 源列名是从各源文档抄来的，从未联网核对（akshare/baostock 都没装），那条欠账登记在数据中心契约附录 B。东财两张财务表是照实测重排的（附录 B12），但那是**人工冒烟**的结论，不是这里出来的。运行时行为由 tests/test_data_center_adapter.py 负责。
@@ -59,7 +59,7 @@ GATE iteration-plan (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 迭代计划里每个标「已交付」的迭代都引用了一条真实存在的证据路径
 argv: tools/verify_iteration_plan.py
 ------------------------------------------------------------------------------
-CRLF-normalised: plan=278004 bytes (迭代计划.md)
+CRLF-normalised: plan=290937 bytes (迭代计划.md)
 extracted: iterations=5 delivered=4 dod_sections=5
 verdict: PASS (0 issue(s))
 NOTE: this gate checks the plan is internally well-formed and that no completion claim dangles. It cannot judge whether an iteration was actually delivered -- someone still has to open the cited evidence file.
@@ -163,7 +163,7 @@ argv: tools/verify_appendix_refs.py
 scan scope: git ls-files=157 file(s), read as text=154, skipped=3
   skipped (binary/undecodable): docs/智能量化交易平台-数据中心数据源选型与接入规范.docx, docs/智能量化交易平台-核心模块接口契约文档.docx, docs/智能量化交易平台.docx
 appendix index: core=7L/24I dc=7L/81I prd=3L/0I risk=0L/0I
-citations: 793 total, 355 with an item label, 207 naming an owner, in 71 file(s)
+citations: 804 total, 355 with an item label, 211 naming an owner, in 71 file(s)
 verdict: PASS (0 issue(s))
 
 ==============================================================================
@@ -202,7 +202,7 @@ argv: tools/verify_class_coverage.py
 ------------------------------------------------------------------------------
 root:            D:\project-quan\quan-auto
 contract[core]   docs\智能量化交易平台-核心模块接口契约文档.md  classes=80 prose=21437 chars
-contract[dc  ]   docs\智能量化交易平台-数据中心接口契约文档.md  classes=29 prose=162488 chars
+contract[dc  ]   docs\智能量化交易平台-数据中心接口契约文档.md  classes=29 prose=167422 chars
 contract[risk]   docs\智能量化交易平台-风控层接口契约文档.md  classes=24 prose=45645 chars
 python blocks:   71 (unparsable=2, of which class-like=2, NewType aliases=1)
 NOTE: 契约 core 文档 1167 行的块解析不了（第 1168 行语法错：invalid syntax）—— 类名提示=Account 首行=@dataclass class Account: account_id: str # 账户ID total_capital: float 
@@ -266,11 +266,11 @@ what: npm ci/test/build 与 mvn test 真跑一遍（第二步在 jsdom 里真的
 argv: tools/verify_platform_build.py
 ------------------------------------------------------------------------------
 TOOLCHAIN mvn=3.9.16 java=21 (openjdk version "21.0.12" 2026-07-21 LTS, from JAVA_HOME=C:\Program Files\Zulu\zulu-21) node=v25.2.1 npm=11.16.0
-SANDBOX C:\Users\39002\AppData\Local\Temp\quanauto-platform-build-cxa70v5m (33 file(s) copied)
-STEP npm-ci           rc=0 (6.3s) OK
-STEP npm-test         rc=0 (3.2s) OK
-STEP npm-build        rc=0 (1.4s) OK
-STEP mvn-test         rc=0 (7.3s) OK
+SANDBOX C:\Users\39002\AppData\Local\Temp\quanauto-platform-build-icv1cbec (33 file(s) copied)
+STEP npm-ci           rc=0 (4.9s) OK
+STEP npm-test         rc=0 (2.5s) OK
+STEP npm-build        rc=0 (1.1s) OK
+STEP mvn-test         rc=0 (5.8s) OK
 STATS sandbox_files=33 mvn_tests_run=17 mvn_declared=17 mvn_failures=0 mvn_errors=0 js_tests_total=13 js_tests_declared=13 static_files=3 static_bytes=228628 served_files=3
 verdict: PASS (0 issue(s))
 
@@ -309,8 +309,8 @@ GATE line-anchors (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 文档与源码里的行号引用都被绑住（同一行有日期/提交号/版本号/「会漂」措辞，或在 tools/line-anchors.json 登记，其中 kind=numbered/row 会被按内容核对）
 argv: tools/verify_line_anchors.py
 ------------------------------------------------------------------------------
-scope: 96 file(s) scanned (docs/**/*.md, quanauto|tools|tests/*.py, CONTEXT.md, platform, .github/**/*.md)
-anchors: hits=93 distinct=72 auto-bound=44 registered=18 numbered-verified=14 row-verified=12
+scope: 97 file(s) scanned (docs/**/*.md, quanauto|tools|tests/*.py, CONTEXT.md, platform, .github/**/*.md)
+anchors: hits=94 distinct=73 auto-bound=45 registered=18 numbered-verified=14 row-verified=12
 registry: entries=39 numbered=14 quoted=5 row=12 structural=8
 verdict: PASS (0 issue(s))
 NOTE: 本门禁判的是「这个行号被绑住了」，不是「这个行号是对的」。B1-B4 的绑定只是要求同一行自己声明了它是快照 / 外部版本 / 会漂；kind=numbered / row 才真的按内容核对那一条。

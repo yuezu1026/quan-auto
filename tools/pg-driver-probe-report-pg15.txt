@@ -1,0 +1,55 @@
+SCOPE: probe_pg_driver（A 段无池源事实 / B 段真池 / C 段版本 / D 段本仓库用得到吗）-- 探针，不是门禁。
+GENERATED: 2026-10-02 21:25:05
+IMAGE: postgres:15 digest=sha256:724292da1f2e50bdccfc3302ce75bbba7f4a60767
+HOST: python=3.13.9 psycopg=3.3.6 psycopg-pool=3.3.3 declared-floor=3.1
+
+探针：连接与驱动行为（J-15 剩下两半）报告 -> D:\project-quan\quan-auto\tools\pg-driver-probe-report-pg15.txt
+docker server: 29.4.0
+容器 quan-pg-driver-probe 就绪：postgresql://postgres:quan_probe_local_only@127.0.0.1:55436/quan digest=sha256:724292da1f2e50bdc
+  PostgreSQL 15.19 (Debian 15.19-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit
+  编码守卫：server/client = UTF8/UTF8（期望 UTF8/UTF8）
+  空库守卫：public schema 下 0 张表 OK
+  已应用 db/data_center.sql（容器内 /tmp/data_center.sql）
+  A1 裸 connect（无池）+ `with conn:` 出块之后 closed=1（期望非 0：出块即关连接）
+  A2 默认 autocommit=False：裸读前后事务状态 IDLE -> INTRANS（期望 IDLE -> INTRANS）
+  A2 退化的事务块里那条 INSERT：另一个进程（容器内 psql）数到 0 行（期望 0）
+  A3 不前置裸读（进块时 IDLE）：同一个数法读到 1 行（期望 1 —— 量具校准）
+  [A 段（无池的源事实）] OK
+  B1 池化连接 + `with conn:` 出块之后 closed=0（期望 0：归还而不是关掉）
+  B2 归还后池自报 pool_size=1 pool_available=1（期望 available >= 1）
+    （同一对象再借出来：True —— 观察，不作判据）
+  B3 同一条池化连接、只摘掉 `_pool` 之后 closed=1（期望非 0：把 B1 归因到那个属性）
+  B4 池化连接上 upsert_daily_bars：inserted=1 skipped=0；事务之后 closed=0；另一个进程数到 1 行（期望 nonzero=1、closed=0）
+  B5 psycopg 3.3.6 + psycopg-pool 3.3.3 的 `close_returns=True` 池：连接类 Connection（按驱动版本期望 Connection）；conn.close() 之后 closed=0（期望 0：归还入池）
+  B6 默认池（close_returns=False）里 conn.close() 之后 closed=1（期望非 0：真关，即使它属于池）
+  [B 段（真池）] OK
+  C 本解释器：Python 3.13.9 / psycopg 3.3.6 / psycopg-pool 3.3.3；pyproject 声明的下限是 psycopg[binary]>=3.1
+    （B5 按**本版本**算：psycopg 3.3.6 ⇒ close_returns=True 时池该拿连接类 Connection；池版本 < 3.3 根本没这个开关时，B5 把它记成读数而不是失败）
+  [C 段（版本）] OK
+  D1 quanauto/ 下 17 个 .py 里 `psycopg_pool` / `ConnectionPool` 共 0 次（期望 0：本仓库不建池）
+  D2 pgstore.py 的 AST 形状：`with <名字>:` 0 处 []；`<名字>.transaction()` 1 处 ['conn']
+  D3 pyproject.toml 的 [postgres] extra 明写 psycopg[binary]>=3.1（那是**下限**，不是「已验证到这个版本」）
+  [D 段（本仓库用得到吗）] OK
+  读数：Python 3.13.9 / psycopg 3.3.6 / psycopg-pool 3.3.3 / 声明下限 psycopg[binary]>=3.1
+
+边界（本报告不主张什么）：
+  1. 这些读数只对上面那个镜像 digest + 上面那两个驱动版本成立；**不**主张
+     「PostgreSQL 14+ 全都这样」（那是 J-7 的四个 tag 阶梯，不是区间）。
+  2. 产品侧**没有**连接池：D1 现数是零引用。B4 那条池化连接是**注入**进
+     PsycopgConnection._conn 的，用来在池化条件下复核既有写入路径，
+     不等于「产品侧已经有池」。
+  3. 没有测并发（多线程压同一个连接）、没有测池的等待/超时、没有测长连接或生产场景。
+  4. 第二版本是**另一次运行**产生的另一份快照：同一个探针字节 + 另一个解释器，
+     读法 = 比对两份报告里的版本行与同一批判据的结论。
+容器已删：rc=0 quan-pg-driver-probe
+
+verdict: PASS
+exit code: 0
+NOTE: 结论只对这个镜像 digest + 这个驱动版本 + 下面钉住的那些文件字节成立。
+      报告里**不**钉 git commit（只钉文件 sha256），所以它可以和代码同批提交。
+      判据有牙由**外部**变异证伪（不在仓库里，只在 %TEMP% 里跑过那一次）：把 expected_pool_connection_class 压成常量 / 把 AST 形状判据换成文本匹配 / 把 count_occurrences 的 None 静默当 0 ⇒ 探针自测各 4/4/1 项变红、exit=1；还原后 exit=0。变异脚本本身**不是**可复跑产物，这也是这条探针不是门禁的一部分。
+PINNED db/data_center.sql sha256=8e23e9c6f1409f065992c0423a9681ee841e81e0cb1358db7fdf78002f835197
+PINNED quanauto/pgstore.py sha256=bd84d86ac1cc978843116976fcd3118f826039acb4c8b4f812a2ea146355db35
+PINNED quanauto/datacenter.py sha256=d94b4574096946ee2a3126b09d90e953f190976c20ae78e913e2bc81a1d4b5b2
+PINNED pyproject.toml sha256=4ea147e39ec8ebd8771de9cd5898a3c7f6b8d154418262ad00e7414128c29b40
+probe: tools/probe_pg_driver.py sha256=e36e3e7f28b0ed56a20b643e7f32e47c9ac08d642e4ef892963e591e615a46da
