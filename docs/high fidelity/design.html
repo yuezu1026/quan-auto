@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>智能量化交易平台 · 高保真 UI 设计稿（八帧）</title>
+<title>智能量化交易平台 · 高保真 UI 设计稿（八帧 + 桌面端形态一节）</title>
 <!--
   ============================================================================
   这份文件是什么：
@@ -17,6 +17,11 @@
     ② 不主张任何未开工的模块有实现：八帧里只有 F5 有对应代码（platform/web/），
        其余七帧每一帧都带「提案」章，且整帧用**点划线外框**标出。
        §03 那张「应用外壳」帧（S0）**同样是提案** —— 已交付页面没有侧栏与常驻顶栏；
+       §08「桌面端形态」（应用图标 / 托盘图标 / 托盘弹出面板）**三帧也全是提案**，
+       而且比八帧更远一层：它画的**托盘这个形态在仓库里还不存在**（实测：本仓库自己的
+       产物里搜「托盘」0 处，搜 Electron/Tauri/桌面客户端 0 处；150 个受管文件里
+       图片/字体一类资产 0 个，页面 head 里没有 icon 声明）。
+       那三帧画的不是「补一个漏画的图」，是「要不要有桌面客户端」这个问题本身。
     ③ 图里的每个数字都标了来源：仓库里有真值的写真值（并注明出处），
        仓库里没有的用两类占位标记 —— `—`（这一格没有值）与方括号占位符
        （`[占位]` / `[策略ID]` / `[时间]` / `[金额]` / `[代码]` / `[日期]` / `[名称]` …）。
@@ -392,6 +397,52 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
   .hero h1{font-size:22px}
   .kpi .v{font-size:19px}
 }
+
+/* ============ 16 · App icon / tray / popup panel（§08 用，2026-10-01 晚追加）============
+   §08 画的是「桌面端形态」，而它在仓库里还不存在 —— 所以这一节只画几何，不产出任何
+   位图资产（受管文件里 0 个 .ico/.icns/.png，也没有打包形态）。见 §08 的实测块。
+   ========================================================================== */
+.icon-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.icon-grid>*{min-width:0}
+.ic-cell{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-m);padding:14px;min-width:0;
+  display:flex;flex-direction:column;align-items:center;gap:9px;text-align:center}
+.ic-cell b{font-size:12.5px}
+.ic-cell .cap{font-size:11px;color:var(--text3);line-height:1.6}
+.appic{border-radius:22%;background:linear-gradient(135deg,var(--brand),#1E5BD0);display:grid;place-items:center;
+  color:#fff;box-shadow:0 3px 8px rgba(47,111,237,.35);flex:none}
+.appic.flat{background:var(--icon-strong);box-shadow:none}
+.size-strip{display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap;background:var(--surface2);
+  border:1px solid var(--line);border-radius:var(--r-m);padding:14px}
+.size-strip .s{display:flex;flex-direction:column;align-items:center;gap:6px;min-width:0;
+  font-size:10.5px;color:var(--text3);font-family:var(--mono)}
+.tray-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.tray-bar{display:flex;align-items:center;gap:12px;padding:6px 14px;border-radius:8px;border:1px solid var(--line)}
+.tray-bar.light{background:#E9EDF5;color:#33415A}
+.tray-bar.dark{background:#101828;color:#DCE4F2;border-color:#26314F}
+.tray-tag{font-size:11px;font-weight:700;color:var(--text2);min-width:76px;flex:none}
+.tray-ic{width:16px;height:16px;display:block;position:relative;flex:none}
+.tray-ic svg{width:16px;height:16px;display:block}
+.tray-ic i{position:absolute;display:block;border-radius:99px}
+.tray-ic i.r{right:-2px;top:-1px;width:7px;height:7px}
+.tray-ic i.ok{background:var(--ok)}
+.tray-ic i.pri{background:var(--brand)}
+.tray-ic i.warn{background:var(--warn)}
+.tray-ic i.err{background:var(--err)}
+.tray-ic .slash{position:absolute;left:-1px;top:7px;width:18px;height:2px;border-radius:2px;
+  background:currentColor;transform:rotate(-45deg)}
+.panel{width:360px;max-width:100%;background:var(--surface);border:1px solid var(--line2);border-radius:var(--r-l);
+  box-shadow:var(--shadow);overflow:hidden}
+.panel-h{display:flex;align-items:center;gap:8px;padding:11px 13px;background:var(--surface2);
+  border-bottom:1px solid var(--line);flex-wrap:wrap}
+.panel-h>*{min-width:0}
+.panel-h .t{font-size:12.5px;font-weight:800}
+.panel-h .sp{margin-left:auto;display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.panel-b{padding:12px 13px;display:flex;flex-direction:column;gap:12px}
+.panel-b>*{min-width:0}
+.panel-f{padding:10px 13px;border-top:1px solid var(--line);background:var(--surface2);display:flex;gap:8px}
+.panel-f>*{min-width:0}
+.panel-lab{font-size:10.5px;font-weight:800;letter-spacing:.08em;color:var(--text3);margin-bottom:6px}
+.panel-note{font-size:10.5px;color:var(--text3);line-height:1.65;margin:6px 0 0}
 </style>
 </head>
 <body>
@@ -458,6 +509,7 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
       <a class="pill" href="#states">05 状态矩阵</a>
       <a class="pill" href="#trace">06 追溯与缺口</a>
       <a class="pill" href="#bounds">07 边界</a>
+      <a class="pill" href="#desk">08 桌面端</a>
       <button class="theme-btn" id="themeBtn" type="button" aria-pressed="false">
         <svg class="ic-moon" width="15" height="15" aria-hidden="true"><use href="#i-moon"/></svg><svg class="ic-sun" width="15" height="15" aria-hidden="true"><use href="#i-sun"/></svg><span id="themeTxt">深色</span>
       </button>
@@ -2052,6 +2104,7 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
           <tr><td>四条平台层门禁都不起服务</td><td>跑完就退出，没有一个活着的 JVM 在监听</td><td class="muted">—</td><td class="mono">没有新增门禁，也没有改现有门禁</td></tr>
           <tr><td>K 线图要 OHLCV</td><td>报告的结构计数只有 <code>equity_curve / trades / orders</code>，没有 OHLCV</td><td>用斜线阴影占位块 + 文字说明「要修就修产品侧」</td><td class="mono">没有伪造一根 K 线</td></tr>
           <tr><td>提案帧没有实现</td><td>F1~F4、F6~F8 都还没有产品代码</td><td>每帧都写清语义来源与数值来源</td><td class="mono">没有把提案画成已完成</td></tr>
+          <tr><td>桌面端形态</td><td>受管文件里图片类资产 <b>0</b> 个、页面 head 没有 icon 声明、全仓库搜「托盘」<b>0</b> 处</td><td>§08 把「应用图标 / 托盘图标 / 托盘弹出面板」三样画成提案</td><td class="mono">没有产出任何位图资产，也没有声称托盘这个形态存在</td></tr>
         </tbody>
       </table>
     </div>
@@ -2078,13 +2131,264 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
   </div>
 </section>
 
+<!-- ============================================================================
+     08 · 桌面端形态（应用图标 / 托盘图标 / 托盘弹出面板）—— 2026-10-01 晚追加
+     为什么排在 §07 之后：§07 是收尾章，已被多处引用（附录C、README §7、低保真 README）。
+     追加新内容不重编号，也不动 §07。
+     这一节的特殊性：它画的**三样东西在仓库里有两样没有上游**（应用图标、托盘形态）。
+     所以三帧全部盖「提案」章 + 点划线外框，并且先摆一份「有/没有」的实测块。
+     ============================================================================ -->
+  <section class="wrap sec anchor" id="desk">
+    <div class="sec-head"><span class="sec-num">08</span><h2>桌面端形态（应用图标 / 托盘图标 / 点开面板）</h2></div>
+    <p class="sec-sub">
+      这一节回答的是「<b>有没有图标设计、托盘图标设计、点开页面设计</b>」。
+      本稿前七节画的是「已交付那一屏 + 八帧」；<b>这一节画的是另一件事</b> ——
+      它提的<b>不是</b>「补一个漏画的图」，而是「<b>要不要有桌面客户端</b>」这个问题本身。
+      所以先摆实测，再摆图。
+    </p>
+
+    <div class="card">
+      <div class="rulebox" style="border-left-width:6px">
+        <b>先把「有 / 没有」实测清楚，再谈画（2026-10-01 晚，全部可复跑）：</b>
+        <ul style="margin:8px 0 0;padding-left:20px;line-height:1.75">
+          <li><b>界面内联图标集 —— 有。</b>本稿的内联 SVG 精灵里有 <b>37 个</b> <code>&lt;symbol&gt;</code> 定义、<b>184 处</b> <code>&lt;use&gt;</code> 引用，浏览器实测<b>缺失 0</b>。它是一套<b>界面用的线稿图标</b>（导航 / 按钮 / 状态 / 表单），<b>不是应用图标</b>。</li>
+          <li><b>应用图标（App Icon）/ favicon —— 没有。</b><code>git ls-files</code> 的 <b>150</b> 个受管文件里，<code>.ico</code>/<code>.icns</code>/<code>.png</code>/<code>.svg</code>/<code>.ttf</code>/<code>.woff</code> 一类<b>命中 0 个</b>；<code>platform/web/index.html</code> 的 <code>&lt;head&gt;</code> 里只有字符集 / 视口 / 标题三项，<b>没有声明 icon</b>。平台层 README 里唯一提到 favicon 的那一处，记的是「浏览器会报 <code>/favicon.ico</code> 的 404」—— 那是<b>缺</b>这个图标的证据，不是有它的证据。</li>
+          <li><b>托盘图标 / 托盘弹出面板 —— 没有，而且「托盘」这个形态本身也还没有。</b>在本仓库自己的产物里搜「托盘」<b>0 处</b>；搜 <code>Electron</code> / <code>Tauri</code> / <code>桌面客户端</code> / <code>系统通知</code> 也是 <b>0 处</b>。现有形态是「Spring Boot 托管一个 React 单页，浏览器开端口访问」—— <b>没有一个常驻进程</b>可以挂托盘。</li>
+        </ul>
+        <p style="margin:8px 0 0">⇒ 下面三帧<b>全部盖「提案」章 + 点划线外框</b>，与 F1~F4 / F6~F8 同一待遇；而且它们<b>比那七帧更远一层</b>：那七帧的上游（需求 + 低保真）至少<b>写了</b>它们，这三帧的上游<b>还没决定要不要有</b>。</p>
+      </div>
+    </div>
+
+    <div class="frame proposal">
+      <div class="f-cap">
+        <span class="fid">A1</span><h3>应用图标 · 一个「有出处」的方案 + 两个对照</h3>
+        <span class="badge b-warn"><svg aria-hidden="true"><use href="#i-eye"/></svg>提案</span>
+        <span class="r"><span class="f-trace">来源：页头 <code>.logo-mark</code> 的真实构造（蓝渐变 + 白线图）· <b>核对：受管文件里图片/字体类资产 0 个、页面 head 无 icon 声明</b></span></span>
+      </div>
+      <div class="win">
+        <div class="win-bar"><span class="win-dots"><i></i><i></i><i></i></span>
+          <span class="win-title">应用图标 · 方案对照</span>
+          <span class="win-title mono" style="margin-left:auto">app icon</span>
+        </div>
+        <div style="padding:14px;display:flex;flex-direction:column;gap:14px">
+          <div class="icon-grid">
+            <div class="ic-cell">
+              <span class="appic" style="width:64px;height:64px"><svg width="34" height="34" aria-hidden="true"><use href="#i-chart"/></svg></span>
+              <b>A · 品牌底 + 白线图</b>
+              <span class="cap"><b style="color:var(--ok)">唯一有出处</b><br>页头那个记号放大即成</span>
+            </div>
+            <div class="ic-cell">
+              <span class="appic flat" style="width:64px;height:64px"><svg width="34" height="34" aria-hidden="true"><use href="#i-shield"/></svg></span>
+              <b>B · 盾与闸门</b>
+              <span class="cap">语义落在风控（F6）<br>与本产品「闸门」的定位贴</span>
+            </div>
+            <div class="ic-cell">
+              <span class="appic flat" style="width:64px;height:64px"><svg width="34" height="34" aria-hidden="true"><use href="#i-refresh"/></svg></span>
+              <b>C · 双循环</b>
+              <span class="cap">语义落在 F1 的双循环<br>但抽象度低，16px 会糊</span>
+            </div>
+          </div>
+          <div class="size-strip">
+            <span class="s"><span class="appic" style="width:16px;height:16px;border-radius:5px"><svg width="10" height="10" aria-hidden="true"><use href="#i-chart"/></svg></span>16</span>
+            <span class="s"><span class="appic" style="width:32px;height:32px;border-radius:9px"><svg width="18" height="18" aria-hidden="true"><use href="#i-chart"/></svg></span>32</span>
+            <span class="s"><span class="appic" style="width:64px;height:64px"><svg width="34" height="34" aria-hidden="true"><use href="#i-chart"/></svg></span>64</span>
+            <span class="s"><span class="appic" style="width:128px;height:128px"><svg width="66" height="66" aria-hidden="true"><use href="#i-chart"/></svg></span>128</span>
+            <span class="s" style="color:var(--text2);font-family:var(--sans)">256 / 512 / 1024<br><span class="badge b-mute">本稿没画</span></span>
+          </div>
+          <div class="tbl-wrap">
+            <table class="tbl">
+              <thead><tr><th>像素档</th><th>用在哪</th><th>本稿</th></tr></thead>
+              <tbody>
+                <tr><td class="mono">16</td><td>Windows 托盘 / 标签页 favicon</td><td>画了 —— <b>但那是缩放，不是 16 格重绘</b>（见注解 2）</td></tr>
+                <tr><td class="mono">32</td><td>Windows 任务栏 / favicon(32)</td><td>画了</td></tr>
+                <tr><td class="mono">64</td><td>文件浏览器 / 启动器</td><td>画了</td></tr>
+                <tr><td class="mono">128</td><td>macOS Finder / 列表页</td><td>画了</td></tr>
+                <tr><td class="mono">256</td><td>应用商店 / 高分屏</td><td class="muted">— 这一格没有值</td></tr>
+                <tr><td class="mono">512 / 1024</td><td>多尺寸包（<code>.ico</code> / <code>.icns</code>）</td><td class="muted">— 这一格没有值，<b>本稿不产出资产文件</b></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <ol class="notes">
+        <li><b>只有 A 方案「有出处」。</b>它就是页头 <code>.logo-mark</code> 的放大：同一组渐变取值（<code>--brand</code> 到 <code>#1E5BD0</code>）、同一个 <code>i-chart</code> 线图、同一个 22% 圆角块。B / C 是为了让「换个语义会怎样」可见而画的<b>对照</b>，<b>不是推荐</b>。</li>
+        <li><b>16px 不能靠缩小得到。</b>精灵里的图标是 24 格网格、2px 描边；缩到 16px 后描边只剩约 1.33px，在任务栏上会发虚。真实做法是另画一套 <b>16 格网格</b>（1px 对齐 + 光学补偿）—— <b>本稿没有画这一套</b>，如实记在下面的缺口表里。</li>
+        <li><b>深色底上蓝渐变的边缘会糊。</b>深底需要一个 1px 内描边（<code>--brand-soft2</code>），或改用「浅底 + 蓝线图」的版本。本稿只把问题指出来，<b>没有画深底版本</b>。</li>
+        <li><b>不产出位图资产是刻意的。</b>产出 <code>.ico</code> / <code>.icns</code> 需要先定<b>打包形态</b>（纯 Web / PWA / 桌面壳），而那个决定在仓库里<b>没有</b>（桌面端引用 0 处）⇒ 现在生成一堆图标，等于替一个还没做的决定先画押。</li>
+        <li><b>「应用图标」和本稿的「界面图标集」不是一件事。</b>前者是要落到磁盘、要被操作系统读的<b>资产文件</b>；后者是页面里<b>内联</b>的 SVG。本稿只有后者。</li>
+      </ol>
+    </div>
+
+    <div class="frame proposal">
+      <div class="f-cap">
+        <span class="fid">A2</span><h3>托盘图标 · 四状态 × 深浅任务栏</h3>
+        <span class="badge b-warn"><svg aria-hidden="true"><use href="#i-eye"/></svg>提案</span>
+        <span class="r"><span class="f-trace"><b>无上游</b>：仓库里没有托盘形态（搜「托盘」0 处）· 四态的语义取自 F1 驾驶舱与 F6 风控</span></span>
+      </div>
+      <div class="win">
+        <div class="win-bar"><span class="win-dots"><i></i><i></i><i></i></span>
+          <span class="win-title">托盘图标 · 四态</span>
+          <span class="win-title mono" style="margin-left:auto">16 × 16</span>
+        </div>
+        <div style="padding:14px;display:flex;flex-direction:column;gap:12px">
+          <div class="tray-row">
+            <span class="tray-tag">浅色任务栏</span>
+            <div class="tray-bar light">
+              <span class="tray-ic"><svg aria-hidden="true"><use href="#i-gauge"/></svg></span>
+              <span class="tray-ic"><svg aria-hidden="true"><use href="#i-run"/></svg><i class="r pri"></i></span>
+              <span class="tray-ic"><svg aria-hidden="true"><use href="#i-alert"/></svg><i class="r warn"></i></span>
+              <span class="tray-ic"><svg aria-hidden="true"><use href="#i-kill"/></svg><i class="slash"></i></span>
+            </div>
+          </div>
+          <div class="tray-row">
+            <span class="tray-tag">深色任务栏</span>
+            <div class="tray-bar dark">
+              <span class="tray-ic"><svg aria-hidden="true"><use href="#i-gauge"/></svg></span>
+              <span class="tray-ic"><svg aria-hidden="true"><use href="#i-run"/></svg><i class="r pri"></i></span>
+              <span class="tray-ic"><svg aria-hidden="true"><use href="#i-alert"/></svg><i class="r warn"></i></span>
+              <span class="tray-ic"><svg aria-hidden="true"><use href="#i-kill"/></svg><i class="slash"></i></span>
+            </div>
+          </div>
+          <div class="tbl-wrap">
+            <table class="tbl">
+              <thead><tr><th>状态</th><th>主体形状</th><th>角标</th><th>工具提示（tooltip）</th><th>语义来源</th></tr></thead>
+              <tbody>
+                <tr><td>空闲 / 未运行</td><td>仪表轮廓（细线）</td><td class="muted">无</td><td class="mono">量化平台 · 空闲</td><td>F1 驾驶舱「今日巡检」的待机态</td></tr>
+                <tr><td>运行中</td><td>播放三角</td><td>右上实心点</td><td class="mono">量化平台 · 运行中</td><td>F1 的运行态</td></tr>
+                <tr><td>待人工决策</td><td>感叹号</td><td>右上实心点</td><td class="mono">量化平台 · 有 N 条待决策</td><td>F1「待人工决策」区</td></tr>
+                <tr><td>已熔断</td><td>Kill Switch 图标 + 一道斜杠</td><td>斜杠即角标</td><td class="mono">量化平台 · 已熔断</td><td>F6 的熔断态（反白标识）</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <ol class="notes">
+        <li><b>托盘的唯一硬要求：16px 下要能靠轮廓认出来。</b>它比应用图标更严（应用图标在任务栏有 32px 以上）。所以四态靠<b>形状</b>区分，颜色只是辅助 —— 把颜色拿掉，四个形状仍然互不相同。</li>
+        <li><b>本稿的已知妥协：彩色角标。</b>真实的托盘图一般是<b>单色模板图</b>（macOS 走 template image：纯黑 + alpha，系统按菜单栏明暗自动反色；Windows 需要显式两套）。单色没有颜色可用 ⇒ 那时角标必须改成<b>形状</b>（实心圆 / 圆环 / 缺口）。本稿保留彩色角标，是为了让四态在同一屏里可辨 —— 换成形状版本稿<b>没有画</b>。</li>
+        <li><b>不画动画</b>（呼吸 / 闪烁 / 转动）。动画需要一个<b>事件源</b>才能诚实地动，而仓库里<b>没有</b>实时事件（没有行情推送、没有账户连接，平台层读的是一份静态报告夹具）⇒ 画出来的动画会变成「假活的指示器」。这一条比图标本身重要。</li>
+        <li><b>托盘图标与应用图标必须不同形。</b>应用图标是方的（22% 圆角块 + 白线图），托盘图标是细线稿。同形会让两者在任务栏里互相冒充。</li>
+        <li><b>「待人工决策」那一条的 <code>N</code> 是占位。</b>它是一个<b>运行时</b>计数，本稿给不出来 —— 写死的数字才是编数。</li>
+      </ol>
+    </div>
+
+    <div class="frame proposal">
+      <div class="f-cap">
+        <span class="fid">A3</span><h3>点开面板 · 托盘弹出的 360px 面板</h3>
+        <span class="badge b-warn"><svg aria-hidden="true"><use href="#i-eye"/></svg>提案</span>
+        <span class="r"><span class="f-trace"><b>无上游</b>：没有托盘就没有「点开」· 面板里的规则名逐字取自 <code>quanauto/risk.py</code>（6 条数值型 + <code>blacklist</code>）</span></span>
+      </div>
+      <div class="win">
+        <div class="win-bar"><span class="win-dots"><i></i><i></i><i></i></span>
+          <span class="win-title">托盘弹出面板 · 提案</span>
+          <span class="win-title mono" style="margin-left:auto">360px</span>
+        </div>
+        <div style="padding:14px;display:flex;justify-content:center">
+          <div class="panel">
+            <div class="panel-h">
+              <span class="appic" style="width:22px;height:22px;border-radius:7px"><svg width="13" height="13" aria-hidden="true"><use href="#i-chart"/></svg></span>
+              <span class="t">智能量化交易平台</span>
+              <span class="sp">
+                <span class="env res"><svg width="12" height="12" aria-hidden="true"><use href="#i-cube"/></svg>研究环境</span>
+                <button class="iconbtn" type="button" disabled title="本稿无实现：仓库里没有设置页，也没有可写入的配置接口"><svg aria-hidden="true"><use href="#i-gear"/></svg></button>
+              </span>
+            </div>
+            <div class="panel-b">
+              <div>
+                <div class="panel-lab">今日状态</div>
+                <div class="grid g3">
+                  <div class="kpi"><span class="k">今日盈亏</span><span class="v sm">—</span><span class="u">无实时数据源</span></div>
+                  <div class="kpi"><span class="k">持仓</span><span class="v sm">—</span><span class="u">无账户连接</span></div>
+                  <div class="kpi"><span class="k">今日成交</span><span class="v sm">—</span><span class="u">无成交流水</span></div>
+                </div>
+              </div>
+              <div>
+                <div class="panel-lab">风控闸门（规则名取真值，状态无真值）</div>
+                <div class="tbl-wrap">
+                  <table class="tbl">
+                    <thead><tr><th>规则</th><th>判定</th><th class="n">今日命中</th></tr></thead>
+                    <tbody>
+                      <tr><td class="mono">max_position_pct</td><td><span class="badge b-warn">REDUCE</span></td><td class="n muted">—</td></tr>
+                      <tr><td class="mono">max_daily_trades</td><td><span class="badge b-err">REJECT</span></td><td class="n muted">—</td></tr>
+                      <tr><td class="mono">strategy_drawdown_pct</td><td><span class="badge b-err">HALT</span></td><td class="n muted">—</td></tr>
+                      <tr><td class="mono">account_drawdown_pct</td><td><span class="badge b-err">HALT</span></td><td class="n muted">—</td></tr>
+                      <tr><td class="mono">max_order_amount_pct</td><td><span class="badge b-warn">REDUCE</span></td><td class="n muted">—</td></tr>
+                      <tr><td class="mono">max_sector_pct</td><td><span class="badge b-warn">REDUCE</span></td><td class="n muted">—</td></tr>
+                      <tr><td class="mono">blacklist</td><td><span class="badge b-err">REJECT</span></td><td class="n muted">—</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div>
+                <div class="panel-lab">快捷操作</div>
+                <div class="grid g3">
+                  <button class="btn btn-soft btn-sm" type="button" disabled title="本稿无实现：没有常驻进程，也没有可下发的运行控制接口"><svg aria-hidden="true"><use href="#i-stop"/></svg>暂停</button>
+                  <button class="btn btn-soft btn-sm" type="button" disabled title="本稿无实现：同上"><svg aria-hidden="true"><use href="#i-run"/></svg>恢复</button>
+                  <button class="btn btn-err-soft btn-sm" type="button" disabled title="本稿无实现：闸门逻辑在风控引擎里，但没有可触发的运行入口"><svg aria-hidden="true"><use href="#i-kill"/></svg>熔断</button>
+                </div>
+              </div>
+              <p class="panel-note">面板宽度 360px 是托盘弹出面板的常见上限（同类菜单栏应用多在 320~400 之间）。高度取决于内容，本稿<b>不钉死</b> —— 钉一个高度又没有真实内容，那就是编数。</p>
+            </div>
+            <div class="panel-f">
+              <button class="btn btn-pri btn-block btn-sm" type="button" disabled title="本稿无实现：完整看板是浏览器里的页面，托盘形态不存在 ⇒ 这个跳转没有目标"><svg aria-hidden="true"><use href="#i-arr-r"/></svg>打开完整看板</button>
+            </div>
+          </div>
+        </div>
+        <div style="padding:0 14px 14px">
+          <div class="gap err">
+            <b>这个面板里每一格都是 <code>—</code>，不是偷懒，是上游没有值。</b>
+            托盘面板天生要显示 <b>实时</b> 状态（今日盈亏 / 持仓 / 今日成交 / 今日命中），
+            而仓库里只有 <b>回测报告</b>（一份静态夹具）。把回测的数填进「今日盈亏」是<b>假映射</b>
+            —— 一个是一次性回放、一个是当日实况。所以这里留空，并把缺的东西写在旁边。
+          </div>
+        </div>
+      </div>
+      <ol class="notes">
+        <li><b>「点开页面」有两个读法，别混。</b>① <b>托盘点开后会弹出什么</b> —— 就是这一帧，纯提案，因为没有托盘；② <b>页面内点击后的跳转与展开</b> —— 这个<b>有</b>：低保真的可交互原型是 9 屏，本稿有 8 个锚点跳转 + 三维表 + 主题开关（可用的只有一个主题按钮，见 §07）。</li>
+        <li><b>面板里唯一「有出处」的是规则 id 与判定。</b>6 条数值型 + <code>blacklist</code> 逐字取自 <code>quanauto/risk.py</code>，与 F6 两张规则表同源（<code>blacklist</code> 在那边是单独一张名单型表）。<b>命中次数一栏全部留空</b> —— 判定是规格，命中是运行时。</li>
+        <li><b>三个快捷操作故意做成不可按。</b>暂停 / 恢复 / 熔断都要有一个常驻的、能下发的进程，才谈得上「按下去会发生什么」。本稿只保留它们在面板上的<b>位置</b>。</li>
+        <li><b>「打开完整看板」也标死。</b>完整看板是浏览器里的页面，托盘弹窗里点它需要一个「唤起浏览器」的能力 —— 那属于桌面壳，仓库里没有。</li>
+        <li><b>面板不画任何图表。</b>360px 宽放一条净值曲线只会得到一个装饰品。要图形请去 F5（那一帧的净值曲线是 60 个真点）。</li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-list"/></svg>这一节的六件东西，与仓库现状逐格对照</h4></div>
+      <div class="tbl-wrap">
+        <table class="tbl">
+          <thead><tr><th>件</th><th>仓库里有没有</th><th>本稿画了没有</th><th>要真做出来还缺什么</th></tr></thead>
+          <tbody>
+            <tr><td><b>界面内联图标集</b></td><td><span class="badge b-ok">有</span> 37 个 symbol / 184 处 use，缺失 0</td><td>就是它自己</td><td class="muted">—</td></tr>
+            <tr><td><b>应用图标</b></td><td><span class="badge b-err">没有</span> 受管文件里图片 / 字体类资产 0 个</td><td>画了提案（A1）</td><td>① 打包形态的决定 ② 16 格网格重绘 ③ 构建步骤（把矢量图转成 <code>.ico</code> / <code>.icns</code>）</td></tr>
+            <tr><td><b>favicon</b></td><td><span class="badge b-err">没有</span> 页面 head 里没有 icon 声明（平台层 README 记了那个 404）</td><td>画了提案（A1 的 16 / 32 档）</td><td>一行 head 声明 + 一张 32×32 资产。<b>这一格是整张表里最便宜的一格。</b></td></tr>
+            <tr><td><b>托盘图标</b></td><td><span class="badge b-err">没有</span>，而且<b>没有托盘这个形态</b></td><td>画了提案（A2）</td><td>一个常驻进程。<b>需求与契约里都没有它</b> —— 这不是「补图」能解决的</td></tr>
+            <tr><td><b>托盘弹出面板</b></td><td><span class="badge b-err">没有</span></td><td>画了提案（A3）</td><td>同上 + 实时数据源（行情 / 账户 / 成交流水）</td></tr>
+            <tr><td><b>页面内跳转与展开</b></td><td><span class="badge b-ok">有</span> 低保真可交互原型 9 屏；本稿 8 锚点 + 三维表 + 主题开关</td><td class="muted">—（已在本稿内）</td><td class="muted">—</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="hint">表里三个「没有」<b>不是同一类</b>：<b>favicon 是漏了一块最小的砖</b>（一行声明 + 一张图）；<b>应用图标是缺一个决定</b>（打包形态）；<b>托盘是缺一个形态</b>（一个还不存在、也没被要求的常驻进程）。把三者都叫「缺图标设计」，会让最便宜的那一格和最贵的那一格看起来一样贵。</p>
+    </div>
+
+    <div class="card">
+      <div class="rulebox" style="border-left-width:6px">
+        <b>一句话：</b>这三样里，<b>只有「界面图标集」是已经有的</b>（37 个内联符号，实测缺失 0）；
+        <b>「应用图标 / favicon」是该有而没有</b>（150 个受管文件里图片类 0 个，页面 head 里没有 icon 声明）；
+        <b>「托盘图标 + 点开面板」是「要不要有」的问题，不是「画得够不够细」的问题</b> ——
+        因为托盘需要一个常驻进程，而它在需求、契约、代码里都<b>还没有</b>。
+        本节把三样都画了，但只有第一样能在仓库里找到对应的东西；另两样是<b>提案的提案</b>。
+      </div>
+    </div>
+  </section>
+
 <div class="wrap foot">
-  <p><b>智能量化交易平台 · 高保真 UI 设计稿 v1（八帧）</b></p>
+  <p><b>智能量化交易平台 · 高保真 UI 设计稿 v1（八帧 + 桌面端形态一节）</b></p>
   <p>依据：PRD（<code>docs/智能量化交易平台.md</code>）+ 低保真（<code>docs/low fidelity/</code>，静态规格板 + 可交互原型）。视觉语言参考外部设计稿。</p>
   <p>打开方式：浏览器直接打开本文件。零依赖、无构建、<b>无网络请求</b>、无外部字体。</p>
   <p class="noimpl">
     <b>这是设计产物，不是规格、不是契约、不是门禁。</b>
     八帧里只有 <b>F5</b> 有真实实现；其余七帧是提案，用点划线外框标出。
+    §08「桌面端形态」那三帧<b>也是提案</b>，而且它们画的形态（托盘 / 桌面壳）在仓库里
+    <b>还不存在</b> —— 本节不产出任何位图资产，也不主张托盘已经有人画过。
     带 <code>[方括号]</code> 的都是占位；不可按的控件一律 <code>disabled</code> 并带 <code>title</code> 说明缺什么能力。
   </p>
 </div>
