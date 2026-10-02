@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""probe_ingest_commit.py -- 三条落库写入路径在容器 PostgreSQL 上真跑一次，并用**新连接**读回。
+"""probe_ingest_commit.py -- 三条落库写入路径 + 编排层在容器 PostgreSQL 上真跑一次，并用**新连接**读回。
 
 为什么需要它
 ------------
-DC 契约附录 J 的 J.1 有两行自称「可离线关」，而它们在 2026-10-02 时都还没关：
+DC 契约附录 J 的 J.1 有几行自称「可离线关」，而它们在 2026-10-02 时都还没关：
 
   * **J-6「真的入过库」** —— B18 那次「520 行入库 / 幂等重跑 `skipped=520`」全绿，但 B20.5 的
     重演证明那是**同一条连接自读**（恒真），另起连接数到 **0** 行。也就是说「测过的那个结论
@@ -12,8 +12,15 @@ DC 契约附录 J 的 J.1 有两行自称「可离线关」，而它们在 2026-
   * **J-8「`ROUND_HALF_UP` 与 PG `numeric` 在半值上同向」** —— `quanauto/pgstore.py::_to_decimal`
     的注释照**文档语义**写了「与 PostgreSQL `numeric` 的四舍五入同义」，而 `.00005` 这类
     半值样本**一个都没有**。文档语义不是实测出来的结论。
+  * **J-11「编排层只在假连接上跑过」**（2026-10-02 追加，D 段）—— `quanauto/ingest.py` 那条
+    串（取数 → `validate_frame` → 盖 `source`/`data_version` → 落库 → 写 `dc_ingest_run`）
+    此前**只有** `tests/test_ingest.py` 的假连接用例跑过：真库上的 `dc_ingest_run` 一行、
+    那两条 `ck_dc_ingest_status` / `ck_dc_ingest_priority` 一次都没被这条路径执行过。
+    `pgstore` 的写入路径有自己的真库证据（B 段），**不等于**编排层有 —— 「下层的每个零件
+    都测过」与「这一串接起来跑过」在本项目一直是两件事（B20 那次的三个真缺陷全在缝上）。
+    ⇒ **2026-10-02（R29）** D 段把这一半补上了，见下。
 
-本探针把这两条都变成有证据的结论，分三段：
+本探针把这三条都变成有证据的结论，分四段：
 
   **A 段（有牙的对照）** 故意把连接降回 `autocommit=False`，跑**两次**：
       A1 没有前置裸读（进 `transaction()` 时连接是 IDLE）；
@@ -29,6 +36,13 @@ DC 契约附录 J 的 J.1 有两行自称「可离线关」，而它们在 2026-
   **C 段（J-8）** 半值样本同时喂给 `_as_decimal` / `_as_factor_decimal` 与
       `SELECT (x::numeric)::numeric(18,s)`，逐例对拍；半值再真的写进列、由新连接读回。
 
+  **D 段（J-11）** 调**产品调用点**（`quanauto/ingest.py` 的 `ingest_daily_bars` /
+      `ingest_adjust_factors` / `ingest_dividends`），而不是 B 段那层的 `pgstore` 写入路径。
+      D0 是同一形状的**对照组**（`autocommit=False` + 前置裸读 ⇒ 内存里 `SUCCESS`、库里 0 行）；
+      D1~D4 覆盖三条通道各一次、幂等重跑、异值冲突（整批回滚）、质检拒绝（一行不落库）；
+      D5 覆盖 `PARTIAL`；D6 覆盖「前置检查失败**不留批次行**」。每一条都拿容器里的 `psql`
+      （另一个进程、另一个会话）读 `dc_ingest_run` 的**那一行**逐字段对拍。
+
 为什么**不**复用 `tools/run_sql_smoke.py` 那条 compose 通道
 ----------------------------------------------------------
 它把 psql 全部走 `docker compose exec` 的 unix socket，**不对宿主发布端口**；而本探针必须在
@@ -41,12 +55,12 @@ DC 契约附录 J 的 J.1 有两行自称「可离线关」，而它们在 2026-
 与 `tools/run_sql_smoke.py` 同一条理由：`tools/run_all_gates.py` 必须能在没有 docker 的环境
 里跑完（本仓库的现状就是如此）。本脚本在 docker / 镜像 / 宿主 psycopg 缺一不可时报
 `NO ENV` 并退 **3**，**绝不算绿**。它是一支探针，不是判据 —— 与 B12/B14~B20 同级：
-结论**会**因为改了 `db/data_center.sql` 或 `quanauto/pgstore.py` 而作废（本报告头部记着
-这两个文件的 sha256）。
+结论**会**因为改了下面 `PINNED_FILES` 里**任何一个文件**而作废（本报告头部记着那五个文件
+的 sha256，重跑一次即可自己发现有没有失效）。
 
 退出码
 ------
-    0  A/B/C 三段全部按预期
+    0  A/B/C/D 四段全部按预期
     1  有 FAIL（发现了真问题，或者本探针自己分辨不出缺陷）
     2  前置守卫失败或**无法判定**（报告落点 / 空库守卫 / 容器起不来 / 输出解析不出数字）
     3  NO ENV：docker 不可用 / 镜像不在本机 / 宿主没装 psycopg —— 什么都没执行
@@ -99,13 +113,19 @@ DIV_START = date(2026, 1, 1)
 DIV_END = date(2026, 12, 31)
 
 # 本报告的结论**只对这几个文件的这些字节**成立；它们一改，本报告即作废，重跑。
+# D 段（编排层）把后两个也牵进来了：它的结论同时依赖「适配器怎么归一化/校验」与
+# 「编排层怎么留痕」，所以这两个文件与 DDL 同级 —— 改了任何一个，D 段的话都要重测。
 PINNED_FILES = (
     'db/data_center.sql',
     'quanauto/pgstore.py',
     'quanauto/datacenter.py',
+    'quanauto/ingest.py',
+    'quanauto/datasources.py',
 )
 
 TABLES = ('dc_daily_bar', 'dc_adjust_factor', 'dc_dividend')
+#: 批次日志表。D 段要清它，且要**单独**能数它（「前置失败不留痕」判的就是它的行数不变）。
+RUN_TABLE = 'dc_ingest_run'
 
 EXIT_OK = 0
 EXIT_FAIL = 1
@@ -203,6 +223,102 @@ def dividend_rows():
 
 
 # ---------------------------------------------------------------------------
+# D 段（J-11）的样本
+#
+# 与 A/B/C 三段的根本差别是**被测层**：B 段调 `pgstore` 的三条写入路径，D 段调产品
+# 调用点 `quanauto/ingest.py` 的三个公开函数。后者把「取数 → `validate_frame` →
+# 盖 `source`/`data_version` → 落库 → 写 `dc_ingest_run`」串成一条，B 段一行都没覆盖。
+#
+# 取数侧**不联网**：`_AdapterBase.__init__(fetch=…)` 就是为这件事留的口子（它的类注释
+# 写着「注入而不是在方法体里写死网络调用，是这一层能被离线测试的唯一原因」），所以这里
+# 用**真的** `TencentAdapter` / `TushareAdapter` 配**注入**的取数函数回**源形状**的帧
+# —— 归一化、校验、盖章、落库、留痕全部走产品代码，只有「网」是假的。
+# ⚠️ 这条通道与 §21.4 的禁令不冲突：**真源取数**天然不可复现，本探针要证的从来不是它。
+# ---------------------------------------------------------------------------
+
+ORCH_SYMBOL = '600000.SH'
+#: 第二个标的，只出现在 D5（「要了两个、只回来一个 ⇒ PARTIAL」那一条）。
+ORCH_OTHER = '000001.SZ'
+ORCH_START = date(2026, 3, 2)
+ORCH_END = date(2026, 3, 4)
+#: D1c（异值冲突）要给新那一行留出日子，否则它落在窗口外就与冲突无关了。
+ORCH_END2 = date(2026, 3, 5)
+ORCH_VERSION = 'probe-r29'
+
+#: 腾讯那条通道的原始帧是**位置数组、没有列名** ⇒ 列名就是下标字符串
+#: （`tencent/_default_fetch` 就是这么建帧的：`pd.DataFrame(rows, columns=[str(i)…])`）。
+TENCENT_COLUMNS = tuple(str(index) for index in range(9))
+
+#: 三行**源形状**的原始行。位置含义见腾讯适配器的 `_default_fetch` 里的 `column_map`：
+#: 0 日期 / 1 开 / 2 **收** / 3 高 / 4 低 / 5 量（手）/ 8 额（万元）；6、7 不在映射表里
+#: ⇒ 原样留着、不参与归一化。列名与位置写错的话下面每一条判据都会红，这是故意的。
+TENCENT_BASE_ROWS = (
+    ('2026-03-02', '10.1000', '10.2500', '10.3000', '10.0000', '10000', '{}', '1.50', '102.5'),
+    ('2026-03-03', '10.2500', '10.1000', '10.4000', '10.0500', '20000', '{}', '-1.50', '202.0'),
+    ('2026-03-04', '10.1000', '10.2000', '10.2200', '10.0900', '30000', '{}', '1.00', '306.0'),
+)
+
+
+def tencent_fetch(rows=None, only=None):
+    """给 `TencentAdapter` 用的取数函数：回**源形状**的帧（位置数组、无列名）。
+
+    `rows=None` ⇒ 用 `TENCENT_BASE_ROWS`（三行）；`only=None` ⇒ 每个标的都回同一批行，
+    否则不在 `only` 里的标回**空帧**（空帧是 D5「这个标的没取到」的输入；「空帧本身
+    过不了校验」是另一条路，由 D4 单独覆盖 —— 两者不是一件事）。
+    """
+
+    def fetch(symbol='', **kwargs):   # noqa: ARG001 - `_call` 会把 symbol/start/end 都传进来
+        import pandas as pd
+
+        body = [list(row) for row in (TENCENT_BASE_ROWS if rows is None else rows)]
+        if only is not None:
+            from quanauto.datasources import normalize_symbol
+
+            if normalize_symbol(symbol) not in only:
+                return pd.DataFrame(columns=list(TENCENT_COLUMNS))
+        return pd.DataFrame(body, columns=list(TENCENT_COLUMNS))
+
+    return fetch
+
+
+def tushare_factor_fetch():
+    """给 `TushareAdapter` 用的 `adj_factor` 取数函数（源形状：表内源列名）。"""
+
+    def fetch(**kwargs):   # noqa: ARG001
+        import pandas as pd
+
+        return pd.DataFrame({
+            'ts_code': [ORCH_SYMBOL, ORCH_SYMBOL],
+            'trade_date': ['20260302', '20260303'],
+            'adj_factor': ['1.00000000', '1.23456789'],
+        })
+
+    return fetch
+
+
+def tushare_dividend_fetch():
+    """给 `TushareAdapter` 用的 `dividend` 取数函数。
+
+    用的列是 `cash_div_tax`（**税前**）而不是 `cash_div`（税后）—— 契约要的是前者，
+    换错列不会报错、只会写进另一个数（所以 D3 对拍的是 `0.3000` / `0.00005`）。
+    `ex_date` 必须落在调用窗口里（`ingest_dividends` 的窗口比的是除权除息日），
+    `ann_date <= ex_date`（否则 DDL 那条 `ck_dc_dividend_announce` 会拦）。
+    """
+
+    def fetch(**kwargs):   # noqa: ARG001
+        import pandas as pd
+
+        return pd.DataFrame({
+            'ts_code': [ORCH_SYMBOL, ORCH_SYMBOL],
+            'ex_date': ['20260610', '20260910'],
+            'ann_date': ['20260603', '20260903'],
+            'cash_div_tax': ['0.3000', '0.00005'],
+        })
+
+    return fetch
+
+
+# ---------------------------------------------------------------------------
 # 纯函数（所以能自测）
 # ---------------------------------------------------------------------------
 
@@ -251,6 +367,72 @@ def compare_rounding(cases, py_round, pg_round):
 def quote_literal(literal):
     """把一个字面量包成 SQL 字符串常量。样本里没有单引号，但**不假设**这一点。"""
     return "'" + str(literal).replace("'", "''") + "'"
+
+
+#: `dc_ingest_run` 那一行**判哪些列**，以及读它的顺序。`error_message` 排在**最后**：
+#: 它是唯一可能含任意文本的列（`_record_failure` 会把异常消息写进去），排最后才能用
+#: `split(sep, 字段数-1)` 把多余的 `sep` 都留给它 —— 排在中间的话，消息里一个 `|`
+#: 就会让字段整体错位，而错位看起来像「值不符」。
+RUN_COLUMNS = ('adapter', 'priority', 'status', 'symbol_count', 'row_count',
+               'start_date', 'end_date', 'data_version', 'finished_at', 'error_message')
+
+#: 与 `RUN_COLUMNS` **一一对应、同序**。两处一错位，判据就整体错位 ⇒ 见 `run_row_of`。
+RUN_SELECT = ("SELECT adapter, priority, status, symbol_count, row_count, "
+              "start_date, end_date, data_version, coalesce(finished_at::text, ''), "
+              "error_message FROM dc_ingest_run WHERE run_id = %s")
+
+
+def split_row(text, count):
+    """psql 的一行（`-tA -F '|'`）→ `count` 个字段；**形状不对返回 None**。
+
+    返回 None 而不是「补齐 / 截断」：补齐会让「psql 没按我要的格式回」看起来像「字段值
+    不符」，而这两件事要修的地方完全不同（前者改读法，后者改产物）。
+    """
+    if text is None:
+        return None
+    parts = str(text).split('|', count - 1)
+    if len(parts) != count:
+        return None
+    return tuple(part.strip() for part in parts)
+
+
+def _matches(actual, spec):
+    """`spec` 要么是字符串（**精确相等**），要么是一个算子元组。
+
+    算子只有两个，多一个都要在这里显式加 —— 写不出来的算子直接炸，**不静默判过**：
+    `('nonempty',)` / `('contains', 子串)`。后两个是给「消息内容」用的，因为那几列
+    的正确值由产品代码拼出来，钉死全文等于把探针与文案耦死（改个标点就要重跑四个镜像）。
+    """
+    if isinstance(spec, tuple):
+        op = spec[0]
+        if op == 'nonempty':
+            return actual != ''
+        if op == 'contains':
+            return spec[1] in actual
+        raise AssertionError('未知的判据算子 %r（判据表与实现脱节，不是产物的问题）' % (op,))
+    return actual == spec
+
+
+def judge_run_row(cells, expect):
+    """把**另一个客户端**读回来的那一行与期望逐字段比。
+
+    返回 `(mismatches, seen)`：`mismatches` 每项 `(字段, 实际, 期望)`；`seen` 是读到的
+    全部字段（进报告，让「没被判的那几列」也肉眼可见）。
+
+    `cells is None`（读不出来 / 字段数不对）**必须产生一条不符** —— 否则「读不出来」会
+    静默变成「都对」，正是本项目反复踩的那一类假绿。
+    """
+    if cells is None:
+        return [('(整行)', '(读不出来 / 字段数不对)', '一行 %d 字段' % len(RUN_COLUMNS))], ()
+    bad = []
+    for index, name in enumerate(RUN_COLUMNS):
+        spec = expect.get(name)
+        if spec is None:
+            continue
+        actual = cells[index]
+        if not _matches(actual, spec):
+            bad.append((name, actual, spec))
+    return bad, cells
 
 
 def sha256_of(rel_path):
@@ -367,6 +549,92 @@ def no_autocommit_class():
             return self._conn
 
     return _NoAutoCommitConnection
+
+
+# ---------------------------------------------------------------------------
+# D 段的小工具：清四张表 + 读 `dc_ingest_run` 的那一行
+# ---------------------------------------------------------------------------
+
+def reset_orch(log):
+    """清**四张**表（三张业务表 + 批次日志）。
+
+    批次日志必须一起清：D 段有几条判据是「这次操作**不许**留下任何行」/「恰好多了 1 行」，
+    拿上一段的残留去数这些，判据会变得说不清。
+    `TRUNCATE a, b, c` 是单条语句，要么全成要么全不成 —— 与「清了两张、第三张没清」分得开。
+    """
+    rc, out = psql_stdin('TRUNCATE %s;' % ', '.join(TABLES + (RUN_TABLE,)), timeout=180)
+    if rc != 0:
+        log('GATE FAIL: TRUNCATE %s 失败。' % (RUN_TABLE,))
+        log.indent(out.strip()[:600])
+        return False
+    return True
+
+
+def run_row_of(run_id):
+    """读 `dc_ingest_run` 里 `run_id` 那一行，返回 `(cells|None, note)`。
+
+    走容器里的 `psql`（**另一个进程、另一个会话**）而不是本进程那条 psycopg 连接 ——
+    这正是 J-6 那次假绿缺的东西：同一条连接自读是恒真的。
+    """
+    rc, val, out = psql_scalar(RUN_SELECT % int(run_id))
+    if rc != 0:
+        return None, 'psql rc=%d：%s' % (rc, out.strip()[:200])
+    cells = split_row(val, len(RUN_COLUMNS))
+    if cells is None:
+        return None, ('psql 的输出切不出 %d 个字段（`RUN_SELECT` 与 `RUN_COLUMNS` 脱节？）：%r'
+                      % (len(RUN_COLUMNS), val))
+    return cells, ''
+
+
+def last_run_id():
+    """最新的 `run_id`。用于「调用抛异常、拿不到返回值」那几条（D1c / D4）。"""
+    n, err = psql_expect('SELECT max(run_id) FROM %s' % RUN_TABLE)
+    if n is None:
+        return None, err
+    if n <= 0:
+        return None, '批次日志是空的（这次调用一行都没留下）'
+    return n, ''
+
+
+def show_run_row(log, tag, run_id, expect):
+    """读 → 判 → 打。返回不符条数（读不出来**算 1 条**）。"""
+    cells, note = run_row_of(run_id)
+    if cells is None:
+        log('      %s MISMATCH %s' % (tag, note))
+        return 1
+    bad, seen = judge_run_row(cells, expect)
+    shown = ' | '.join('%s=%s' % (name, text[:60] if len(text) > 60 else text)
+                       for name, text in zip(RUN_COLUMNS, seen))
+    log('      %s 另一个客户端的读数：%s' % (tag, shown))
+    for name, actual, spec in bad:
+        if isinstance(spec, tuple):
+            spec_text = '%s %r' % (spec[0], spec[1]) if len(spec) > 1 else spec[0]
+        else:
+            spec_text = repr(spec)
+        log('          MISMATCH %s: 实际 %r / 期望 %s' % (name, actual, spec_text))
+    if not bad:
+        log('          OK（%d 个字段全部相符；未列的字段本次不判）' % len(expect))
+    return len(bad)
+
+
+def check_counts(log, tag, want):
+    """逐表数行并与期望比。返回不符条数。
+
+    `want` 里没写的表**默认期望 0**（不是「跳过」）：漏写一张表就等于那张表没人看，
+    而「没人看」在报告里与「看过了、恰好是 0」长得一样。
+    """
+    bad = 0
+    for table in TABLES:
+        got, err = count_of(table)
+        if got is None:
+            log('      %s GATE FAIL: 数不了 %s 的行数：%s' % (tag, table, err))
+            bad += 1
+            continue
+        expected = want.get(table, 0)
+        if got != expected:
+            log('      %s MISMATCH %s = %d 行（期望 %d）' % (tag, table, got, expected))
+            bad += 1
+    return bad
 
 
 # ---------------------------------------------------------------------------
@@ -687,6 +955,324 @@ def section_c(log, dsn):
 
 
 # ---------------------------------------------------------------------------
+# D 段：编排层（`quanauto/ingest.py`）在真库上真跑 —— J-11 的那一半
+# ---------------------------------------------------------------------------
+
+def caught(fn, want):
+    """跑 `fn()`，返回 `(ok, actual, exc)`：`ok` = 抛出来的**正是** `want` 那个类名。
+
+    不用 `pytest.raises` 那一套：本脚本不属于 `tests/`，而「抛了别的异常」与「没抛」
+    必须能分开报（前者是产物的问题，后者往往更严重 —— 静默写进去了）。
+    """
+    try:
+        fn()
+    except Exception as exc:                                    # noqa: BLE001
+        return type(exc).__name__ == want, type(exc).__name__, exc
+    return False, '(没抛)', None
+
+
+def section_d(log, dsn):
+    """**编排层**在真库上真跑（J-11）。返回 `(verdict, exit_code)`。
+
+    与 B 段的差别只有**被测层**：这里调的是产品调用点 `ingest_daily_bars` /
+    `ingest_adjust_factors` / `ingest_dividends`，它们把「取数 → 校验 → 盖章 → 落库 →
+    留痕」串成一条。每条通道都用**真的**适配器 + **注入的**取数函数（不联网、不需凭证）。
+    """
+    from quanauto import datasources, ingest, pgstore
+
+    bad = 0
+    log('')
+    log('--- D 段：编排层（`quanauto/ingest.py`）在真库上真跑（J-11）---')
+    log('  被测：三条公开通道 + `dc_ingest_run` 的开/收留痕。B 段那一层是 `pgstore` 的写入')
+    log('        路径，**没有**覆盖这条串本身（「零件都测过」与「接起来跑过」是两件事）。')
+    log('  取数：真的 `TencentAdapter` / `TushareAdapter` 配**注入**的取数函数回源形状的帧，')
+    log('        归一化 / `validate_frame` / 盖 source·data_version / 落库 / 留痕全走产品代码。')
+    log('        本次不证的也写在这里：**真实券源取过数**（那天然不可复现，见 §21.4）。')
+
+    # ── D0 对照组 ─────────────────────────────────────────────────────────
+    log('')
+    log('  D0 对照组：`autocommit=False` + 前置裸读（= B18 的调用次序，A2 的编排层版本）')
+    if not reset_orch(log):
+        return 'GUARD_FAIL', EXIT_GUARD
+    NoAutoCommit = no_autocommit_class()
+    d0_exc = None
+    d0_run = None
+    conn = NoAutoCommit(dsn)
+    try:
+        # 先裸读一次 ⇒ 会话进 INTRANS ⇒ 后面所有语句都在这个（永不提交的）事务里。
+        conn.execute('SELECT count(*) AS n FROM %s' % RUN_TABLE)
+        d0_run = ingest.ingest_daily_bars(datasources.TencentAdapter(fetch=tencent_fetch()),
+                                         [ORCH_SYMBOL], ORCH_START, ORCH_END,
+                                         conn=conn, data_version=ORCH_VERSION)
+    except Exception as exc:                                    # noqa: BLE001
+        d0_exc = exc
+    finally:
+        conn.close()
+    if d0_exc is not None or d0_run is None:
+        log('  GATE FAIL: D0 对照组自己抛了 %r —— 前提不成立，D 段的绿无从谈起。' % (d0_exc,))
+        return 'GUARD_FAIL', EXIT_GUARD
+    seen_run, err_run = count_of(RUN_TABLE)
+    seen_bar, err_bar = count_of('dc_daily_bar')
+    if seen_run is None or seen_bar is None:
+        log('  GATE FAIL: D0 数行数失败：%s / %s' % (err_run, err_bar))
+        return 'GUARD_FAIL', EXIT_GUARD
+    log('      内存里的返回值：status=%s row_count=%d（run_id=%s）'
+        % (d0_run.status, d0_run.inserted + d0_run.skipped, d0_run.run_id))
+    log('      另一个客户端数到：%s %d 行 / dc_daily_bar %d 行'
+        % (RUN_TABLE, seen_run, seen_bar))
+    if not (teeth_ok(seen_run) and teeth_ok(seen_bar)):
+        log('  PROBE-TEETH-MISSING: 期望另一个客户端在**两张表**上都数到 0 行，实际 %d / %d。'
+            % (seen_run, seen_bar))
+        log('    含义：本探针分辨不出「编排层跑完了、但一行都没提交」这条缺陷 ⇒ D 段的绿')
+        log('          什么也证明不了，故拒绝判定（**不是**「通过了」）。')
+        log('    不要去调这两个期望值 —— 先查为什么 D0 的前置裸读没能把会话钉在 INTRANS。')
+        return 'GUARD_FAIL', EXIT_GUARD
+    log('      OK 内存里是 SUCCESS、库里两张表都是 0 行 ⇒ 这条读法的分辨力被钉住了')
+
+    # ── D1 日线通道 ───────────────────────────────────────────────────────
+    log('')
+    log('  D1 日线通道（`ingest_daily_bars` → `dc_daily_bar`）')
+    if not reset_orch(log):
+        return 'GUARD_FAIL', EXIT_GUARD
+    daily = datasources.TencentAdapter(fetch=tencent_fetch())
+    conn = pgstore.PsycopgConnection(dsn)
+    try:
+        r1a = ingest.ingest_daily_bars(daily, [ORCH_SYMBOL], ORCH_START, ORCH_END,
+                                      conn=conn, data_version=ORCH_VERSION)
+        r1b = ingest.ingest_daily_bars(daily, [ORCH_SYMBOL], ORCH_START, ORCH_END,
+                                      conn=conn, data_version=ORCH_VERSION,
+                                      priority=daily.priority)
+    finally:
+        conn.close()
+    log('      D1a 不传 priority（用**默认值**）：status=%s inserted=%d skipped=%d run_id=%s'
+        % (r1a.status, r1a.inserted, r1a.skipped, r1a.run_id))
+    log('          注：适配器自己声明的优先级是 %s，而默认落进日志的是 `PRIMARY`。'
+        % daily.priority.value)
+    log('          两者不同是**产品行为**（调用方要自己传 `priority=adapter.priority`）、')
+    log('          不是缺陷；本探针把两个值都记下来，免得下一个读的人以为是同一个数。')
+    log('      D1b 传 priority=adapter.priority（%s）：status=%s inserted=%d skipped=%d run_id=%s'
+        % (daily.priority.value, r1b.status, r1b.inserted, r1b.skipped, r1b.run_id))
+    bad += show_run_row(log, 'D1a', r1a.run_id, {
+        'adapter': 'tencent', 'priority': 'PRIMARY', 'status': 'SUCCESS',
+        'symbol_count': '1', 'row_count': '3', 'start_date': '2026-03-02',
+        'end_date': '2026-03-04', 'data_version': ORCH_VERSION,
+        'finished_at': ('nonempty',), 'error_message': ''})
+    bad += show_run_row(log, 'D1b', r1b.run_id, {
+        'adapter': 'tencent', 'priority': 'FALLBACK', 'status': 'SUCCESS',
+        'symbol_count': '1', 'row_count': '3', 'finished_at': ('nonempty',),
+        'error_message': ''})
+    if (r1a.inserted, r1a.skipped) != (3, 0) or (r1b.inserted, r1b.skipped) != (0, 3):
+        log('      MISMATCH 幂等那一步：首次应 inserted=3 skipped=0、重跑应 inserted=0 skipped=3，'
+            '实际首次 %s / 重跑 %s' % ((r1a.inserted, r1a.skipped), (r1b.inserted, r1b.skipped)))
+        bad += 1
+    bad += check_counts(log, 'D1a+b', {'dc_daily_bar': 3})
+
+    # D1c：同键异值 ⇒ 抛 `IngestConflictError`，且**整批回滚**（新那一行也不许留下）。
+    conflict_rows = [
+        ('2026-03-02', '10.1000', '99.9900', '99.9900', '10.0000', '10000', '{}', '1.50', '980.0'),
+        ('2026-03-05', '10.1000', '10.2000', '10.2200', '10.0900', '10000', '{}', '1.00', '102.0'),
+    ]
+    conn = pgstore.PsycopgConnection(dsn)
+    try:
+        ok_c, actual_c, exc_c = caught(
+            lambda: ingest.ingest_daily_bars(
+                datasources.TencentAdapter(fetch=tencent_fetch(rows=conflict_rows)),
+                [ORCH_SYMBOL], ORCH_START, ORCH_END2,
+                conn=conn, data_version=ORCH_VERSION), 'IngestConflictError')
+    finally:
+        conn.close()
+    log('      D1c 异值冲突（03-02 改了 close，并新增 03-05 一行）：抛的是 %s' % actual_c)
+    if not ok_c:
+        log('          MISMATCH 期望 `IngestConflictError`，实际 %s（%r）' % (actual_c, exc_c))
+        bad += 1
+    c_run, c_err = last_run_id()
+    if c_run is None:
+        log('          MISMATCH 拿不到那一行的 run_id：%s' % c_err)
+        bad += 1
+    else:
+        bad += show_run_row(log, 'D1c', c_run, {
+            'adapter': 'tencent', 'status': 'FAILED', 'row_count': '0',
+            'symbol_count': '1', 'finished_at': ('nonempty',),
+            'error_message': ('nonempty',)})
+    bad += check_counts(log, 'D1c 回滚后', {'dc_daily_bar': 3})
+
+    # ── D2/D3 复权因子与分红通道 ──────────────────────────────────────────
+    log('')
+    log('  D2 复权因子通道（`ingest_adjust_factors` → `dc_adjust_factor`）')
+    log('  D3 分红通道（`ingest_dividends` → `dc_dividend`，窗口比的是 ex_date）')
+    ts = datasources.TushareAdapter(fetch=tushare_factor_fetch(),
+                                    dividend_fetch=tushare_dividend_fetch())
+    conn = pgstore.PsycopgConnection(dsn)
+    try:
+        r2 = ingest.ingest_adjust_factors(ts, [ORCH_SYMBOL], ORCH_START, ORCH_END,
+                                         conn=conn, data_version=ORCH_VERSION,
+                                         priority=ts.priority)
+        r3 = ingest.ingest_dividends(ts, [ORCH_SYMBOL], DIV_START, DIV_END,
+                                     conn=conn, data_version=ORCH_VERSION,
+                                     priority=ts.priority)
+    finally:
+        conn.close()
+    log('      D2 status=%s inserted=%d skipped=%d run_id=%s'
+        % (r2.status, r2.inserted, r2.skipped, r2.run_id))
+    log('      D3 status=%s inserted=%d skipped=%d run_id=%s'
+        % (r3.status, r3.inserted, r3.skipped, r3.run_id))
+    bad += show_run_row(log, 'D2', r2.run_id, {
+        'adapter': 'tushare', 'priority': 'FALLBACK', 'status': 'SUCCESS',
+        'symbol_count': '1', 'row_count': '2', 'data_version': ORCH_VERSION,
+        'start_date': '2026-03-02', 'end_date': '2026-03-04',
+        'finished_at': ('nonempty',), 'error_message': ''})
+    bad += show_run_row(log, 'D3', r3.run_id, {
+        'adapter': 'tushare', 'priority': 'FALLBACK', 'status': 'SUCCESS',
+        'symbol_count': '1', 'row_count': '2', 'data_version': ORCH_VERSION,
+        'start_date': '2026-01-01', 'end_date': '2026-12-31',
+        'finished_at': ('nonempty',), 'error_message': ''})
+    if (r2.inserted, r3.inserted) != (2, 2):
+        log('      MISMATCH 因子/分红的首跑 inserted 应为 2 / 2，实际 %s / %s'
+            % (r2.inserted, r3.inserted))
+        bad += 1
+    bad += check_counts(log, 'D2+D3', {'dc_daily_bar': 3, 'dc_adjust_factor': 2,
+                                       'dc_dividend': 2})
+    # 分红是按 ex_date 过滤的：窗口写错（比如用 announce_date 比）时这两行会不在帧里，
+    # 上面那条 row_count=2 立刻会红 —— 这里再单独把**值**读一次，因为「行数对」不等于
+    # 「每股现金对」（`cash_div` 税后列与 `cash_div_tax` 税前列差的就是这个数）。
+    for ex_date, want_cash in (('2026-06-10', '0.3000'), ('2026-09-10', '0.0001')):
+        rc, val, out = psql_scalar(
+            "SELECT cash_per_share::text FROM dc_dividend WHERE symbol = %s AND ex_date = %s "
+            "AND data_version = %s"
+            % (quote_literal(ORCH_SYMBOL), quote_literal(ex_date), quote_literal(ORCH_VERSION)))
+        if rc != 0 or (val or '').strip() != want_cash:
+            log('      MISMATCH ex_date=%s 的 cash_per_share：实际 %r / 期望 %s'
+                % (ex_date, (val or '').strip(), want_cash))
+            bad += 1
+
+    # ── D4 质检拒绝 ⇒ 一行都不落库 ────────────────────────────────────────
+    log('')
+    log('  D4 质检拒绝（同一自然键在同一帧里出现两次）⇒ `DataQualityError`、一行都不落库')
+    dup_rows = list(TENCENT_BASE_ROWS) + [TENCENT_BASE_ROWS[2]]
+    conn = pgstore.PsycopgConnection(dsn)
+    try:
+        ok_d, actual_d, exc_d = caught(
+            lambda: ingest.ingest_daily_bars(
+                datasources.TencentAdapter(fetch=tencent_fetch(rows=dup_rows)),
+                [ORCH_SYMBOL], ORCH_START, ORCH_END,
+                conn=conn, data_version=ORCH_VERSION), 'DataQualityError')
+    finally:
+        conn.close()
+    log('      D4 抛的是 %s' % actual_d)
+    if not ok_d:
+        log('          MISMATCH 期望 `DataQualityError`，实际 %s（%r）' % (actual_d, exc_d))
+        bad += 1
+    d_run, d_err = last_run_id()
+    if d_run is None:
+        log('          MISMATCH 拿不到那一行的 run_id：%s' % d_err)
+        bad += 1
+    else:
+        bad += show_run_row(log, 'D4', d_run, {
+            'status': 'FAILED', 'row_count': '0', 'finished_at': ('nonempty',),
+            'error_message': ('contains', '没通过校验')})
+    bad += check_counts(log, 'D4', {'dc_daily_bar': 3, 'dc_adjust_factor': 2,
+                                    'dc_dividend': 2})
+
+    # ── D5 要了两个标的、只回来一个 ⇒ PARTIAL ────────────────────────────
+    log('')
+    log('  D5 要了两个标的、只回来一个（`%s` 空帧）⇒ `PARTIAL` + error_message' % ORCH_OTHER)
+    conn = pgstore.PsycopgConnection(dsn)
+    try:
+        r5 = ingest.ingest_daily_bars(
+            datasources.TencentAdapter(fetch=tencent_fetch(only=(ORCH_SYMBOL,))),
+            [ORCH_SYMBOL, ORCH_OTHER], ORCH_START, ORCH_END,
+            conn=conn, data_version=ORCH_VERSION)
+    finally:
+        conn.close()
+    log('      D5 status=%s missing=%s inserted=%d' % (r5.status, r5.missing_symbols, r5.inserted))
+    if r5.status != 'PARTIAL' or r5.missing_symbols != (ORCH_OTHER,):
+        log('          MISMATCH 期望 status=PARTIAL 且 missing=(%s,)，实际 %s / %s'
+            % (ORCH_OTHER, r5.status, r5.missing_symbols))
+        bad += 1
+    if r5.complete:
+        log('          MISMATCH `IngestRun.complete` 在缺标的时不应为 True')
+        bad += 1
+    bad += show_run_row(log, 'D5', r5.run_id, {
+        'adapter': 'tencent', 'status': 'PARTIAL', 'symbol_count': '2', 'row_count': '3',
+        'finished_at': ('nonempty',), 'error_message': ('contains', ORCH_OTHER)})
+    # ⚠️ 期望**仍是 3**而不是 6：D5 要回来的那一个标的与 D1 是**同一批行**（同自然键
+    # 同 `data_version`）⇒ 它们是 skipped 不是 inserted（日志里 `inserted=0` 就是这件事）。
+    # 想让它变成 6，得另换一个 `data_version`，那测的就不是「PARTIAL 时缺的那个标的不落库」了。
+    bad += check_counts(log, 'D5', {'dc_daily_bar': 3, 'dc_adjust_factor': 2,
+                                    'dc_dividend': 2})
+    # 上一条只能证「总数没涨」—— 总数不变也可能是「缺的那个标的的行**覆盖了**已有的行」。
+    # 所以再**按标的**数一次：没取到的那个必须 0 行，取到的那个必须还是 3 行。
+    n_other, err_o = psql_expect('SELECT count(*) FROM dc_daily_bar WHERE symbol = %s'
+                                 % quote_literal(ORCH_OTHER))
+    n_main, err_m = psql_expect('SELECT count(*) FROM dc_daily_bar WHERE symbol = %s'
+                                % quote_literal(ORCH_SYMBOL))
+    if n_other is None or n_main is None:
+        log('      GATE FAIL: 按标的数行数失败：%s / %s' % (err_o, err_m))
+        return 'GUARD_FAIL', EXIT_GUARD
+    if n_other != 0:
+        log('          MISMATCH 没取到的标的 %s 在 dc_daily_bar 里是 %d 行（应为 0）'
+            % (ORCH_OTHER, n_other))
+        bad += 1
+    if n_main != 3:
+        log('          MISMATCH 取到的标的 %s 在 dc_daily_bar 里是 %d 行（应为 3）'
+            % (ORCH_SYMBOL, n_main))
+        bad += 1
+    if n_other == 0 and n_main == 3:
+        log('          OK 按标的数：%s 3 行、%s 0 行（缺的那一个真的没落库）'
+            % (ORCH_SYMBOL, ORCH_OTHER))
+
+    # ── D6 前置检查失败 ⇒ **不留**批次行 ──────────────────────────────────
+    log('')
+    log('  D6 前置检查失败（`data_version` 空白 / `symbols` 为空）⇒ 连批次行都不该留')
+    before, err_b = count_of(RUN_TABLE)
+    if before is None:
+        log('      GATE FAIL: 数不了 %s：%s' % (RUN_TABLE, err_b))
+        return 'GUARD_FAIL', EXIT_GUARD
+    conn = pgstore.PsycopgConnection(dsn)
+    try:
+        ok_v, actual_v, _ = caught(
+            lambda: ingest.ingest_daily_bars(daily, [ORCH_SYMBOL], ORCH_START, ORCH_END,
+                                             conn=conn, data_version='   '),
+            'DataVersionError')
+        ok_s, actual_s, _ = caught(
+            lambda: ingest.ingest_daily_bars(daily, [], ORCH_START, ORCH_END,
+                                             conn=conn, data_version=ORCH_VERSION),
+            'InvalidParamError')
+    finally:
+        conn.close()
+    log('      D6 空白 data_version 抛 %s；空 symbols 抛 %s' % (actual_v, actual_s))
+    if not ok_v:
+        log('          MISMATCH 期望 `DataVersionError`，实际 %s' % actual_v)
+        bad += 1
+    if not ok_s:
+        log('          MISMATCH 期望 `InvalidParamError`，实际 %s' % actual_s)
+        bad += 1
+    after, err_a = count_of(RUN_TABLE)
+    if after is None:
+        log('      GATE FAIL: 数不了 %s：%s' % (RUN_TABLE, err_a))
+        return 'GUARD_FAIL', EXIT_GUARD
+    if after != before:
+        log('          MISMATCH %s 从 %d 行变成 %d 行 —— 前置检查失败不该留批次行'
+            % (RUN_TABLE, before, after))
+        bad += 1
+    else:
+        log('          OK %s 仍是 %d 行（前置检查在开批次行之前就拦住了）'
+            % (RUN_TABLE, after))
+
+    log('')
+    if bad:
+        log('D 段 FAIL：%d 处不符。编排层在真库上的行为与它写在文档里的不一样，' % bad)
+        log('  先看上面每一条 MISMATCH 的实际值，再决定改产物还是改这条判据的期望。')
+        log('  （**不许**为了让本段变绿去调期望值 —— 那等于把这条证据删掉。）')
+        return 'FAIL', EXIT_FAIL
+    log('D 段 OK：三条通道各真跑一次 + 幂等 + 冲突回滚 + 质检拒绝 + PARTIAL + 前置不留痕，')
+    log('  全部由**另一个客户端**读 `dc_ingest_run` 与三张业务表核对。')
+    log("  这一层因此拿到了真库证据 —— 但「谁定时调它」仍然不存在（`quanauto/cli.py` 没有")
+    log('  采集子命令，本仓库里唯一的调用者就是本探针与 `tests/test_ingest.py`）。')
+    return 'OK', EXIT_OK
+
+
+# ---------------------------------------------------------------------------
 # 容器生命周期
 # ---------------------------------------------------------------------------
 
@@ -752,7 +1338,7 @@ def teardown(log, keep):
 # ---------------------------------------------------------------------------
 
 def write_report(lines, verdict, exit_code):
-    body = ['SCOPE: probe_ingest_commit（A 段对照 / B 段真跑 / C 段舍入）-- 探针，不是门禁。',
+    body = ['SCOPE: probe_ingest_commit（A 段对照 / B 段真跑 / C 段舍入 / D 段编排层）-- 探针，不是门禁。',
             '']
     body += list(lines)
     body.append('')
@@ -806,8 +1392,9 @@ def main():
         return selftest()
 
     log = Log()
-    log('probe-ingest-commit: 三条落库写入路径在容器 PostgreSQL 上真跑一次，')
-    log('                     并用**另一个客户端**读回（对照 DC 契约附录 J 的 J-6 / J-8）。')
+    log('probe-ingest-commit: 三条落库写入路径 + 编排层三条产品通道，在容器 PostgreSQL 上')
+    log('                     真跑一次，并用**另一个客户端**读回')
+    log('                     （对照 DC 契约附录 J 的 J-6 / J-8 / J-11）。')
     log('')
 
     # --- 0. 报告落点 ------------------------------------------------------
@@ -933,8 +1520,8 @@ def body(log, env):
     log('--- 实测环境 ---')
     log('  server : PostgreSQL %s' % (version or '(未取到)'))
 
-    # --- 5. 三段 ----------------------------------------------------------
-    for section in (section_a, section_b, section_c):
+    # --- 5. 四段 ----------------------------------------------------------
+    for section in (section_a, section_b, section_c, section_d):
         verdict, code = section(log, dsn)
         if verdict != 'OK':
             log('')
@@ -948,15 +1535,20 @@ def body(log, env):
     log('  A 段  对照（autocommit=False 下新客户端看到 0 行）  OK')
     log('  B 段  真跑（三条写入路径都由另一个客户端读到）      OK')
     log('  C 段  舍入（半值两侧同向）                          OK')
+    log('  D 段  编排（`quanauto/ingest.py` 三条通道 + 留痕）  OK')
     log('')
-    log('boundary: 本次证明的是「`quanauto/pgstore.py` 的三条**落库写入**路径在真 PostgreSQL')
-    log('          上真的提交了」，**不是**「`quanauto/ingest.py` 那层编排在真库上跑过」')
-    log('          （那一层的产品调用点仍然只在假连接用例里跑过，见 DC 契约 B21.6 与附录 J 的 J-11）。')
+    log('boundary: 本次证明的是「`quanauto/pgstore.py` 的三条**落库写入**路径（B 段）与')
+    log('          `quanauto/ingest.py` 的三条**产品通道**（D 段）在真 PostgreSQL 上真的')
+    log('          提交了、且留痕行由另一个客户端读到」，**不是**「真实券源取过数」。')
+    log('boundary: D 段**没有**证明的：① 「真源取数」（源侧是注入的取数函数，是假源 ——')
+    log('          真实取数天然不可复现，也不该被要求跑，见 迭代计划 §21.4）；② 「谁定时调它」')
+    log('          （`quanauto/cli.py` 没有采集子命令，本仓库里只有本探针与 `tests/test_ingest.py`')
+    log('          调过这三个函数）；③ 并发 / 连接池语义（本段全用短命连接）。')
     log('boundary: 本次证明只对 image=%s (digest=%s) 与上面记的那几个文件 hash 成立。'
         % (env.get('image') or '?', env.get('digest') or '?'))
-    log('boundary: 输入是**本探针自己构造的行**，不是任何真实券源取回来的数据 ——')
-    log('          「真源取数」仍然没有跑过，也不该被要求跑（真实取数天然不可复现）。')
-    return 'PROBE PASS（A/B/C 三段都按预期）', EXIT_OK
+    log('boundary: 输入是**本探针自己构造的行**（B 段是行对象、D 段的源侧是注入的取数函数），')
+    log('          不是任何真实券源取回来的数据 —— 「真源取数」仍然没有跑过。')
+    return 'PROBE PASS（A/B/C/D 四段都按预期）', EXIT_OK
 
 
 # ---------------------------------------------------------------------------
@@ -1007,12 +1599,49 @@ def selftest():
     case('quote-POS-plain', quote_literal('1.00005'), "'1.00005'")
     case('quote-POS-escape', quote_literal("a'b"), "'a''b'")
 
+    # `split_row`：D 段每一行都先经过它 ⇒ 「切不出来」必须返回 None，不许补齐/截断成
+    # 一个「看起来像值不符」的形状（那两种故障要修的地方完全不同）。
+    row = split_row('tencent|PRIMARY|SUCCESS|1|3|2026-03-02|2026-03-04|probe-r29|'
+                    '2026-10-02 09:00:00.1+00|', len(RUN_COLUMNS))
+    case('split-POS-width', len(row), len(RUN_COLUMNS))
+    case('split-POS-last-empty', row[-1], '')
+    case('split-POS-status', row[2], 'SUCCESS')
+    # error_message 里含 `|` 时必须留在**最后那个字段**里（所以它必须排最后一列）。
+    piped = split_row('t|PRIMARY|FAILED|1|0|2026-03-02|2026-03-04|v|ts|a|b|c',
+                      len(RUN_COLUMNS))
+    case('split-POS-pipe-in-message', piped[-1], 'a|b|c')
+    case('split-NEG-too-few', split_row('a|b', len(RUN_COLUMNS)), None)
+    case('split-NEG-none', split_row(None, len(RUN_COLUMNS)), None)
+
+    # `judge_run_row`：三类样本 —— 干净样本（0 不符，防误报）、坏样本（抓到那一个字段）、
+    # 「读不出来」（**必须**产生 1 条不符，否则会静默变成「都对」）。
+    good = tuple(['tencent', 'PRIMARY', 'SUCCESS', '1', '3', '2026-03-02', '2026-03-04',
+                  'probe-r29', '2026-10-02 09:00:00.1+00', ''])
+    want = {'adapter': 'tencent', 'status': 'SUCCESS', 'row_count': '3',
+            'finished_at': ('nonempty',), 'error_message': ''}
+    bad_list, seen = judge_run_row(good, want)
+    case('judge-POS-clean-bad', len(bad_list), 0)
+    case('judge-POS-clean-seen', len(seen), len(RUN_COLUMNS))
+    case('judge-NEG-field-count', len(judge_run_row(good[:4] + ('7',) + good[5:], want)[0]), 1)
+    case('judge-NEG-unreadable-bad', len(judge_run_row(None, want)[0]), 1)
+    case('judge-NEG-unreadable-seen', judge_run_row(None, want)[1], ())
+    case('judge-NEG-contains-miss', len(judge_run_row(good, {'error_message': ('contains', 'x')})[0]), 1)
+    case('judge-POS-nonempty-blank',
+         len(judge_run_row(good[:8] + ('',) + good[9:], {'finished_at': ('nonempty',)})[0]), 1)
+
+    # `caught`：命中、抛别的、没抛 —— 三种必须分得开（「没抛」往往比「抛错」更严重）。
+    case('caught-POS-hit', caught(lambda: (_ for _ in ()).throw(ValueError('x')), 'ValueError')[0], True)
+    case('caught-NEG-other', caught(lambda: (_ for _ in ()).throw(KeyError('x')), 'ValueError')[1:2],
+         ('KeyError',))
+    case('caught-NEG-none', caught(lambda: None, 'ValueError')[0:2], (False, '(没抛)'))
+
     # `run` 的「命令不存在」出口：不能崩、要返回 127。
     rc, _ = run(['definitely-not-a-real-binary-xyz'], timeout=30)
     case('run-NEG-missing-binary-rc', rc, 127)
 
-    print('SELFTEST %s：as_int / teeth_ok / compare_rounding / quote_literal / run 的'
-          '正负样本都有覆盖' % ('OK' if ok else 'FAIL'))
+    print('SELFTEST %s：as_int / teeth_ok / compare_rounding / quote_literal / '
+          'split_row / judge_run_row / caught / run 的正负样本都有覆盖'
+          % ('OK' if ok else 'FAIL'))
     return 0 if ok else 1
 
 

@@ -1,7 +1,8 @@
-SCOPE: probe_ingest_commit（A 段对照 / B 段真跑 / C 段舍入）-- 探针，不是门禁。
+SCOPE: probe_ingest_commit（A 段对照 / B 段真跑 / C 段舍入 / D 段编排层）-- 探针，不是门禁。
 
-probe-ingest-commit: 三条落库写入路径在容器 PostgreSQL 上真跑一次，
-                     并用**另一个客户端**读回（对照 DC 契约附录 J 的 J-6 / J-8）。
+probe-ingest-commit: 三条落库写入路径 + 编排层三条产品通道，在容器 PostgreSQL 上
+                     真跑一次，并用**另一个客户端**读回
+                     （对照 DC 契约附录 J 的 J-6 / J-8 / J-11）。
 
 docker server version: 29.4.0
 image  : postgres:17
@@ -11,7 +12,7 @@ digest : postgres@sha256:f4c66b820c6f974249089d3d16d86a3698eae11e8746eb6644b2271
 --- 起临时容器 ---
 pre-clean: docker rm -f quan-ingest-probe -> exit 0（没东西可删时非 0 属正常）
 宿主端口：127.0.0.1:55433 -> 容器 5432（**只绑回环**，不对外）
-容器已创建：d4ff646569f30c1e1d88
+容器已创建：4f6e6c1022bbcdfef9db
 数据库已就绪（pg_isready -h 127.0.0.1 返回 0）
 
 --- 前置守卫 ---
@@ -76,27 +77,89 @@ ddl applied: db/data_center.sql
       OK 列里是 1.0001 == `_as_decimal('1.00005')` = 1.0001
   C 段 OK：所有半值样本两侧同向（`ROUND_HALF_UP` = 半数远离零 = PG numeric 的语义）。
 
+--- D 段：编排层（`quanauto/ingest.py`）在真库上真跑（J-11）---
+  被测：三条公开通道 + `dc_ingest_run` 的开/收留痕。B 段那一层是 `pgstore` 的写入
+        路径，**没有**覆盖这条串本身（「零件都测过」与「接起来跑过」是两件事）。
+  取数：真的 `TencentAdapter` / `TushareAdapter` 配**注入**的取数函数回源形状的帧，
+        归一化 / `validate_frame` / 盖 source·data_version / 落库 / 留痕全走产品代码。
+        本次不证的也写在这里：**真实券源取过数**（那天然不可复现，见 §21.4）。
+
+  D0 对照组：`autocommit=False` + 前置裸读（= B18 的调用次序，A2 的编排层版本）
+      内存里的返回值：status=SUCCESS row_count=3（run_id=1）
+      另一个客户端数到：dc_ingest_run 0 行 / dc_daily_bar 0 行
+      OK 内存里是 SUCCESS、库里两张表都是 0 行 ⇒ 这条读法的分辨力被钉住了
+
+  D1 日线通道（`ingest_daily_bars` → `dc_daily_bar`）
+      D1a 不传 priority（用**默认值**）：status=SUCCESS inserted=3 skipped=0 run_id=2
+          注：适配器自己声明的优先级是 FALLBACK，而默认落进日志的是 `PRIMARY`。
+          两者不同是**产品行为**（调用方要自己传 `priority=adapter.priority`）、
+          不是缺陷；本探针把两个值都记下来，免得下一个读的人以为是同一个数。
+      D1b 传 priority=adapter.priority（FALLBACK）：status=SUCCESS inserted=0 skipped=3 run_id=3
+      D1a 另一个客户端的读数：adapter=tencent | priority=PRIMARY | status=SUCCESS | symbol_count=1 | row_count=3 | start_date=2026-03-02 | end_date=2026-03-04 | data_version=probe-r29 | finished_at=2026-10-02 12:50:04.725+00 | error_message=
+          OK（10 个字段全部相符；未列的字段本次不判）
+      D1b 另一个客户端的读数：adapter=tencent | priority=FALLBACK | status=SUCCESS | symbol_count=1 | row_count=3 | start_date=2026-03-02 | end_date=2026-03-04 | data_version=probe-r29 | finished_at=2026-10-02 12:50:04.739+00 | error_message=
+          OK（7 个字段全部相符；未列的字段本次不判）
+      D1c 异值冲突（03-02 改了 close，并新增 03-05 一行）：抛的是 IngestConflictError
+      D1c 另一个客户端的读数：adapter=tencent | priority=PRIMARY | status=FAILED | symbol_count=1 | row_count=0 | start_date=2026-03-02 | end_date=2026-03-05 | data_version=probe-r29 | finished_at=2026-10-02 12:50:05.717+00 | error_message=[DATA_007] 主键 (symbol=600000.SH, trade_date=2026-03-02, data
+          OK（6 个字段全部相符；未列的字段本次不判）
+
+  D2 复权因子通道（`ingest_adjust_factors` → `dc_adjust_factor`）
+  D3 分红通道（`ingest_dividends` → `dc_dividend`，窗口比的是 ex_date）
+      D2 status=SUCCESS inserted=2 skipped=0 run_id=5
+      D3 status=SUCCESS inserted=2 skipped=0 run_id=6
+      D2 另一个客户端的读数：adapter=tushare | priority=FALLBACK | status=SUCCESS | symbol_count=1 | row_count=2 | start_date=2026-03-02 | end_date=2026-03-04 | data_version=probe-r29 | finished_at=2026-10-02 12:50:06.664+00 | error_message=
+          OK（10 个字段全部相符；未列的字段本次不判）
+      D3 另一个客户端的读数：adapter=tushare | priority=FALLBACK | status=SUCCESS | symbol_count=1 | row_count=2 | start_date=2026-01-01 | end_date=2026-12-31 | data_version=probe-r29 | finished_at=2026-10-02 12:50:06.681+00 | error_message=
+          OK（10 个字段全部相符；未列的字段本次不判）
+
+  D4 质检拒绝（同一自然键在同一帧里出现两次）⇒ `DataQualityError`、一行都不落库
+      D4 抛的是 DataQualityError
+      D4 另一个客户端的读数：adapter=tencent | priority=PRIMARY | status=FAILED | symbol_count=1 | row_count=0 | start_date=2026-03-02 | end_date=2026-03-04 | data_version=probe-r29 | finished_at=2026-10-02 12:50:08.135+00 | error_message=[DATA_003] tencent 取回的日线帧没通过校验（4 行）：daily 主键 ['symbol', 'tra
+          OK（4 个字段全部相符；未列的字段本次不判）
+
+  D5 要了两个标的、只回来一个（`000001.SZ` 空帧）⇒ `PARTIAL` + error_message
+      D5 status=PARTIAL missing=('000001.SZ',) inserted=0
+      D5 另一个客户端的读数：adapter=tencent | priority=PRIMARY | status=PARTIAL | symbol_count=2 | row_count=3 | start_date=2026-03-02 | end_date=2026-03-04 | data_version=probe-r29 | finished_at=2026-10-02 12:50:09.12+00 | error_message=帧只覆盖 1 个标的，缺：000001.SZ
+          OK（6 个字段全部相符；未列的字段本次不判）
+          OK 按标的数：600000.SH 3 行、000001.SZ 0 行（缺的那一个真的没落库）
+
+  D6 前置检查失败（`data_version` 空白 / `symbols` 为空）⇒ 连批次行都不该留
+      D6 空白 data_version 抛 DataVersionError；空 symbols 抛 InvalidParamError
+          OK dc_ingest_run 仍是 7 行（前置检查在开批次行之前就拦住了）
+
+D 段 OK：三条通道各真跑一次 + 幂等 + 冲突回滚 + 质检拒绝 + PARTIAL + 前置不留痕，
+  全部由**另一个客户端**读 `dc_ingest_run` 与三张业务表核对。
+  这一层因此拿到了真库证据 —— 但「谁定时调它」仍然不存在（`quanauto/cli.py` 没有
+  采集子命令，本仓库里唯一的调用者就是本探针与 `tests/test_ingest.py`）。
+
 --- 汇总 ---
   A 段  对照（autocommit=False 下新客户端看到 0 行）  OK
   B 段  真跑（三条写入路径都由另一个客户端读到）      OK
   C 段  舍入（半值两侧同向）                          OK
+  D 段  编排（`quanauto/ingest.py` 三条通道 + 留痕）  OK
 
-boundary: 本次证明的是「`quanauto/pgstore.py` 的三条**落库写入**路径在真 PostgreSQL
-          上真的提交了」，**不是**「`quanauto/ingest.py` 那层编排在真库上跑过」
-          （那一层的产品调用点仍然只在假连接用例里跑过，见 DC 契约 B21.6 与附录 J 的 J-11）。
+boundary: 本次证明的是「`quanauto/pgstore.py` 的三条**落库写入**路径（B 段）与
+          `quanauto/ingest.py` 的三条**产品通道**（D 段）在真 PostgreSQL 上真的
+          提交了、且留痕行由另一个客户端读到」，**不是**「真实券源取过数」。
+boundary: D 段**没有**证明的：① 「真源取数」（源侧是注入的取数函数，是假源 ——
+          真实取数天然不可复现，也不该被要求跑，见 迭代计划 §21.4）；② 「谁定时调它」
+          （`quanauto/cli.py` 没有采集子命令，本仓库里只有本探针与 `tests/test_ingest.py`
+          调过这三个函数）；③ 并发 / 连接池语义（本段全用短命连接）。
 boundary: 本次证明只对 image=postgres:17 (digest=postgres@sha256:f4c66b820c6f974249089d3d16d86a3698eae11e8746eb6644b2271031e91232) 与上面记的那几个文件 hash 成立。
-boundary: 输入是**本探针自己构造的行**，不是任何真实券源取回来的数据 ——
-          「真源取数」仍然没有跑过，也不该被要求跑（真实取数天然不可复现）。
+boundary: 输入是**本探针自己构造的行**（B 段是行对象、D 段的源侧是注入的取数函数），
+          不是任何真实券源取回来的数据 —— 「真源取数」仍然没有跑过。
 
 teardown: docker rm -f quan-ingest-probe -> exit 0
 
-verdict: PROBE PASS（A/B/C 三段都按预期）
+verdict: PROBE PASS（A/B/C/D 四段都按预期）
 exit code: 0
 NOTE: 本报告的结论只对上面记录的镜像 digest + 下面这些文件的 sha256 成立。
-      db/data_center.sql  sha256=1c098bd74486af5fc8e830635144741780807ebfa77e608135669c292081061d
+      db/data_center.sql  sha256=8e23e9c6f1409f065992c0423a9681ee841e81e0cb1358db7fdf78002f835197
       quanauto/pgstore.py  sha256=bd84d86ac1cc978843116976fcd3118f826039acb4c8b4f812a2ea146355db35
-      quanauto/datacenter.py  sha256=1880e5b6128b105f01f97fd09c03eca87fed37e764b430d1ea8a8d011e356670
+      quanauto/datacenter.py  sha256=d94b4574096946ee2a3126b09d90e953f190976c20ae78e913e2bc81a1d4b5b2
+      quanauto/ingest.py  sha256=9c64d61d1a22a7bae6a8d2bcc9ae5dd5b0865ac0c620942666d515fe5c920b70
+      quanauto/datasources.py  sha256=7578c2a063f54825f7de9b0756bdcd1df15163488530fa57fc3e994ab7347f16
       上面任何一个 hash 变了，本快照即作废 —— 重跑本探针，不要只改结论。
-probe: tools/probe_ingest_commit.py  sha256=a3ee4d71a4f66581f73a8201c30821a8de57b526611ffa21bacb25a9bda6ac84（出这份报告的**工具**版本；改了它也该重跑）
+probe: tools/probe_ingest_commit.py  sha256=6425b8eab10a1a90b7add9845697ab234512056939de80452da272ca8a7ead01（出这份报告的**工具**版本；改了它也该重跑）
       （报告里**不**钉 git commit：它记录的是输入文件与镜像，不是某次提交，
         所以它可以和代码同批提交。）
