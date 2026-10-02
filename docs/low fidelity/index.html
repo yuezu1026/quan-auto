@@ -1492,6 +1492,29 @@
               >
             </div>
           </section>
+
+          <section class="region" data-wf-region="结果图">
+            <h4><span class="n">5</span>结果图（两个占位块，各有数据依赖）</h4>
+            <div class="ph h120">
+              K 线占位（逐根照抄行情序列，不插值不平滑） &nbsp;·&nbsp; 买卖点标记
+              [买卖点数] 个（买 / 卖 两种形状）
+            </div>
+            <p class="hint" style="margin-top: 8px">
+              <b>买卖点从成交流水来，不从行情倒推。</b>一个点 = 一笔成交（成交价 +
+              成交时间），与 F5 读的是同一份报告，页面不另算一份。
+            </p>
+            <div class="ph h80" style="margin-top: 10px">
+              净值曲线占位（这一屏不给：它在 F5「净值曲线」那块，与 14 条指标读同一份报告）
+            </div>
+            <div class="deps" style="margin-top: 10px">
+              <b
+                >已知缺口（刻意照抄现实，不是笔误）：K 线要行情序列（OHLCV），而报告里没有它。</b
+              >
+              报告里只有净值曲线（逐日 equity_curve）、成交流水（trades）、委托流水（orders）三类。所以
+              K 线现在只能是占位块；<b>要修就修产品侧</b> ——
+              让契约把「行情序列」加出来（回测输出带上 OHLCV），<b>不要</b>让页面自己去找行情文件另算一份。
+            </div>
+          </section>
         </div>
         <ol class="notes">
           <li>
@@ -1519,6 +1542,11 @@
           <li>
             <b>三态</b>：空（没选策略）/ 加载（进度条 + 可取消）/
             错误（校验失败，含可点的后续动作）。
+          </li>
+          <li>
+            <b>两个图都要有「数据来源」才画。</b>买卖点来自成交流水（一笔成交一个点，
+            所以现在就能画）；K 线要行情序列（OHLCV），回测报告里没有它 ——
+            <b>这是契约缺口，不是这一屏的问题</b>。
           </li>
         </ol>
       </article>
@@ -1756,7 +1784,7 @@
           <h3>风控控制台</h3>
           <span class="badge dash">提案</span>
           <span class="trace"
-            >PRD §三 模块8（风控拥有最高权限）· 路线图 MVP P0（仓位上限 /
+            >PRD §三 模块8 · §四 4.1 风控最高权限 · 路线图 MVP P0（仓位上限 /
             单笔止损 / 全局 Kill Switch）</span
           >
         </header>

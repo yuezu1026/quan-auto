@@ -766,11 +766,7 @@
        挂到 <body> 上会让 $("[data-proto-kill]") / closest("[data-proto-kill]") 先命中
        <body>（body 在文档序里最靠前）⇒ 钩子选择器与状态选择器互相污染。
        实测后果：Kill Switch 按钮的 aria-pressed 一直被写到 body 上；确认框关不掉。 -->
-  <body
-    data-ui-env="research"
-    data-ui-kill="off"
-    data-ui-state="default"
-  >
+  <body data-ui-env="research" data-ui-kill="off" data-ui-state="default">
     <a class="skip" href="#stage">跳到主区</a>
 
     <!-- ============================== 常驻顶栏 ============================== -->
@@ -1107,7 +1103,7 @@
             <span class="fid">F2</span>
             <h2 id="h-f2">数据中心</h2>
             <span class="badge dash">提案</span>
-            <span class="trace">PRD 模块 2 · 路线图 MVP P0 · 环境：研究</span>
+            <span class="trace">PRD 模块 1 · 路线图 MVP P0 · 环境：研究</span>
           </div>
 
           <div class="card">
@@ -1199,7 +1195,7 @@
             <span class="fid">F3</span>
             <h2 id="h-f3">股票池管理</h2>
             <span class="badge dash">提案</span>
-            <span class="trace">PRD 模块 3 · 路线图 MVP P1 · 环境：研究</span>
+            <span class="trace">PRD 模块 2 · 路线图 MVP P0 · 环境：研究</span>
           </div>
 
           <div class="card">
@@ -1288,7 +1284,7 @@
             <span class="fid">F4</span>
             <h2 id="h-f4">回测实验室</h2>
             <span class="badge dash">提案</span>
-            <span class="trace">PRD 模块 4 · 路线图 MVP P0 · 环境：研究</span>
+            <span class="trace">PRD 模块 6 · 路线图 MVP P0 · 环境：研究</span>
           </div>
 
           <div class="card">
@@ -1414,7 +1410,56 @@
           </div>
 
           <div class="card">
-            <h3><span class="n">3</span>结果摘要（示意）</h3>
+            <h3><span class="n">3</span>结果图：K 线 + 买卖点</h3>
+            <div class="rowbtns">
+              <label style="font-size: 12.5px"
+                ><input type="checkbox" data-proto="f4-marks-toggle" checked />
+                在 K 线上标出买卖点</label
+              >
+              <span
+                class="hint"
+                data-proto="f4-chart-readout"
+                role="status"
+              ></span>
+            </div>
+            <div
+              style="position: relative; margin-top: 8px"
+              data-proto="f4-chart"
+            >
+              <div
+                class="hatch"
+                style="min-height: 132px"
+                data-proto="f4-chart-kline"
+              >
+                还没跑：K 线要有一次回测的报告才有东西可画（这里不放假图垫着）。
+              </div>
+              <div
+                style="
+                  position: absolute;
+                  left: 0;
+                  right: 0;
+                  top: 0;
+                  bottom: 0;
+                  pointer-events: none;
+                "
+                data-proto="f4-marks"
+              ></div>
+            </div>
+            <div class="note warn" data-proto="f4-chart-gap">
+              <b>这块图依赖契约扩项，不是「已经能做」：</b>买卖点来自报告里的
+              <b>成交流水</b>（成交价 + 成交时间，不是从行情倒推的）；K 线要
+              <b>行情序列（OHLCV）</b
+              >，而当前报告里<b>没有</b>（只有权益点与成交价） ⇒
+              契约把「行情序列」加出来之前，这里只能是占位块。
+              <b>怎么修：</b
+              >改产品侧（让回测输出带上行情序列），而<b>不是</b>让页面自己去找行情文件另算一份
+              —— 那就成了「两边各算一套」。 <b>净值曲线不在这一屏：</b>它和 14
+              条指标一起在 F5，读的是同一份报告。
+            </div>
+          </div>
+
+          <div class="card">
+            <h3><span class="n">4</span>结果摘要（示意）</h3>
             <div class="dashbox" data-proto="f4-result">
               还没跑。跑出来的数字会写进 F5 的看板 —— 看板是纯读数，
               一个指标都不重算。
@@ -1434,7 +1479,7 @@
             <h2 id="h-f5">绩效看板</h2>
             <span class="badge solid">已交付</span>
             <span class="trace"
-              >PRD 模块 6 / 8 · 路线图 MVP P0 · 环境：研究 · 对应物
+              >PRD 模块 10 · 路线图 MVP P1 · 环境：研究 · 对应物
               platform/web/src/App.jsx</span
             >
           </div>
@@ -1474,11 +1519,14 @@
             </p>
             <p class="hint">
               「显示串」这一列写的是<b>服务端算好的原样</b>，它同时钉住一条容易被设计稿画错的口径：
-              量纲码只有 <code>percent / ratio / count / money / days</code> 五种，
-              <b>只有 <code>percent</code> 会乘 100 并带 <code>%</code></b>，
-              <code>count</code> 必须是不带小数点的整数，
-              其余（<code>ratio / money / days</code>）<b>不带任何后缀</b>
-              —— 所以「夏普 1.2345 倍」「佣金 1234.56 元」这种写法在实现里是不存在的。
+              量纲码只有
+              <code>percent / ratio / count / money / days</code> 五种，
+              <b>只有 <code>percent</code> 会乘 100 并带 <code>%</code></b
+              >， <code>count</code> 必须是不带小数点的整数， 其余（<code
+                >ratio / money / days</code
+              >）<b>不带任何后缀</b>
+              —— 所以「夏普 1.2345 倍」「佣金 1234.56
+              元」这种写法在实现里是不存在的。
             </p>
           </div>
 
@@ -1541,9 +1589,7 @@
             <span class="fid">F6</span>
             <h2 id="h-f6">风控控制台</h2>
             <span class="badge dash">提案</span>
-            <span class="trace"
-              >PRD 模块 3 / 7 · 路线图 MVP P0 · 环境：生产</span
-            >
+            <span class="trace">PRD 模块 8 · 路线图 MVP P0 · 环境：生产</span>
           </div>
 
           <div class="card">
@@ -1857,7 +1903,7 @@
             <h2 id="h-f7">策略中心 · 适配矩阵 · 生命周期</h2>
             <span class="badge dash">提案</span>
             <span class="trace"
-              >PRD 模块 4 / 5 · 路线图 完善版 P0 / 进化版 P0 · 环境：研究</span
+              >PRD 模块 4 / 5 / 11 · 路线图 完善版 P0 · 环境：研究</span
             >
           </div>
 
@@ -1914,7 +1960,8 @@
             <h2 id="h-f8">组合调度 · 研究 Agent · 执行监控</h2>
             <span class="badge dash">提案</span>
             <span class="trace"
-              >PRD 模块 1 / 9 · 路线图 完善版 P0 / 进化版 P0 · 环境：研究</span
+              >PRD 模块 3 / 7 / 9 / 12 · 路线图 完善版 P0 / 进化版 P0 ·
+              环境：研究</span
             >
           </div>
 
@@ -2120,21 +2167,21 @@
       <div class="card">
         <h3>页内自检检的是什么</h3>
         <p>
-          左上角那支「跑一次页内自检」逐项检查<b>本页自己的口径</b>
-          —— 8 屏 + 状态矩阵都在、14 条指标的分组是 3/4/6/1、风控 6 条规则不重名、
-          只拦开仓的是 5 条、显示串里只有 <code>percent</code> 带 <code>%</code>、
-          示例串的小数位与规格表一致、试算的四个样本（干净 / 超限 / 熔断 /
-          卖出不熔断）落在预期裁决上、
+          左上角那支「跑一次页内自检」逐项检查<b>本页自己的口径</b> —— 8 屏 +
+          状态矩阵都在、14 条指标的分组是 3/4/6/1、风控 6 条规则不重名、
+          只拦开仓的是 5 条、显示串里只有 <code>percent</code> 带
+          <code>%</code>、 示例串的小数位与规格表一致、试算的四个样本（干净 /
+          超限 / 熔断 / 卖出不熔断）落在预期裁决上、
           阈值校验对四种坏值与一种好值给出预期结论、生命周期守卫拦得住越级。
-          另有一组盯的是<b>交互底座本身</b>：
-          <code>&lt;body&gt;</code> 上不挂 <code>data-proto-*</code>
-          钩子属性（挂上去会让钩子选择器先命中 body，后面的分支静默变死代码）、
-          全局状态住在 <code>data-ui-*</code> 且与内存里的 state 一致、
-          Kill Switch 的 <code>aria-pressed</code> 必须落在按钮上、
-          确认框「关闭 / 取消 / 确认」三条出口都得关得掉（且取消不动 kill）、
+          另有一组盯的是<b>交互底座本身</b>： <code>&lt;body&gt;</code> 上不挂
+          <code>data-proto-*</code> 钩子属性（挂上去会让钩子选择器先命中
+          body，后面的分支静默变死代码）、 全局状态住在
+          <code>data-ui-*</code> 且与内存里的 state 一致、 Kill Switch 的
+          <code>aria-pressed</code> 必须落在按钮上、 确认框「关闭 / 取消 /
+          确认」三条出口都得关得掉（且取消不动 kill）、
           状态单选组与当前状态一一对应、F2 的 schema 下拉真的能筛（选项数对齐 +
-          筛后与数据一致）、F1 十盏灯都指向真实存在的屏、
-          F3 黑名单的三条分支（空标的拒 / 新标的收 / 重复标的拒）与两张表同步。
+          筛后与数据一致）、F1 十盏灯都指向真实存在的屏、 F3
+          黑名单的三条分支（空标的拒 / 新标的收 / 重复标的拒）与两张表同步。
           <b>一个探测器一个样本，且带一个期望 0 报错的干净控制组。</b>
           它检的<b>不是</b>仓库实现 —— 那不是这个文件能主张的事。
         </p>
@@ -2404,6 +2451,18 @@
           { key: "trades", label: "成交", n: 36 },
           { key: "orders", label: "委托", n: 41 },
         ];
+
+        function structureCount(key) {
+          var hit = STRUCTURE_COUNTS.filter(function (c) {
+            return c.key === key;
+          })[0];
+          return hit ? hit.n : 0;
+        }
+
+        // 那 36 笔成交按方向拆开（结果图上的买卖点要用）：两数之和必须等于上面
+        // 「成交」那一项。所以这里不另抄一个 36 —— 页内自检会当场核对这条恒等式，
+        // 免得有人改了 STRUCTURE_COUNTS 而图上的点数悄悄跟着漂。
+        var TRADE_SIDES = { buys: 17, sells: 19 };
 
         // 报告抬头 7 项 —— 与 platform/web/src/App.jsx 的 Meta（7 个 <dt>）一一对应
         var REPORT_META = [
@@ -2966,10 +3025,7 @@
 
         function setKill(on) {
           state.kill = !!on;
-          document.body.setAttribute(
-            "data-ui-kill",
-            state.kill ? "on" : "off",
-          );
+          document.body.setAttribute("data-ui-kill", state.kill ? "on" : "off");
           var bar = $("#haltbar");
           if (bar) bar.hidden = !state.kill;
           // 必须限定在顶栏里：不加范围时 $("[data-proto-kill]") 会按文档序
@@ -3563,15 +3619,116 @@
                 el(
                   "li",
                   null,
-                  "成交 36 笔 / 委托 41 笔（结构计数，不进指标表）",
+                  "成交 " +
+                    structureCount("trades") +
+                    " 笔 / 委托 " +
+                    structureCount("orders") +
+                    " 笔（结构计数，不进指标表）",
                 ),
               );
               ul2.appendChild(
                 el("li", null, "去 F5 看 14 条指标 —— 数字由服务端算好下发。"),
               );
+              ul2.appendChild(
+                el(
+                  "li",
+                  null,
+                  "买卖点 " +
+                    structureCount("trades") +
+                    " 个画在第 3 张卡的 K 线上（K 线本身是占位块）—— 图上的点来自成交流水，不是从行情倒推的。",
+                ),
+              );
               res.appendChild(ul2);
             }
           }
+          renderF4Chart();
+        }
+
+        /* 结果图：K 线是占位块（低保真不画真图），买卖点是真的画上去的。
+           只有「数得出来的东西」才配叫判据 ⇒ 标记数必须等于成交流水条数，
+           而水流条数只有 STRUCTURE_COUNTS 这一个来源（同源，不抄第二份）。 */
+        function f4Bars() {
+          var a = $('[data-proto="f4-start"]');
+          var b = $('[data-proto="f4-end"]');
+          if (!a || !b || !a.value || !b.value) return 0;
+          var t0 = new Date(a.value + "T00:00:00");
+          var t1 = new Date(b.value + "T00:00:00");
+          if (isNaN(t0.getTime()) || isNaN(t1.getTime()) || t1 < t0) return 0;
+          var days = Math.round((t1 - t0) / 86400000) + 1;
+          return Math.max(1, Math.round((days * 5) / 7));
+        }
+
+        function f4MarksShown() {
+          var t = $('[data-proto="f4-marks-toggle"]');
+          return t ? !!t.checked : true;
+        }
+
+        function renderF4Chart() {
+          var box = $('[data-proto="f4-chart-kline"]');
+          var layer = $('[data-proto="f4-marks"]');
+          var out = $('[data-proto="f4-chart-readout"]');
+          if (!box || !layer || !out) return;
+          clear(layer);
+          var n = structureCount("trades");
+          if (!state.f4.ran) {
+            // 没跑之前不许摆一张像模像样的图：那是假图，比空白更糟。
+            box.textContent =
+              "还没跑：K 线要有一次回测的报告才有东西可画（这里不放假图垫着）。";
+            out.textContent = "";
+            return;
+          }
+          box.textContent =
+            "K 线占位（低保真不画真图）· 逐根照抄行情序列，不插值不平滑";
+          if (!f4MarksShown()) {
+            out.textContent =
+              "K 线 " +
+              f4Bars() +
+              " 根 · 买卖点已隐藏（" +
+              n +
+              " 个仍在报告里）";
+            return;
+          }
+          var placed = 0;
+          [
+            { side: "B", text: "买", count: TRADE_SIDES.buys },
+            { side: "S", text: "卖", count: TRADE_SIDES.sells },
+          ].forEach(function (g, gi) {
+            for (var i = 0; i < g.count; i += 1) {
+              var k = i + gi * 3;
+              // 位置按序号现算（不是真坐标）：同一份报告每次画在同一处。
+              layer.appendChild(
+                el(
+                  "span",
+                  {
+                    "data-mark": g.side,
+                    style:
+                      "position:absolute;left:" +
+                      (((k * 37) % 88) + 6) +
+                      "%;top:" +
+                      (gi === 0 ? 58 + ((k * 7) % 18) : 14 + ((k * 11) % 18)) +
+                      "%;transform:translateX(-50%);font-size:10px;line-height:1;" +
+                      "padding:0 3px;border:1px solid var(--ink);" +
+                      (gi === 0
+                        ? "background:var(--ink);color:var(--paper);"
+                        : "background:var(--paper);color:var(--ink);"),
+                  },
+                  g.text,
+                ),
+              );
+              placed += 1;
+            }
+          });
+          out.textContent =
+            "K 线 " +
+            f4Bars() +
+            " 根 · 买卖点 " +
+            n +
+            " 个（买 " +
+            TRADE_SIDES.buys +
+            " / 卖 " +
+            TRADE_SIDES.sells +
+            "）" +
+            (placed === n ? "" : "，只画到 " + placed + " 个");
         }
 
         function renderF5() {
@@ -4562,6 +4719,15 @@
           });
         });
 
+        // 买卖点开关：勾掉只是把它们藏起来（报告里的成交流水还在），
+        // 所以这条路径不碰 state.f4.ran。
+        var marksToggle = $('[data-proto="f4-marks-toggle"]');
+        if (marksToggle) {
+          marksToggle.addEventListener("change", function () {
+            renderF4Chart();
+          });
+        }
+
         function resetDemo() {
           // 「复位」必须连输入框一起复位：只重置 state 的话，改过的试算输入与
           // 回测表单会留在页面上，看起来像「复位没生效」（实测：载入预置样本后
@@ -4993,22 +5159,26 @@
               );
             },
           );
-          probe("P-36", TRADING_LOOP.length + " 盏灯·都指向真实屏", function () {
-            var nodes = $$('[data-proto="loop-trading"] .node');
-            if (nodes.length !== TRADING_LOOP.length)
-              return nodes.length + " 盏灯·数量不符";
-            var bad = nodes.filter(function (b) {
-              var m = /，点击进 (F[1-8])$/.exec(
-                b.getAttribute("aria-label") || "",
+          probe(
+            "P-36",
+            TRADING_LOOP.length + " 盏灯·都指向真实屏",
+            function () {
+              var nodes = $$('[data-proto="loop-trading"] .node');
+              if (nodes.length !== TRADING_LOOP.length)
+                return nodes.length + " 盏灯·数量不符";
+              var bad = nodes.filter(function (b) {
+                var m = /，点击进 (F[1-8])$/.exec(
+                  b.getAttribute("aria-label") || "",
+                );
+                return !m || SCREENS.indexOf(m[1]) < 0;
+              });
+              return (
+                TRADING_LOOP.length +
+                " 盏灯·" +
+                (bad.length ? bad.length + " 盏指向不存在的屏" : "都指向真实屏")
               );
-              return !m || SCREENS.indexOf(m[1]) < 0;
-            });
-            return (
-              TRADING_LOOP.length +
-              " 盏灯·" +
-              (bad.length ? bad.length + " 盏指向不存在的屏" : "都指向真实屏")
-            );
-          });
+            },
+          );
           probe("P-37", "拒空·收新·拒重复·两表同步", function () {
             var input = $('[data-proto="f3-bl-input"]');
             var reason = $('[data-proto="f3-bl-reason"]');
@@ -5055,81 +5225,100 @@
             if (!b2) bad.push("新未收");
             if (!b3) bad.push("重复未拒");
             if (!sync) bad.push("两表未同步");
-            return "拒空·收新·拒重复·两表同步" + (bad.length ? "，实际：" + bad.join(",") : "");
-          });
-          probe("P-38", "退休：7 格全亮·多一格「已退休」·再推进被拦", function () {
-            // 「已退休」不在 STAGE_ORDER 里 —— 曾经 indexOf 得 -1 ⇒ 六盏灯全灭
-            // 而左边写着「当前阶段：已退休」，并且守卫还说「可以推进」。
-            var savedStage = {};
-            Object.keys(state.f7.stage).forEach(function (k) {
-              savedStage[k] = state.f7.stage[k];
-            });
-            var savedHist = state.f7.history.slice();
-            var savedSel = state.f7.selected;
-            var target = -1;
-            STRATEGIES.forEach(function (s, j) {
-              var st = state.f7.stage[s.id] || s.stage;
-              if (st === "正式服役" && target < 0) target = j;
-            });
-            var bad = [];
-            if (target < 0) {
-              bad.push("没有可退休的策略");
-            } else {
-              state.f7.selected = target;
-              renderF7();
-              $('[data-proto="f7-retire"]').click();
-              var yes = $$("#dlg .rowbtns button").filter(function (b) {
-                return b.textContent.trim() === "确认";
-              })[0];
-              if (!yes) {
-                bad.push("对话框里找不到「确认」");
-              } else {
-                yes.click();
-                var nodes = $$('[data-proto="f7-stages"] .node');
-                var lit = nodes.filter(function (n) {
-                  return n.getAttribute("data-done") === "1";
-                });
-                var curNode = nodes.filter(function (n) {
-                  return n.getAttribute("aria-current") === "step";
-                });
-                var readout = $('[data-proto="f7-readout"]').textContent;
-                var guardTxt = $('[data-proto="f7-guard"]').textContent;
-                if (readout.indexOf("已退休") < 0) bad.push("读数没写已退休");
-                if (nodes.length !== STAGE_ORDER.length + 1)
-                  bad.push("格子数 " + nodes.length);
-                if (lit.length !== nodes.length)
-                  bad.push("只亮 " + lit.length + " / " + nodes.length);
-                if (curNode.length !== 1 || curNode[0].textContent !== "已退休")
-                  bad.push(
-                    "终态格 " + curNode.map(function (n) { return n.textContent; }).join(""),
-                  );
-                if (guardTxt.indexOf("终态") < 0) bad.push("守卫没提终态");
-                if ($("#dlg").open) bad.push("对话框没关");
-                $('[data-proto="f7-advance"]').click();
-                if (
-                  $('[data-proto="f7-readout"]').textContent.indexOf("已退休") < 0 ||
-                  $('[data-proto="f7-readout"]').textContent.indexOf("被守卫拦下") < 0
-                )
-                  bad.push("退休后还能推进");
-              }
-            }
-            Object.keys(state.f7.stage).forEach(function (k) {
-              delete state.f7.stage[k];
-            });
-            Object.keys(savedStage).forEach(function (k) {
-              state.f7.stage[k] = savedStage[k];
-            });
-            state.f7.history.length = 0;
-            savedHist.forEach(function (h) {
-              state.f7.history.push(h);
-            });
-            state.f7.selected = savedSel;
-            renderF7();
             return (
-              "退休：7 格全亮·多一格「已退休」·再推进被拦" +
+              "拒空·收新·拒重复·两表同步" +
               (bad.length ? "，实际：" + bad.join(",") : "")
             );
           });
+          probe(
+            "P-38",
+            "退休：7 格全亮·多一格「已退休」·再推进被拦",
+            function () {
+              // 「已退休」不在 STAGE_ORDER 里 —— 曾经 indexOf 得 -1 ⇒ 六盏灯全灭
+              // 而左边写着「当前阶段：已退休」，并且守卫还说「可以推进」。
+              var savedStage = {};
+              Object.keys(state.f7.stage).forEach(function (k) {
+                savedStage[k] = state.f7.stage[k];
+              });
+              var savedHist = state.f7.history.slice();
+              var savedSel = state.f7.selected;
+              var target = -1;
+              STRATEGIES.forEach(function (s, j) {
+                var st = state.f7.stage[s.id] || s.stage;
+                if (st === "正式服役" && target < 0) target = j;
+              });
+              var bad = [];
+              if (target < 0) {
+                bad.push("没有可退休的策略");
+              } else {
+                state.f7.selected = target;
+                renderF7();
+                $('[data-proto="f7-retire"]').click();
+                var yes = $$("#dlg .rowbtns button").filter(function (b) {
+                  return b.textContent.trim() === "确认";
+                })[0];
+                if (!yes) {
+                  bad.push("对话框里找不到「确认」");
+                } else {
+                  yes.click();
+                  var nodes = $$('[data-proto="f7-stages"] .node');
+                  var lit = nodes.filter(function (n) {
+                    return n.getAttribute("data-done") === "1";
+                  });
+                  var curNode = nodes.filter(function (n) {
+                    return n.getAttribute("aria-current") === "step";
+                  });
+                  var readout = $('[data-proto="f7-readout"]').textContent;
+                  var guardTxt = $('[data-proto="f7-guard"]').textContent;
+                  if (readout.indexOf("已退休") < 0) bad.push("读数没写已退休");
+                  if (nodes.length !== STAGE_ORDER.length + 1)
+                    bad.push("格子数 " + nodes.length);
+                  if (lit.length !== nodes.length)
+                    bad.push("只亮 " + lit.length + " / " + nodes.length);
+                  if (
+                    curNode.length !== 1 ||
+                    curNode[0].textContent !== "已退休"
+                  )
+                    bad.push(
+                      "终态格 " +
+                        curNode
+                          .map(function (n) {
+                            return n.textContent;
+                          })
+                          .join(""),
+                    );
+                  if (guardTxt.indexOf("终态") < 0) bad.push("守卫没提终态");
+                  if ($("#dlg").open) bad.push("对话框没关");
+                  $('[data-proto="f7-advance"]').click();
+                  if (
+                    $('[data-proto="f7-readout"]').textContent.indexOf(
+                      "已退休",
+                    ) < 0 ||
+                    $('[data-proto="f7-readout"]').textContent.indexOf(
+                      "被守卫拦下",
+                    ) < 0
+                  )
+                    bad.push("退休后还能推进");
+                }
+              }
+              Object.keys(state.f7.stage).forEach(function (k) {
+                delete state.f7.stage[k];
+              });
+              Object.keys(savedStage).forEach(function (k) {
+                state.f7.stage[k] = savedStage[k];
+              });
+              state.f7.history.length = 0;
+              savedHist.forEach(function (h) {
+                state.f7.history.push(h);
+              });
+              state.f7.selected = savedSel;
+              renderF7();
+              return (
+                "退休：7 格全亮·多一格「已退休」·再推进被拦" +
+                (bad.length ? "，实际：" + bad.join(",") : "")
+              );
+            },
+          );
           probe("P-39", "复位：状态与输入都回默认值", function () {
             // 「复位」曾经只重置 state，改过的试算输入留在页面上
             // （载入预置样本 ⇒ 按复位 ⇒ 数量还是 90000）。
@@ -5139,10 +5328,9 @@
             q.value = "12345";
             seed.value = "";
             setKill(true);
-            $('[data-proto-reset]').click();
+            $("[data-proto-reset]").click();
             var bad = [];
-            if (q.value !== q.defaultValue)
-              bad.push("试算输入 = " + q.value);
+            if (q.value !== q.defaultValue) bad.push("试算输入 = " + q.value);
             if (seed.value !== seed.defaultValue)
               bad.push("表单输入 = " + seed.value);
             if (state.kill !== false) bad.push("Kill 还合着");
@@ -5154,6 +5342,151 @@
               (bad.length ? "，实际：" + bad.join(",") : "")
             );
           });
+          probe(
+            "P-40",
+            "结果图：标记数 = 成交笔数（同源，不抄第二份）",
+            function () {
+              // 「图上有买卖点」这件事必须数得出来，而且图上的点数与报告的
+              // 成交流水必须同源：拆分之和 ≠ 成交数 ⇒ 有人改了一处没改另一处。
+              var toggle = $('[data-proto="f4-marks-toggle"]');
+              if (!toggle) return "找不到买卖点开关";
+              var savedRan = state.f4.ran;
+              var savedChecked = toggle.checked;
+              toggle.checked = true;
+              state.f4.ran = true;
+              renderF4();
+              var marks = $$('[data-proto="f4-marks"] [data-mark]');
+              var buys = marks.filter(function (m) {
+                return m.getAttribute("data-mark") === "B";
+              }).length;
+              var sells = marks.filter(function (m) {
+                return m.getAttribute("data-mark") === "S";
+              }).length;
+              var readout = $('[data-proto="f4-chart-readout"]').textContent;
+              var bars = /^K 线 (\d+) 根/.exec(readout);
+              var bad = [];
+              if (
+                TRADE_SIDES.buys + TRADE_SIDES.sells !==
+                structureCount("trades")
+              )
+                bad.push(
+                  "买 " +
+                    TRADE_SIDES.buys +
+                    " + 卖 " +
+                    TRADE_SIDES.sells +
+                    " ≠ 成交 " +
+                    structureCount("trades"),
+                );
+              if (marks.length !== structureCount("trades"))
+                bad.push("标记 " + marks.length + " 个");
+              if (buys !== TRADE_SIDES.buys) bad.push("买标 " + buys);
+              if (sells !== TRADE_SIDES.sells) bad.push("卖标 " + sells);
+              if (!bars || Number(bars[1]) < 1)
+                bad.push("K 线根数 = " + (bars ? bars[1] : "读不出"));
+              // 读数那一行是给人看的，它的数字也得跟常量同源（别只对我自己算的
+              // 数组断言，却不看页面上真正写出来的那串字）。
+              var want =
+                "买卖点 " +
+                structureCount("trades") +
+                " 个（买 " +
+                TRADE_SIDES.buys +
+                " / 卖 " +
+                TRADE_SIDES.sells +
+                "）";
+              if (readout.indexOf(want) < 0) bad.push("读数 = " + readout);
+              toggle.checked = savedChecked;
+              state.f4.ran = savedRan;
+              renderF4();
+              return (
+                "结果图：标记数 = 成交笔数（同源，不抄第二份）" +
+                (bad.length ? "，实际：" + bad.join("，") : "")
+              );
+            },
+          );
+          probe(
+            "P-41",
+            "买卖点可关：关掉后标记 0 个、读数说已隐藏",
+            function () {
+              // 开关必须真的走那条 change 接线，所以这里派发事件而不是直接调渲染。
+              var toggle = $('[data-proto="f4-marks-toggle"]');
+              if (!toggle) return "找不到买卖点开关";
+              var savedRan = state.f4.ran;
+              var savedChecked = toggle.checked;
+              var expect = "买卖点可关：关掉后标记 0 个、读数说已隐藏";
+              var bad = [];
+              state.f4.ran = true;
+              toggle.checked = true;
+              toggle.dispatchEvent(new Event("change", { bubbles: true }));
+              var open = $$('[data-proto="f4-marks"] [data-mark]').length;
+              toggle.checked = false;
+              toggle.dispatchEvent(new Event("change", { bubbles: true }));
+              var closed = $$('[data-proto="f4-marks"] [data-mark]').length;
+              var readout = $('[data-proto="f4-chart-readout"]').textContent;
+              var kline = $('[data-proto="f4-chart-kline"]').textContent;
+              toggle.checked = true;
+              toggle.dispatchEvent(new Event("change", { bubbles: true }));
+              var reopened = $$('[data-proto="f4-marks"] [data-mark]').length;
+              if (open !== structureCount("trades"))
+                bad.push("打开时 " + open + " 个");
+              if (closed !== 0) bad.push("关掉后还有 " + closed + " 个");
+              if (readout.indexOf("已隐藏") < 0) bad.push("读数 = " + readout);
+              if (kline.indexOf("K 线占位") < 0) bad.push("K 线被一起弄没了");
+              if (reopened !== open) bad.push("再打开 " + reopened + " 个");
+              toggle.checked = savedChecked;
+              state.f4.ran = savedRan;
+              renderF4();
+              return expect + (bad.length ? "，实际：" + bad.join("，") : "");
+            },
+          );
+          probe("P-42", "没跑之前图上没有买卖点（不给假图）", function () {
+            var savedRan = state.f4.ran;
+            state.f4.ran = false;
+            renderF4();
+            var marks = $$('[data-proto="f4-marks"] [data-mark]').length;
+            var kline = $('[data-proto="f4-chart-kline"]').textContent;
+            var readout = $('[data-proto="f4-chart-readout"]').textContent;
+            var bad = [];
+            if (marks !== 0) bad.push("标记 " + marks + " 个");
+            if (kline.indexOf("还没跑") < 0) bad.push("K 线块 = " + kline);
+            if (readout !== "") bad.push("读数 = " + readout);
+            state.f4.ran = savedRan;
+            renderF4();
+            return (
+              "没跑之前图上没有买卖点（不给假图）" +
+              (bad.length ? "，实际：" + bad.join("，") : "")
+            );
+          });
+          probe(
+            "P-43",
+            "结果图跟着输入走：改了表单 ⇒ 回到「还没跑」",
+            function () {
+              // 图绑在「报告」上，报告绑在输入上：改了输入还留着旧图 = 假图。
+              var sym = $('[data-proto="f4-symbol"]');
+              if (!sym) return "找不到标的输入";
+              var savedRan = state.f4.ran;
+              var savedVal = sym.value;
+              state.f4.ran = true;
+              renderF4();
+              var before = $('[data-proto="f4-chart-readout"]').textContent;
+              var bad = [];
+              if (before.indexOf("买卖点") < 0)
+                bad.push("跑完的读数 = " + before);
+              sym.value = savedVal + "X";
+              sym.dispatchEvent(new Event("input", { bubbles: true }));
+              var marks = $$('[data-proto="f4-marks"] [data-mark]').length;
+              var kline = $('[data-proto="f4-chart-kline"]').textContent;
+              sym.value = savedVal;
+              sym.dispatchEvent(new Event("input", { bubbles: true }));
+              if (marks !== 0) bad.push("改完还留着 " + marks + " 个标记");
+              if (kline.indexOf("还没跑") < 0) bad.push("K 线块 = " + kline);
+              state.f4.ran = savedRan;
+              renderF4();
+              return (
+                "结果图跟着输入走：改了表单 ⇒ 回到「还没跑」" +
+                (bad.length ? "，实际：" + bad.join("，") : "")
+              );
+            },
+          );
 
           var host = $("#probe-out tbody");
           clear(host);
