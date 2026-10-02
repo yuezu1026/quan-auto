@@ -59,7 +59,7 @@ GATE iteration-plan (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 迭代计划里每个标「已交付」的迭代都引用了一条真实存在的证据路径
 argv: tools/verify_iteration_plan.py
 ------------------------------------------------------------------------------
-CRLF-normalised: plan=201164 bytes (迭代计划.md)
+CRLF-normalised: plan=209875 bytes (迭代计划.md)
 extracted: iterations=5 delivered=4 dod_sections=5
 verdict: PASS (0 issue(s))
 NOTE: this gate checks the plan is internally well-formed and that no completion claim dangles. It cannot judge whether an iteration was actually delivered -- someone still has to open the cited evidence file.
@@ -163,7 +163,7 @@ argv: tools/verify_appendix_refs.py
 scan scope: git ls-files=152 file(s), read as text=149, skipped=3
   skipped (binary/undecodable): docs/智能量化交易平台-数据中心数据源选型与接入规范.docx, docs/智能量化交易平台-核心模块接口契约文档.docx, docs/智能量化交易平台.docx
 appendix index: core=7L/24I dc=6L/81I prd=3L/0I risk=0L/0I
-citations: 629 total, 348 with an item label, 162 naming an owner, in 64 file(s)
+citations: 638 total, 355 with an item label, 167 naming an owner, in 65 file(s)
 verdict: PASS (0 issue(s))
 
 ==============================================================================
@@ -266,11 +266,11 @@ what: npm ci/test/build 与 mvn test 真跑一遍（第二步在 jsdom 里真的
 argv: tools/verify_platform_build.py
 ------------------------------------------------------------------------------
 TOOLCHAIN mvn=3.9.16 java=21 (openjdk version "21.0.12" 2026-07-21 LTS, from JAVA_HOME=C:\Program Files\Zulu\zulu-21) node=v25.2.1 npm=11.16.0
-SANDBOX C:\Users\39002\AppData\Local\Temp\quanauto-platform-build-078pq55u (33 file(s) copied)
-STEP npm-ci           rc=0 (6.1s) OK
-STEP npm-test         rc=0 (3.0s) OK
-STEP npm-build        rc=0 (1.3s) OK
-STEP mvn-test         rc=0 (5.5s) OK
+SANDBOX C:\Users\39002\AppData\Local\Temp\quanauto-platform-build-66kszgx3 (33 file(s) copied)
+STEP npm-ci           rc=0 (3.8s) OK
+STEP npm-test         rc=0 (2.3s) OK
+STEP npm-build        rc=0 (1.0s) OK
+STEP mvn-test         rc=0 (5.2s) OK
 STATS sandbox_files=33 mvn_tests_run=17 mvn_declared=17 mvn_failures=0 mvn_errors=0 js_tests_total=13 js_tests_declared=13 static_files=3 static_bytes=228628 served_files=3
 verdict: PASS (0 issue(s))
 
