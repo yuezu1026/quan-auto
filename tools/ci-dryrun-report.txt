@@ -4,10 +4,10 @@
 CI 自 2026-09-24 起在 GitHub 上真跑（`origin` 公开；首次真跑判红、修复后第二次 success）；
 下面这份是**本地等价**：它给的是本机解释器的口径，和 GitHub 上那次真跑不能互相替代。
 
-generated: 2026-10-01 21:43:55
+generated: 2026-10-02 17:06:44
 python:    D:\project-quan\quan-auto\.venv\Scripts\python.exe  (.venv/Scripts/python.exe)
 version:   Python 3.13.9
-commit:    73d94390581be1c51b10cb0fdf395828979cb39c
+commit:    f2867176a8d7c1dc8dd09a02c66828bcc080aa47
 dirty:     0 项未提交改动
 pycache:   启动时清掉 3 个 __pycache__（陈旧字节码会让结论与磁盘源码无关）
 
@@ -21,7 +21,7 @@ exit: 0
   | ........................................................................ [ 78%]
   | ........................................................................ [ 91%]
   | ...............................................                          [100%]
-  | 551 passed in 28.04s
+  | 551 passed in 24.75s
 
 ## 2. 红→绿往返（I0 触发测试的证据：两个关键的东西各红一次）
 
@@ -32,13 +32,13 @@ exit: 0
   红: pytest exit=1
     | =========================== short test summary info ===========================
     | FAILED tests/test_skeleton.py::test_version_matches_pyproject - AssertionErro...
-    | 1 failed, 550 passed in 28.40s
+    | 1 failed, 550 passed in 24.87s
   还原: 与原始字节逐字节一致
   解释器读回: 还原后 0.1.0
   绿: pytest exit=0
     | ........................................................................ [ 91%]
     | ...............................................                          [100%]
-    | 551 passed in 27.95s
+    | 551 passed in 24.75s
 
 ### ci-drops-gates -- 把 CI 里那一行门禁命令换成单跑一个子门禁
   靶子: .github/workflows/ci.yml  'python tools/run_all_gates.py' -> 'python tools/verify_risk_config.py'
@@ -59,7 +59,7 @@ exit: 0
   |       which is how the version ladder was recorded (tools/sql-smoke-report-pg1*.txt -- postgres:14/15/16).
   |       A snapshot is evidence only together with the image digest recorded inside it,
   |       and re-running after any db/*.sql edit overwrites it -- so save to a new path.
-  | NOTE: these 22 gates DO read those snapshots, but only to compare the image names 
+  | NOTE: these 23 gates DO read those snapshots, but only to compare the image names 
   |       against each DDL's PG-VERIFIED-ON stamp (in both directions); they do not re-run SQL.
   | NOTE: proof that the runtime green has teeth lives in tools\falsify-report.txt (produced by tools\falsify_smoke.py),
   |       one case per named CHECK, every case must turn exactly one sample red. That is the
