@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>智能量化交易平台 · 高保真 UI 设计稿（八帧 + 桌面端形态一节）</title>
+<title>智能量化交易平台 · 高保真 UI 设计稿（八帧 + 桌面端 / 移动端两节）</title>
 <!--
   ============================================================================
   这份文件是什么：
@@ -19,9 +19,14 @@
        §03 那张「应用外壳」帧（S0）**同样是提案** —— 已交付页面没有侧栏与常驻顶栏；
        §08「桌面端形态」（应用图标 / 托盘图标 / 托盘弹出面板）**三帧也全是提案**，
        而且比八帧更远一层：它画的**托盘这个形态在仓库里还不存在**（实测：本仓库自己的
-       产物里搜「托盘」0 处，搜 Electron/Tauri/桌面客户端 0 处；150 个受管文件里
-       图片/字体一类资产 0 个，页面 head 里没有 icon 声明）。
-       那三帧画的不是「补一个漏画的图」，是「要不要有桌面客户端」这个问题本身。
+       产物里搜「托盘」0 处，搜 Electron/Tauri/桌面客户端 0 处；受管文件里图片/字体一类
+       资产 0 个，页面 head 里没有 icon 声明）。
+       那三帧画的不是「补一个漏画的图」，是「要不要有桌面客户端」这个问题本身；
+       §09「移动端形态」（手机竖屏 M1 / M2）**两帧同样是提案**，但它们与 §08 不同档：
+       上游**有内容、没版面**（<code>METRIC_SPECS</code> 的 14 项 + <code>risk.py</code> 的 7 条规则都是真值），
+       而需求里根本没有「移动端」这条 —— PRD 原文搜「移动」0 处，已交付那层
+       （<code>platform/web/src/styles.css</code>）里 <code>@media</code> 也是 0 处。
+       ⇒ 三节的「没有」不是同一类，别让最便宜的和最贵的看起来一样贵。
     ③ 图里的每个数字都标了来源：仓库里有真值的写真值（并注明出处），
        仓库里没有的用两类占位标记 —— `—`（这一格没有值）与方括号占位符
        （`[占位]` / `[策略ID]` / `[时间]` / `[金额]` / `[代码]` / `[日期]` / `[名称]` …）。
@@ -443,6 +448,41 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
 .panel-f>*{min-width:0}
 .panel-lab{font-size:10.5px;font-weight:800;letter-spacing:.08em;color:var(--text3);margin-bottom:6px}
 .panel-note{font-size:10.5px;color:var(--text3);line-height:1.65;margin:6px 0 0}
+
+/* ============ 17 · Phone frames（§09 用，2026-10-02 追加）============
+   §09 画的是「手机竖屏形态」。它在仓库里同样**没有实现**：已交付那一层
+   （platform/web/src/styles.css）里 @media 数量 = 0，PRD 原文里也没有「移动端」这条需求。
+   所以这一节也只画几何 —— 不产出任何资产，也不改 platform/web/ 一行。见 §09 的实测块。
+   设备框按 390px 宽绘制；真机是 390×844，本框高度随内容（不裁切，也不假装是 844）。
+   ========================================================================== */
+.ph-wrap{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start}
+.phone{width:390px;max-width:100%;flex:none;background:var(--surface2);border:1px solid var(--line2);
+  border-radius:34px;padding:9px;box-shadow:var(--shadow)}
+.phone-scr{display:flex;flex-direction:column;min-height:596px;background:var(--surface);
+  border:1px solid var(--line);border-radius:26px;overflow:hidden}
+.phone-h{display:flex;align-items:center;gap:8px;padding:7px 13px;border-bottom:1px solid var(--line);
+  font-family:var(--mono);font-size:10.5px;color:var(--text3)}
+.phone-h .sp{margin-left:auto}
+.phone-b{display:flex;flex-direction:column;gap:10px;padding:11px;min-width:0;flex:1}
+.phone-b>*{min-width:0}
+.phone-f{padding:9px 11px;border-top:1px solid var(--line);background:var(--surface2);
+  display:flex;gap:7px}
+.phone-f>*{min-width:0;flex:1}
+.phone-home{display:block;width:104px;height:4px;margin:4px auto 8px;border-radius:99px;background:var(--line2)}
+.ph2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.phone .kpi{padding:9px 10px}
+.phone .kpi .v{font-size:17px}
+.ph-lab{font-size:10.5px;font-weight:800;letter-spacing:.08em;color:var(--text3)}
+.ph-list{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-m);padding:1px 10px}
+.ph-row{display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--line);font-size:12px}
+.ph-list .ph-row:first-child{border-top:none}
+.ph-row .nm{flex:1;min-width:0;font-family:var(--mono);font-size:11px;overflow-wrap:anywhere}
+.ph-row .th{flex:none;font-family:var(--mono);font-size:11px;color:var(--text3)}
+.ph-title{display:flex;align-items:center;gap:8px}
+.ph-title b{font-size:13px}
+.ph-curve{height:110px;display:block;width:100%}
+.ph-note{font-size:10.5px;color:var(--text3);line-height:1.6;margin:0}
+.ph-scale{flex:1;min-width:250px}
 </style>
 </head>
 <body>
@@ -510,6 +550,7 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
       <a class="pill" href="#trace">06 追溯与缺口</a>
       <a class="pill" href="#bounds">07 边界</a>
       <a class="pill" href="#desk">08 桌面端</a>
+      <a class="pill" href="#mobile">09 移动端</a>
       <button class="theme-btn" id="themeBtn" type="button" aria-pressed="false">
         <svg class="ic-moon" width="15" height="15" aria-hidden="true"><use href="#i-moon"/></svg><svg class="ic-sun" width="15" height="15" aria-hidden="true"><use href="#i-sun"/></svg><span id="themeTxt">深色</span>
       </button>
@@ -586,7 +627,7 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
         <tr><td class="m">--r-s</td><td class="m">6px</td><td>小徽章里的图标底、代码块</td></tr>
         <tr><td class="m">--r-m</td><td class="m">10px</td><td>卡片 / KPI / 表格容器 / 输入框</td></tr>
         <tr><td class="m">--r-l</td><td class="m">14px</td><td>帧外框 / 窗口外框</td></tr>
-        <tr><td class="m">--r-xl</td><td class="m">20px</td><td>移动端设备框（本稿未用，保留 token）</td></tr>
+        <tr><td class="m">--r-xl</td><td class="m">20px</td><td>移动端设备框（§09 已用它画手机竖屏帧；在此之前一直未用）</td></tr>
         <tr><td class="m">--font</td><td class="m">Segoe UI → PingFang SC → Microsoft YaHei</td><td>全部正文；中文优先命中系统屏显字</td></tr>
         <tr><td class="m">--mono</td><td class="m">SF Mono → JetBrains Mono → Consolas</td><td>版本号 / 阈值 / 规则 id / 报告 id（<strong>凡是要逐字核对的东西都用等宽</strong>）</td></tr>
         <tr><td class="m">字号</td><td class="m">34 / 21 / 14.5 / 13.5 / 12.5 / 11.5 / 11</td><td>h1 / h2 / 帧标题 / 卡片标题 / 表格正文 / 说明 / 表头与 KPI 标签</td></tr>
@@ -847,7 +888,7 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
       <li><b>为什么要有外壳帧：</b>八帧共用同一套导航与顶栏，单独看某一帧会以为「环境徽标是那一屏自己加的」。把它抽出来画一次，五次重复才变成一条约束。</li>
       <li><b>导航里写了帧号（<code>F1</code>…<code>F8</code>）是<strong>这份稿子</strong>的需要，不是产品的需要</strong> —— 真实界面上那一格应当放数量角标（待采集批次数 / 待人工决策数）。本稿保留帧号，是为了让读者能把图和低保真的八帧对上号。</li>
       <li><b>绩效区在导航里只有一项</b>（F5）。需求里的绩效模块确实只有这一屏可交付，其余（归因、报表导出）在 §06 的缺口清单里，<strong>不在这里画假入口</strong>。</li>
-      <li><b>断点：</b>1180px 以上是设计宽度；980px 以下侧栏塌到顶部；700px 以下所有多列网格变单列。本稿在 700px 处只保证「不溢出」，不保证好用 —— 桌面端产品，移动端只是兜底。</li>
+      <li><b>断点：</b>1180px 以上是设计宽度；980px 以下侧栏塌到顶部；700px 以下所有多列网格变单列。本稿在 700px 处只保证「不溢出」，不保证好用 —— 桌面端产品，移动端只是兜底。<b>§09 画了手机竖屏的提案（M1 / M2），但那是「手机形态」那一节的图，不是本稿的响应式行为</b>：本稿真的会执行的响应式行为就是上面这三句（它自己的 <code>@media</code> 共 2 条），逐条实测见 §09 那张降级表。</li>
       <li><b>这一帧也是提案，不是已交付。</b>已交付的 <code>platform/web/src/App.jsx</code> 只有一个 <code>&lt;header&gt;</code> 加一个报告选择工具条，<b>没有侧栏、没有常驻顶栏、没有环境徽标位</b> ⇒ 图里这一整套外壳目前只存在于本稿与低保真里。它标成 <b>提案</b>（点划线外框），与 F1~F4 / F6~F8 同一待遇。</li>
     </ol>
   </div>
@@ -2105,6 +2146,7 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
           <tr><td>K 线图要 OHLCV</td><td>报告的结构计数只有 <code>equity_curve / trades / orders</code>，没有 OHLCV</td><td>用斜线阴影占位块 + 文字说明「要修就修产品侧」</td><td class="mono">没有伪造一根 K 线</td></tr>
           <tr><td>提案帧没有实现</td><td>F1~F4、F6~F8 都还没有产品代码</td><td>每帧都写清语义来源与数值来源</td><td class="mono">没有把提案画成已完成</td></tr>
           <tr><td>桌面端形态</td><td>受管文件里图片类资产 <b>0</b> 个、页面 head 没有 icon 声明、全仓库搜「托盘」<b>0</b> 处</td><td>§08 把「应用图标 / 托盘图标 / 托盘弹出面板」三样画成提案</td><td class="mono">没有产出任何位图资产，也没有声称托盘这个形态存在</td></tr>
+          <tr><td>移动端形态</td><td>PRD <b>原文</b>搜「移动」<b>0</b> 处；已交付那层 <code>platform/web/src/styles.css</code> 里 <code>@media</code> <b>0</b> 处（靠 <code>auto-fit minmax</code> 自塌）；本稿自己有 2 条 <code>@media</code>，只保证「不溢出」</td><td>§09 把「手机竖屏 · 状态 / 风控闸门」两帧画成提案，并把现有断点逐条列成一张降级表</td><td class="mono">没有改 platform/web/ 一行，没有替它写响应式 CSS，也没有主张原生 App / 小程序存在</td></tr>
         </tbody>
       </table>
     </div>
@@ -2151,7 +2193,7 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
       <div class="rulebox" style="border-left-width:6px">
         <b>先把「有 / 没有」实测清楚，再谈画（2026-10-01 晚，全部可复跑）：</b>
         <ul style="margin:8px 0 0;padding-left:20px;line-height:1.75">
-          <li><b>界面内联图标集 —— 有。</b>本稿的内联 SVG 精灵里有 <b>37 个</b> <code>&lt;symbol&gt;</code> 定义、<b>184 处</b> <code>&lt;use&gt;</code> 引用，浏览器实测<b>缺失 0</b>。它是一套<b>界面用的线稿图标</b>（导航 / 按钮 / 状态 / 表单），<b>不是应用图标</b>。</li>
+          <li><b>界面内联图标集 —— 有。</b>本稿的内联 SVG 精灵里有 <b>37 个</b> <code>&lt;symbol&gt;</code> 定义、<b>220 处</b> <code>&lt;use&gt;</code> 引用（§08 那一轮实测是 184，<b>此数随本稿增删而变</b>；要用现取），浏览器实测<b>缺失 0</b>。它是一套<b>界面用的线稿图标</b>（导航 / 按钮 / 状态 / 表单），<b>不是应用图标</b>。</li>
           <li><b>应用图标（App Icon）/ favicon —— 没有。</b><code>git ls-files</code> 的 <b>150</b> 个受管文件里，<code>.ico</code>/<code>.icns</code>/<code>.png</code>/<code>.svg</code>/<code>.ttf</code>/<code>.woff</code> 一类<b>命中 0 个</b>；<code>platform/web/index.html</code> 的 <code>&lt;head&gt;</code> 里只有字符集 / 视口 / 标题三项，<b>没有声明 icon</b>。平台层 README 里唯一提到 favicon 的那一处，记的是「浏览器会报 <code>/favicon.ico</code> 的 404」—— 那是<b>缺</b>这个图标的证据，不是有它的证据。</li>
           <li><b>托盘图标 / 托盘弹出面板 —— 没有，而且「托盘」这个形态本身也还没有。</b>在本仓库自己的产物里搜「托盘」<b>0 处</b>；搜 <code>Electron</code> / <code>Tauri</code> / <code>桌面客户端</code> / <code>系统通知</code> 也是 <b>0 处</b>。现有形态是「Spring Boot 托管一个 React 单页，浏览器开端口访问」—— <b>没有一个常驻进程</b>可以挂托盘。</li>
         </ul>
@@ -2343,7 +2385,7 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
         </div>
       </div>
       <ol class="notes">
-        <li><b>「点开页面」有两个读法，别混。</b>① <b>托盘点开后会弹出什么</b> —— 就是这一帧，纯提案，因为没有托盘；② <b>页面内点击后的跳转与展开</b> —— 这个<b>有</b>：低保真的可交互原型是 9 屏，本稿有 8 个锚点跳转 + 三维表 + 主题开关（可用的只有一个主题按钮，见 §07）。</li>
+        <li><b>「点开页面」有两个读法，别混。</b>① <b>托盘点开后会弹出什么</b> —— 就是这一帧，纯提案，因为没有托盘；② <b>页面内点击后的跳转与展开</b> —— 这个<b>有</b>：低保真的可交互原型是 9 屏，本稿有 10 个锚点跳转（含 logo 回顶与 §01~§09 九节）+ 三维表 + 主题开关（可用的只有一个主题按钮，见 §07）。</li>
         <li><b>面板里唯一「有出处」的是规则 id 与判定。</b>6 条数值型 + <code>blacklist</code> 逐字取自 <code>quanauto/risk.py</code>，与 F6 两张规则表同源（<code>blacklist</code> 在那边是单独一张名单型表）。<b>命中次数一栏全部留空</b> —— 判定是规格，命中是运行时。</li>
         <li><b>三个快捷操作故意做成不可按。</b>暂停 / 恢复 / 熔断都要有一个常驻的、能下发的进程，才谈得上「按下去会发生什么」。本稿只保留它们在面板上的<b>位置</b>。</li>
         <li><b>「打开完整看板」也标死。</b>完整看板是浏览器里的页面，托盘弹窗里点它需要一个「唤起浏览器」的能力 —— 那属于桌面壳，仓库里没有。</li>
@@ -2357,12 +2399,12 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
         <table class="tbl">
           <thead><tr><th>件</th><th>仓库里有没有</th><th>本稿画了没有</th><th>要真做出来还缺什么</th></tr></thead>
           <tbody>
-            <tr><td><b>界面内联图标集</b></td><td><span class="badge b-ok">有</span> 37 个 symbol / 184 处 use，缺失 0</td><td>就是它自己</td><td class="muted">—</td></tr>
+            <tr><td><b>界面内联图标集</b></td><td><span class="badge b-ok">有</span> 37 个 symbol / 220 处 use，缺失 0</td><td>就是它自己</td><td class="muted">—</td></tr>
             <tr><td><b>应用图标</b></td><td><span class="badge b-err">没有</span> 受管文件里图片 / 字体类资产 0 个</td><td>画了提案（A1）</td><td>① 打包形态的决定 ② 16 格网格重绘 ③ 构建步骤（把矢量图转成 <code>.ico</code> / <code>.icns</code>）</td></tr>
             <tr><td><b>favicon</b></td><td><span class="badge b-err">没有</span> 页面 head 里没有 icon 声明（平台层 README 记了那个 404）</td><td>画了提案（A1 的 16 / 32 档）</td><td>一行 head 声明 + 一张 32×32 资产。<b>这一格是整张表里最便宜的一格。</b></td></tr>
             <tr><td><b>托盘图标</b></td><td><span class="badge b-err">没有</span>，而且<b>没有托盘这个形态</b></td><td>画了提案（A2）</td><td>一个常驻进程。<b>需求与契约里都没有它</b> —— 这不是「补图」能解决的</td></tr>
             <tr><td><b>托盘弹出面板</b></td><td><span class="badge b-err">没有</span></td><td>画了提案（A3）</td><td>同上 + 实时数据源（行情 / 账户 / 成交流水）</td></tr>
-            <tr><td><b>页面内跳转与展开</b></td><td><span class="badge b-ok">有</span> 低保真可交互原型 9 屏；本稿 8 锚点 + 三维表 + 主题开关</td><td class="muted">—（已在本稿内）</td><td class="muted">—</td></tr>
+            <tr><td><b>页面内跳转与展开</b></td><td><span class="badge b-ok">有</span> 低保真可交互原型 9 屏；本稿 10 处页内锚点目标 + 三维表 + 主题开关</td><td class="muted">—（已在本稿内）</td><td class="muted">—</td></tr>
           </tbody>
         </table>
       </div>
@@ -2380,8 +2422,245 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
     </div>
   </section>
 
+<!-- ============================================================================
+     09 · 移动端形态（手机竖屏）—— 2026-10-02 追加
+     与 §08 同理：追加不重编号、不动 §07（收尾章，已被附录C / README §7 / 低保真 README 引用）。
+     这一节的特殊性：它画的形态**需求里没写、已交付那层也没有**（SPA 里 @media 数量 = 0），
+     而内容全部已有上游（METRIC_SPECS 14 项 + 7 条风控规则）。
+     ⇒ 先摆一份实测块，再把两帧全部盖「提案」章 + 点划线外框。
+     ============================================================================ -->
+  <section class="wrap sec anchor" id="mobile">
+    <div class="sec-head"><span class="sec-num">09</span><h2>移动端形态（手机竖屏）</h2></div>
+    <p class="sec-sub">
+      这一节回答的是「<b>没有移动端吗？</b>」。答案分三档，而且三档的结论<b>不一样</b>：
+      <b>本稿自己有响应式兜底</b>（2 条断点，只保证不溢出），
+      <b>已交付那一层一条断点都没有</b>（靠网格自塌碰巧不溢出），
+      <b>手机形态与原生形态则完全没有、需求里也没写</b>。先摆实测，再摆图。
+    </p>
+
+    <div class="card">
+      <div class="rulebox" style="border-left-width:6px">
+        <b>先把「有 / 没有」实测清楚，再谈画（2026-10-02，全部可复跑）：</b>
+        <ul style="margin:8px 0 0;padding-left:20px;line-height:1.75">
+          <li><b>本稿自己的响应式兜底 —— 有，但只有 2 条断点，而且它自己写着「移动端只是兜底」。</b>
+            本文件的 <code>@media</code> 一共 <b>2</b> 条（980px 以下侧栏塌到顶部 / 700px 以下多列网格变单列；
+            逐条做了什么见下面那张降级表）。§01 的 token 表里还留着一条本来就是为设备框准备的 token
+            <code>--r-xl 20px</code>，原话是「移动端设备框（<b>本稿未用</b>，保留 token）」
+            —— <b>本节把它用起来了，所以那句话同批改掉</b>（见 §01 那一行）。</li>
+          <li><b>已交付那一层 —— 一条断点都没有。</b><code>platform/web/src/styles.css</code> 里搜
+            <code>@media</code> = <b>0 处</b>。它现在不溢出的原因不是「替窄屏做过决定」，而是两个网格写了
+            <code>repeat(auto-fit, minmax(180px,1fr))</code> 与 <code>minmax(280px,1fr)</code>（<b>列数自己塌</b>），
+            而 <code>body{padding:24px}</code> 在窄屏上<b>不减</b>。全仓库唯一一处真正的移动端动作，是
+            <code>platform/web/index.html</code> 里那行
+            <code>&lt;meta name="viewport" content="width=device-width, initial-scale=1.0"&gt;</code>
+            —— <b>这一条有</b>，但它是「不缩放」的最低门槛，不是移动端适配。</li>
+          <li><b>原生形态 / 小程序 / PWA —— 没有，而且需求里也没有。</b>
+            PRD（<code>docs/智能量化交易平台.md</code>）<b>原文</b>搜「移动」= <b>0 处</b>；
+            搜 <code>iOS</code> / <code>Android</code> / <code>React Native</code> / <code>Flutter</code> /
+            <code>小程序</code> / <code>manifest</code> / <code>service worker</code> 也是 <b>0 处</b>。
+            PRD 里跟前端有关的只有优先级表里一行「前端界面优化 | P2 | 完整的 Web 管理界面」。
+            ⚠️ <b>口径：</b>搜 <code>Android</code> 时 <code>platform/web/package-lock.json</code> 里有一批
+            <code>*-android-arm64</code> 命中，那是打包工具的<b>二进制目标名</b>（假阳性，不计入）；
+            同理搜「移动」时 <code>.venv/</code> 与 <code>node_modules/</code> 里的第三方包也不算本仓库产物。</li>
+        </ul>
+        <p style="margin:8px 0 0">⇒ 下面两帧<b>全部盖「提案」章 + 点划线外框</b>。但它们与 §08 那三帧
+          <b>不是同一档</b>：托盘要的是「一个还不存在的形态」，而手机屏要的只是「把已有的内容换一种排法」
+          —— 内容全部已有上游（<code>METRIC_SPECS</code> 的 14 项分组 + <code>risk.py</code> 的 7 条规则）。
+          <b>便宜，但同样没有人做过。</b></p>
+      </div>
+    </div>
+
+    <article class="frame proposal">
+      <div class="f-cap">
+        <span class="fid">M1</span><h3>手机竖屏 · 今日状态（F1 + F5 的窄屏降级）</h3>
+        <span class="badge b-warn"><svg aria-hidden="true"><use href="#i-eye"/></svg>提案</span>
+        <span class="r"><span class="f-trace">上游：<b>内容有</b>（<code>quanauto/dashboard.py</code> 的 <code>METRIC_SPECS</code> 14 项 3/4/6/1 分组，取值逐字取自 <code>report-view.fixture.json</code>）<b>· 版面没有</b></span></span>
+      </div>
+      <div class="win">
+        <div class="win-bar"><span class="win-dots"><i></i><i></i><i></i></span>
+          <span class="win-title">手机竖屏 390px · 提案</span>
+          <span class="win-title mono" style="margin-left:auto">/</span>
+        </div>
+        <div style="padding:14px">
+          <div class="ph-wrap">
+            <div class="phone">
+              <div class="phone-scr">
+                <div class="phone-h"><span>9:41</span><span class="sp">研究环境</span><span>100%</span></div>
+                <div class="phone-b">
+                  <div class="ph-title"><span class="logo-mark" style="width:24px;height:24px;border-radius:7px"><svg width="12" height="12"><use href="#i-chart"/></svg></span><b>回测绩效 · 今日</b><span class="badge b-info" style="margin-left:auto">只读</span></div>
+                  <div class="ph-lab">四项要点</div>
+                  <div class="ph2">
+                    <div class="kpi"><div class="k">累计收益</div><div class="v down">-3.2043%</div><div class="u">60 个交易日</div></div>
+                    <div class="kpi"><div class="k">最大回撤</div><div class="v">5.4043%</div><div class="u">峰谷口径</div></div>
+                    <div class="kpi"><div class="k">期末净值</div><div class="v">96795.65</div><div class="u">起点 100000.00</div></div>
+                    <div class="kpi"><div class="k">闸门</div><div class="v">7</div><div class="u">条规则 · 命中 <span class="mono">—</span></div></div>
+                  </div>
+                  <div class="ph-lab">净值 · 60 个点</div>
+                  <div class="tbl-wrap" style="padding:6px">
+                    <svg class="ph-curve" viewBox="0 0 720 110" preserveAspectRatio="none" aria-label="净值曲线（与 F5 同一份夹具：前段恒为平线）">
+                      <polyline fill="none" stroke="var(--brand)" points="0,15 12,15 24,15 36,15 48,15 60,15 72,15 84,15 96,15 108,15 120,15 132,15 144,15 156,15 168,15 180,15 192,15 204,15 216,15 228,15 240,15 252,15 264,15 276,15 288,15 300,15 312,15 324,15 336,15 348,15 360,15 372,15 384,15 396,15 408,15 420,15 432,15 444,15 456,15 468,15 480,15 492,15 504,15 516,15 528,15 540,15 552,15 564,15 576,15 588,15 600,15 612,15 624,15 636,15 648,15 660,15 672,15 684,15 696,15 708,15 720,15"/>
+                      <line x1="0" y1="15" x2="720" y2="15" stroke="var(--line2)" stroke-dasharray="4 4"/>
+                    </svg>
+                  </div>
+                  <p class="ph-note">平线是数据说的（与 F5 同一条线），不是画漏了。</p>
+                  <div class="ph-lab">闸门摘要 · 7 条里的 3 条</div>
+                  <div class="ph-list">
+                    <div class="ph-row"><span class="nm">max_position_pct</span><span class="badge b-warn">REDUCE</span><span class="th">0.10</span></div>
+                    <div class="ph-row"><span class="nm">strategy_drawdown_pct</span><span class="badge b-err">HALT</span><span class="th">0.15</span></div>
+                    <div class="ph-row"><span class="nm">account_drawdown_pct</span><span class="badge b-err">HALT</span><span class="th">0.20</span></div>
+                    <div class="ph-row"><span class="nm">max_daily_trades</span><span class="badge b-err">REJECT</span><span class="th">3</span></div>
+                  </div>
+                </div>
+                <div class="phone-f">
+                  <button class="btn btn-soft btn-sm" type="button" disabled title="本稿无实现：这是手机版提案，仓库里没有手机版可展开"><svg aria-hidden="true"><use href="#i-list"/></svg>其余 3 条</button>
+                  <button class="btn btn-soft btn-sm" type="button" disabled title="本稿无实现：完整看板是桌面浏览器里的页面，手机版不存在 ⇒ 这个跳转没有目标"><svg aria-hidden="true"><use href="#i-arr-r"/></svg>完整看板</button>
+                </div>
+                <span class="phone-home"></span>
+              </div>
+            </div>
+
+            <div class="ph-scale">
+              <ol class="notes" style="margin:0 0 12px;padding-left:22px">
+                <li><b>竖屏的第一条决定是「一行一件事」。</b>桌面版 4 列 KPI 在 390px 上放不下，压成 <b>2×2</b>；四条规则的宽表压成<b>一行一条</b>（规则 id + 判定徽章 + 阈值）。</li>
+                <li><b>数字一个都没改。</b>四个 KPI 的数值与 F5 同一份夹具（<code>-3.2043% / 5.4043% / 96795.65 / 7</code>）；「闸门 7 条」的 7 取自 <code>quanauto/risk.py</code> 的规则条数。</li>
+                <li><b>命中次数全是 <code>—</code>。</b>桌面版 F6 那一屏的命中次数也是 <code>—</code>（截图里那几格本来就没有值），本节照抄这个状态，<b>不替它编数</b>。</li>
+                <li><b>底部两个按钮都是假的。</b>手机版不存在，所以跳转没有目标 —— 两个按钮都 <code>disabled</code> 且带 <code>title</code>。</li>
+              </ol>
+              <div class="gap"><b>这一帧证明的只有一件事：</b>内容能排进 390px，<b>不</b>证明它好用 —— 好用与否需要一条真的能跑的判据（见 §07）。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <article class="frame proposal">
+      <div class="f-cap">
+        <span class="fid">M2</span><h3>手机竖屏 · 风控闸门（F6 的窄屏降级）</h3>
+        <span class="badge b-warn"><svg aria-hidden="true"><use href="#i-eye"/></svg>提案</span>
+        <span class="r"><span class="f-trace">上游：<b>内容有</b>（<code>quanauto/risk.py</code> 的 7 条规则：id / 单位 / 方向 / 默认阈值 / 判定 / 严重度全部是真值）<b>· 版面没有</b></span></span>
+      </div>
+      <div class="win">
+        <div class="win-bar"><span class="win-dots"><i></i><i></i><i></i></span>
+          <span class="win-title">手机竖屏 390px · 提案</span>
+          <span class="win-title mono" style="margin-left:auto">/risk</span>
+        </div>
+        <div style="padding:14px">
+          <div class="ph-wrap">
+            <div class="phone">
+              <div class="phone-scr">
+                <div class="phone-h"><span>9:41</span><span class="sp">风控 · 研究环境</span><span>100%</span></div>
+                <div class="phone-b">
+                  <div class="ph-title"><span class="logo-mark" style="width:24px;height:24px;border-radius:7px"><svg width="12" height="12"><use href="#i-shield"/></svg></span><b>风控闸门</b><span class="badge b-ok" style="margin-left:auto">未触发</span></div>
+                  <div class="ph-lab">数值型规则 · 6 条 · 判定顺序固定</div>
+                  <div class="ph-list">
+                    <div class="ph-row"><span class="nm">max_position_pct</span><span class="badge b-warn">REDUCE</span><span class="th">0.10</span></div>
+                    <div class="ph-row"><span class="nm">max_daily_trades</span><span class="badge b-err">REJECT</span><span class="th">3</span></div>
+                    <div class="ph-row"><span class="nm">strategy_drawdown_pct</span><span class="badge b-err">HALT</span><span class="th">0.15</span></div>
+                    <div class="ph-row"><span class="nm">account_drawdown_pct</span><span class="badge b-err">HALT</span><span class="th">0.20</span></div>
+                    <div class="ph-row"><span class="nm">max_order_amount_pct</span><span class="badge b-warn">REDUCE</span><span class="th">0.10</span></div>
+                    <div class="ph-row"><span class="nm">max_sector_pct</span><span class="badge b-warn">REDUCE</span><span class="th">0.30</span></div>
+                  </div>
+                  <div class="ph-lab">名单型规则 · 1 条</div>
+                  <div class="ph-list">
+                    <div class="ph-row"><span class="nm">blacklist</span><span class="badge b-err">REJECT</span><span class="th">—</span></div>
+                  </div>
+                  <div class="ph-lab">今日决策留痕</div>
+                  <div class="ph-list">
+                    <div class="ph-row"><span class="nm">[时间] BUY 000001.SZ</span><span class="badge b-warn">缩减</span><span class="th">—</span></div>
+                    <div class="ph-row"><span class="nm">[时间] SELL 000001.SZ</span><span class="badge b-ok">通过</span><span class="th">—</span></div>
+                  </div>
+                  <p class="ph-note">留痕里的时间与笔数是 <code>[占位]</code>：桌面版 F6 那一屏也没有真值来源（<code>risk_decision_log</code> 尚无产品写入者）。</p>
+                </div>
+                <div class="phone-f">
+                  <button class="btn btn-soft btn-sm" type="button" disabled title="本稿无实现：手机版提案"><svg aria-hidden="true"><use href="#i-filter"/></svg>筛选</button>
+                  <button class="btn btn-err-soft btn-sm" type="button" disabled title="本稿无实现：Kill Switch 需要真实的全局熔断开关，本稿只有画出来的按钮"><svg aria-hidden="true"><use href="#i-kill"/></svg>熔断</button>
+                </div>
+                <span class="phone-home"></span>
+              </div>
+            </div>
+
+            <div class="ph-scale">
+              <ol class="notes" style="margin:0 0 12px;padding-left:22px">
+                <li><b>「判定顺序固定」这一条在手机上靠行序表达，不靠标注。</b>桌面版是 7 列表格；竖屏放不进 7 列，所以<b>列不横滚</b>，而是把「规则 id + 判定 + 阈值」压成一行三条目 —— 表头那三个词（单位 / 方向 / 严重度）<b>在竖屏上会丢</b>。</li>
+                <li><b>丢掉的这三列不是小事。</b>「方向（收紧 ↓）」是阈值语义的一部分；丢掉它，屏幕上的 <code>0.10</code> 只剩一个数。⇒ 手机版要么把它们放进展开态，要么<b>不做手机版</b> —— 这是本节留给产品的一个真决定。</li>
+                <li><b>没有真值的地方保持 <code>—</code> 与 <code>[占位]</code>。</b>命中次数、留痕时间在桌面版与手机版上都一样没有来源。</li>
+              </ol>
+              <div class="gap err"><b>比 M1 更值得注意的一点：</b>风控这一屏是<b>唯一一屏「少一列就可能看错」</b>的界面。所以它在手机上是不是要「完整功能」，本身就是个决定，不是一个排版问题。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </article>
+
+    <div class="card">
+      <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-layout"/></svg>窄屏时到底塌了什么 —— 本稿现有断点（实测）+ 本节新增的排版决定（提案）</h4>
+        <span class="r"><span class="badge b-ok">实测 8 行</span><span class="badge b-warn">提案 2 行</span></span></div>
+      <div class="tbl-wrap">
+        <table class="tbl">
+          <thead><tr><th>元素</th><th>≥980px（设计宽度）</th><th>700~980px</th><th>&lt;700px</th><th>来源</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">.app（侧栏 + 主体）</td><td>侧栏常驻左侧</td><td><b>1 列</b>，侧栏塌到顶部</td><td>1 列（同左）</td><td><span class="badge b-ok">实测</span></td></tr>
+            <tr><td class="mono">.app-side 分隔线</td><td>右侧竖线</td><td><b>下方横线</b></td><td>下方横线</td><td><span class="badge b-ok">实测</span></td></tr>
+            <tr><td class="mono">.g4 指标网格</td><td>4 列</td><td><b>2 列</b></td><td>2 列</td><td><span class="badge b-ok">实测</span></td></tr>
+            <tr><td class="mono">.g2 / .g3</td><td>2 / 3 列</td><td>2 / 3 列</td><td><b>1 列</b></td><td><span class="badge b-ok">实测</span></td></tr>
+            <tr><td class="mono">.wrap 内边距</td><td>不裁</td><td>不裁</td><td><b>14px</b>（左右）</td><td><span class="badge b-ok">实测</span></td></tr>
+            <tr><td class="mono">.masthead</td><td>单行、固定高</td><td>单行</td><td><b>可折行、高自适应</b></td><td><span class="badge b-ok">实测</span></td></tr>
+            <tr><td class="mono">.hero h1</td><td>34px</td><td><b>27px</b></td><td><b>22px</b></td><td><span class="badge b-ok">实测</span></td></tr>
+            <tr><td class="mono">.kpi .v</td><td>22px</td><td>22px</td><td><b>19px</b></td><td><span class="badge b-ok">实测</span></td></tr>
+            <tr><td class="mono">.f-trace（帧说明）</td><td>右对齐、限宽 460px</td><td>右对齐</td><td><b>左对齐、不限宽</b></td><td><span class="badge b-ok">实测</span></td></tr>
+            <tr><td>风控 7 列表格（F6）</td><td>表格</td><td>表格</td><td><b>一行一条的列表</b></td><td><span class="badge b-warn">提案</span></td></tr>
+            <tr><td>手机竖屏整体版面（390px）</td><td class="muted">—（不适用）</td><td class="muted">—</td><td><b>M1 / M2</b></td><td><span class="badge b-warn">提案</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="hint">
+        前 9 行是<b>本文件 CSS 里真的写着的东西</b>（2 条 <code>@media</code>，逐条抄下来，没有推断）；
+        后 2 行是<b>本节新画的</b>，本文件里<b>还不是</b>可运行的响应式行为 —— 它们是<b>图</b>，不是 CSS。
+        ⚠️ 这张表里最重要的一行是最后那条「&lt;700px」：<b>「不溢出」是 700px 处唯一被照顾到的事</b>，
+        本稿自己就写着「不保证好用」。
+      </p>
+    </div>
+
+    <div class="card">
+      <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-alert"/></svg>六件事的「有 / 没有」（口径与 §08 那张表一致）</h4></div>
+      <div class="tbl-wrap">
+        <table class="tbl">
+          <thead><tr><th>项</th><th>现状</th><th>本节做了什么</th><th>还缺什么</th></tr></thead>
+          <tbody>
+            <tr><td><b>本稿的断点兜底</b></td><td><span class="badge b-ok">有</span> 2 条 <code>@media</code>（980 / 700），只保证「不溢出」</td><td class="muted">—（照旧，未改）</td><td>700px 以下没有「好用」这一说，也没有人量它</td></tr>
+            <tr><td><b>已交付 SPA 的断点</b></td><td><span class="badge b-err">没有</span> <code>styles.css</code> 里 <code>@media</code> = <b>0 处</b>；靠 <code>auto-fit minmax</code> 自塌</td><td>未动 <code>platform/web/</code> 一行</td><td>断点本身。<b>这一格是「漏做」</b></td></tr>
+            <tr><td><b>viewport 声明</b></td><td><span class="badge b-ok">有</span> <code>index.html</code> 里那行 <code>width=device-width</code></td><td class="muted">—</td><td class="muted">—（最低门槛，已满足）</td></tr>
+            <tr><td><b>手机竖屏 · 状态</b></td><td><span class="badge b-err">没有</span></td><td>画了提案（M1）</td><td>一组排版决定（2×2 KPI + 列表化）。<b>便宜</b></td></tr>
+            <tr><td><b>手机竖屏 · 风控闸门</b></td><td><span class="badge b-err">没有</span></td><td>画了提案（M2）</td><td>同上 + <b>一个真决定</b>：手机上要不要完整功能</td></tr>
+            <tr><td><b>平板 / 横屏帧</b></td><td><span class="badge b-err">没有</span></td><td><b>本节也没画</b>（用上面那张降级表代替）</td><td>一块屏。<b>本节自己留的缺口</b></td></tr>
+            <tr><td><b>原生 App / 小程序 / PWA</b></td><td><span class="badge b-err">没有</span>，而且<b>需求里也没有</b>（PRD 搜「移动」= 0 处）</td><td class="muted">—（未画、未主张）</td><td><b>一个形态 + 一条需求</b>。<b>最贵</b></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="hint">
+        表里这些「没有」<b>不是同一类</b>，得分开读：<b>「已交付 SPA 的断点」是漏做</b>（几行 CSS 的事，不需要任何决定）；
+        <b>「手机竖屏两帧」是缺一组排版决定</b>（内容、数值、规则全部已有上游，只是没人排过）；
+        <b>「原生 App / 小程序」是缺一个形态 + 缺一条需求</b>（PRD 原文里根本没有「移动端」这两个字 ——
+        它不是「补一屏」，而是要先回答「要不要有」）。
+        把三者都叫「缺移动端」，会让最便宜的那一格和最贵的那一格看起来一样贵。
+      </p>
+    </div>
+
+    <div class="card">
+      <div class="rulebox" style="border-left-width:6px">
+        <b>一句话：</b>「<b>移动端</b>」这件事在本仓库里<b>没有产物</b>，但三种「没有」的价钱差得很远 ——
+        <b>响应式兜底已经在</b>（本稿 2 条断点；已交付那层 0 条，靠网格自塌），
+        <b>手机版面是缺一组排版决定</b>（本节 M1 / M2 就是那组决定：2×2 KPI + 宽表列表化 + 底部操作条），
+        <b>原生 App / 小程序 / PWA 是缺一个形态、而且需求里也还没写</b>。
+        本节画了前两件里的「版面」，<b>没有画也没有主张</b>第三件；
+        而且它与 §08 同理：<b>没有牙</b> —— 不被任何门禁读取、不解除「<b>布局 / 视觉</b>零覆盖」、
+        不产出任何资产、也不改动 <code>platform/web/</code> 一行。
+      </div>
+    </div>
+  </section>
+
 <div class="wrap foot">
-  <p><b>智能量化交易平台 · 高保真 UI 设计稿 v1（八帧 + 桌面端形态一节）</b></p>
+  <p><b>智能量化交易平台 · 高保真 UI 设计稿 v1（八帧 + 桌面端 / 移动端两节）</b></p>
   <p>依据：PRD（<code>docs/智能量化交易平台.md</code>）+ 低保真（<code>docs/low fidelity/</code>，静态规格板 + 可交互原型）。视觉语言参考外部设计稿。</p>
   <p>打开方式：浏览器直接打开本文件。零依赖、无构建、<b>无网络请求</b>、无外部字体。</p>
   <p class="noimpl">
@@ -2389,6 +2668,9 @@ svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-lin
     八帧里只有 <b>F5</b> 有真实实现；其余七帧是提案，用点划线外框标出。
     §08「桌面端形态」那三帧<b>也是提案</b>，而且它们画的形态（托盘 / 桌面壳）在仓库里
     <b>还不存在</b> —— 本节不产出任何位图资产，也不主张托盘已经有人画过。
+    §09「移动端形态」那两帧<b>也是提案</b>，而且<b>没有牙</b>：本稿的 2 条 <code>@media</code> 是
+    它自己的兜底，已交付那层（<code>platform/web/</code>）里 <code>@media</code> 是 <b>0 处</b>、
+    本稿也没有替它写一行响应式 CSS ⇒ 手机上好不好用，<b>没有任何东西在守着</b>。
     带 <code>[方括号]</code> 的都是占位；不可按的控件一律 <code>disabled</code> 并带 <code>title</code> 说明缺什么能力。
   </p>
 </div>
