@@ -1,0 +1,105 @@
+SCOPE: probe_ingest_commit（A 段对照 / B 段真跑 / C 段舍入）-- 探针，不是门禁。
+
+probe-ingest-commit: 三条落库写入路径在容器 PostgreSQL 上真跑一次，
+                     并用**另一个客户端**读回（对照 DC 契约附录 J 的 J-6 / J-8）。
+
+report target: D:\project-quan\quan-auto\tools\ingest-commit-probe-report-pg15.txt
+              （默认落点是 D:\project-quan\quan-auto\tools\ingest-commit-probe-report.txt；本次是另存，不会动它）
+
+docker server version: 29.4.0
+image  : postgres:15
+imageid: sha256:c2ca90969ca293925ab474466e837689cc712321afdd9e4640bd0cf942fdca3a
+digest : postgres@sha256:c2ca90969ca293925ab474466e837689cc712321afdd9e4640bd0cf942fdca3a
+
+--- 起临时容器 ---
+pre-clean: docker rm -f quan-ingest-probe -> exit 0（没东西可删时非 0 属正常）
+宿主端口：127.0.0.1:55433 -> 容器 5432（**只绑回环**，不对外）
+容器已创建：bed45a1ed89b7415329d
+数据库已就绪（pg_isready -h 127.0.0.1 返回 0）
+
+--- 前置守卫 ---
+  server_encoding = UTF8  OK
+  client_encoding = UTF8  OK
+  public schema 表数 = 0（全新库）  OK
+
+--- 应用 db/data_center.sql（**真** DDL，不是 smoke 里的副本）---
+ddl applied: db/data_center.sql
+
+--- 实测环境 ---
+  server : PostgreSQL 15.18 (Debian 15.18-1.pgdg13+1)
+
+--- A 段：把连接降回 autocommit=False（复刻 B20 之前的驱动语义）---
+  A1 = 进 `transaction()` 之前**没有**裸读（那一刻连接是 IDLE）
+  A2 = 照 B18 的调用次序**先裸读一次**（那一刻连接已在 INTRANS）
+  只有 A2 是「有牙」的那一半：它必须让新连接看到 0 行。
+  A1 upsert -> inserted=3 skipped=0；**同一条连接**读回 3 行；**新客户端**（容器里的 psql）数到 3 行
+  A2 前置裸读：库里原有 0 行
+  A2 upsert -> inserted=3 skipped=0；**同一条连接**读回 3 行；**新客户端**（容器里的 psql）数到 0 行
+  A 段 OK：同连接读到 3 行、新客户端读到 0 行 —— 这条读法的恒真性被实测钉住了。
+
+--- B 段：真跑（`autocommit=True`，即 B20.3 的修法）---
+  写入：日线 inserted=3 skipped=0；因子 inserted=2 skipped=0；分红 inserted=2 skipped=0
+  B1 另一个客户端数行（容器里的 psql，独立会话，不是同连接自读）：
+      dc_daily_bar       库里 3 行 / 期望 3 行  OK
+      dc_adjust_factor   库里 2 行 / 期望 2 行  OK
+      dc_dividend        库里 2 行 / 期望 2 行  OK
+  B2 另一条 psycopg 连接走 Store 读回并逐字段对拍：
+      OK 日线 2026-03-02 close 写 10.2500 -> 读回 10.2500
+      OK 日线 2026-03-03 close 写 1.00005 -> 读回 1.0001
+      OK 日线 2026-03-04 close 写 842270399.9999999 -> 读回 842270400.0000
+      OK 因子 2026-03-02 写 1.00000000 -> 读回 1.00000000
+      OK 因子 2026-03-03 写 1.000000005 -> 读回 1.00000001
+      OK 分红 2026-06-10（announce 2026-06-03）写 0.3000 -> 读回 0.3000
+      OK 分红 2026-09-10（announce 2026-09-03）写 0.00005 -> 读回 0.0001
+  B3 幂等重跑（另一条连接，同样的行）：
+      日线 inserted=0 skipped=3  OK
+      因子 inserted=0 skipped=2  OK
+      分红 inserted=0 skipped=2  OK
+  B4 异值冲突（整批一个事务，前一行也必须一起回滚）：
+      抛出 IngestConflictError  OK
+      OK 冲突批次之后 dc_daily_bar 仍是 3 行 —— 那一行新数据也回滚了
+  B 段 OK：三条写入路径都由**另一个客户端**读到了，且幂等重跑与冲突回滚都对。
+
+--- C 段：`ROUND_HALF_UP` 与 PG `numeric` 的舍入对拍（J-8）---
+  标度 4（`_as_decimal` vs `numeric(18,4)`），9 例：
+      tie-up             1.00005              python=1.0001           pg=1.0001           OK
+      tie-up-small       0.00005              python=0.0001           pg=0.0001           OK
+      just-below-tie     1.000049             python=1.0000           pg=1.0000           OK
+      tie-up-large       842270399.00005      python=842270399.0001   pg=842270399.0001   OK
+      plain-4dp          10.2500              python=10.2500          pg=10.2500          OK
+      float-tail         842270399.9999999    python=842270400.0000   pg=842270400.0000   OK
+      neg-tie            -1.00005             python=-1.0001          pg=-1.0001          OK
+      neg-tie-small      -0.00005             python=-0.0001          pg=-0.0001          OK
+      neg-just-below-tie -1.000049            python=-1.0000          pg=-1.0000          OK
+  标度 8（`_as_factor_decimal` vs `numeric(18,8)`），3 例：
+      factor-tie         1.000000005          python=1.00000001       pg=1.00000001       OK
+      factor-plain       1.00000000           python=1.00000000       pg=1.00000000       OK
+      factor-neg-tie     -1.000000005         python=-1.00000001      pg=-1.00000001      OK
+  半值落列往返（B 段写进去的 `1.00005`，列里必须存 `_as_decimal` 的那个结果）：
+      OK 列里是 1.0001 == `_as_decimal('1.00005')` = 1.0001
+  C 段 OK：所有半值样本两侧同向（`ROUND_HALF_UP` = 半数远离零 = PG numeric 的语义）。
+
+--- 汇总 ---
+  A 段  对照（autocommit=False 下新客户端看到 0 行）  OK
+  B 段  真跑（三条写入路径都由另一个客户端读到）      OK
+  C 段  舍入（半值两侧同向）                          OK
+
+boundary: 本次证明的是「`quanauto/pgstore.py` 的三条**落库写入**路径在真 PostgreSQL
+          上真的提交了」，**不是**「`quanauto/ingest.py` 那层编排在真库上跑过」
+          （那一层的产品调用点仍然只在假连接用例里跑过，见 DC 契约 B21.6 与附录 J 的 J-11）。
+boundary: 本次证明只对 image=postgres:15 (digest=postgres@sha256:c2ca90969ca293925ab474466e837689cc712321afdd9e4640bd0cf942fdca3a) 与上面记的那几个文件 hash 成立。
+boundary: 输入是**本探针自己构造的行**，不是任何真实券源取回来的数据 ——
+          「真源取数」仍然没有跑过，也不该被要求跑（真实取数天然不可复现）。
+
+teardown: docker rm -f quan-ingest-probe -> exit 0
+
+verdict: PROBE PASS（A/B/C 三段都按预期）
+exit code: 0
+NOTE: 本报告的结论只对上面记录的镜像 digest + 下面这些文件的 sha256 成立。
+      db/data_center.sql  sha256=1c098bd74486af5fc8e830635144741780807ebfa77e608135669c292081061d
+      quanauto/pgstore.py  sha256=bd84d86ac1cc978843116976fcd3118f826039acb4c8b4f812a2ea146355db35
+      quanauto/datacenter.py  sha256=1880e5b6128b105f01f97fd09c03eca87fed37e764b430d1ea8a8d011e356670
+      上面任何一个 hash 变了，本快照即作废 —— 重跑本探针，不要只改结论。
+probe: tools/probe_ingest_commit.py  sha256=a3ee4d71a4f66581f73a8201c30821a8de57b526611ffa21bacb25a9bda6ac84（出这份报告的**工具**版本；改了它也该重跑）
+      （报告里**不**钉 git commit：它记录的是输入文件与镜像，不是某次提交，
+        所以它可以和代码同批提交。）

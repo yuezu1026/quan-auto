@@ -46,6 +46,10 @@
   这一条是**有意**的、不是漏做 —— 入口一开出来就成了一条对外承诺，而本层**从没在
   任何真实 PostgreSQL 上跑过**（`tests/test_ingest.py` 用的是假连接；真库那边只有
   `db/*.smoke.sql` 那条约束触测通道，它跑的不是本模块）。
+  ℹ️ **2026-10-02 追加**：真库那边现在**多了一条** —— `tools/probe_ingest_commit.py`
+  在容器真库上真跑的是本模块**调用的那三个 `pgstore` ingestor 类**（**不是**本模块），
+  登记在数据中心契约**附录 J** 的 J.4。⇒ 上面这句**一个字都不变**：真假连接边界不变、
+  **本模块（编排层）仍然没在真库上跑过**、`dc_ingest_run` 那几条 `ck_*` 仍没被本条路径执行过。
 * ~~`get_dividend()` 仍恒 `0.0`（分红那条缺口与本模块无关，别在这里顺手改）。~~
   **2026-10-01 作废**：分红**读侧**（`DbDataFeed.get_dividend`）与**本模块的第三条通道**
   （`ingest_dividends` → `PgDividendIngestor.upsert_dividends`）是同一批（附录 B22）接上的。
