@@ -44,7 +44,9 @@
 
 ## 未验证的部分（诚实声明，不在代码里假装已验证）
 
-`akshare` / `baostock` 仍**没有安装**（它们在 `[datasources]` extra 里），也**从未联网核对**
+`akshare` / `baostock` 仍**没有安装**（它们在 `[datasources]` extra 里，装法
+`pip install 'akshare>=1.18'` 或 `pip install 'baostock>=0.9.4'`，也可
+`pip install -e ".[datasources]"`），也**从未联网核对**
 ⇒ 这两张映射表的**键名**仍是照源文档的字段名写的，`_default_*` 真实取数函数仍未被真实调用。
 测试覆盖的是映射**机制**（喂进带源字段名的帧，输出必须是标准 schema），不是映射**内容**。
 

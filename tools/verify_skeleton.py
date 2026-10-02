@@ -193,24 +193,30 @@ def check_pyproject(root):
     return findings
 
 
-# ── 驱动声明探测器 ──────────────────────────────────────────────────────────
+# ── 可选依赖声明探测器 ──────────────────────────────────────────────────────
 #
 # 2026-09-25 裁决：`psycopg` 写进 `[project.optional-dependencies] postgres`。但
-# 「怎么装驱动」这件事有**两处手写副本**：pyproject 里的声明下限，与
-# `quanauto/pgstore.py` 报错文案里教用户敲的那条命令。两处漂开不会有任何东西报红，
-# 而用户照着提示装出来的东西与声明的不是一回事。`[datasources]` extra 至今也是这个
-# 状态（没有判据），这条探测器至少把驱动那一半钉住。
+# 「怎么装这个可选依赖」这件事有**两处手写副本**：pyproject 里的声明下限，与源码里
+# 教用户敲的那条安装命令。两处漂开不会有任何东西报红，而用户照着提示装出来的东西
+# 与声明的不是一回事。当时只钉住驱动那一半，`[datasources]` extra 那一对
+# （`akshare` / `baostock`）仍靠人工保持 —— 2026-10-02 把它并进同一张清单
+# （该欠账登记在数据中心契约附录 J）。
 #
-# 判据形状三条，缺一即 FAIL（第三条是空转守卫）：
-#   1. `[project.optional-dependencies].postgres` 存在，且里面有需求名**恰好**是
-#      `psycopg` 的条目 —— 不能用子串命中，否则 `notpsycopg` 也会被当成声明；
-#   2. `quanauto/pgstore.py` 里能提取到安装提示（提取为空时下面那条比较永远不开火）；
-#   3. 两处的版本下限是同一串。
+# 清单每行 = (extra 名, 需求名元组, 提示所在源码文件)。**逐行独立判**，判据形状三条，
+# 缺一即 FAIL（第三条是空转守卫）：
+#   1. `[project.optional-dependencies].<extra>` 存在，且**每条**需求名都有一条**恰好**
+#      相等的声明 —— 不能用子串命中，否则 `notpsycopg` 也会被当成声明；
+#   2. 那一行的源码文件里能提取到安装提示（提取为空时下面那条比较永远不开火）；
+#   3. 每一个需求名的版本下限两处是同一串。
+# ⚠️ 清单里每加一行都要配自己的自测样本（含「空转守卫」那一条）。只加行不加样本，
+# 新行就是装饰品：它的分支从没被执行过，红绿都证明不了有牙。
 # 名字解析故意不引 `packaging`：`tools/` 只用标准库（规范 §5 红线清单），而 extra 的写法是
 # 本仓库自己定的、形状可控，正则够用。
-DRIVER_EXTRA = 'postgres'
-DRIVER_REQUIREMENT = 'psycopg'
-DRIVER_MODULE = os.path.join(PKG_NAME, 'pgstore.py')
+DEP_EXTRAS = (
+    # (extra, 需求名元组, 提示所在文件)
+    ('postgres', ('psycopg',), os.path.join(PKG_NAME, 'pgstore.py')),
+    ('datasources', ('akshare', 'baostock'), os.path.join(PKG_NAME, 'datasources.py')),
+)
 HINT_RE = re.compile(r"pip install '([A-Za-z0-9_.\-]+)>=([0-9][0-9.]*)'")
 FLOOR_RE = re.compile(r'>=[ \t]*([0-9][0-9.]*)')
 
@@ -224,33 +230,48 @@ def _requirement_name(spec):
 
 
 def check_driver_extra(root):
-    """驱动既要有声明位置，也要有一条和它下限一致的安装提示。"""
-    findings = []
-    shown = DRIVER_MODULE.replace('\\', '/')
-    text = read_text(os.path.join(root, DRIVER_MODULE))
+    """每个 optional extra 既要有声明位置，也要有一条和它下限一致的安装提示。
+
+    逐行核 `DEP_EXTRAS`。**任一行**缺声明 / 缺提示 / 下限漂开都报同一个检查码
+    `DRIVER-EXTRA`（码是门禁级的；具体是哪一行，写在消息里）。
+    """
     _, data = _load_pyproject(root)
-    declared = []
+    findings = []
+    for extra, requirements, module in DEP_EXTRAS:
+        findings.extend(_check_extra(root, extra, requirements, module, data))
+    return findings
+
+
+def _check_extra(root, extra, requirements, module, data):
+    """核一个 extra：声明位置 + 每条需求名的声明下限 + 源码里那条安装提示。"""
+    findings = []
+    shown = module.replace('\\', '/')
+    declared = {name: [] for name in requirements}
     if data is None:
         findings.append(('DRIVER-EXTRA',
-                         '%s 读不到或不可解析 —— 驱动声明的下限无从核对（不是「一致」）'
-                         % PYPROJECT))
+                         '%s 读不到或不可解析 —— %r extra 的下限无从核对（不是「一致」）'
+                         % (PYPROJECT, extra)))
     else:
         extras = data.get('project', {}).get('optional-dependencies') or {}
-        specs = extras.get(DRIVER_EXTRA)
+        specs = extras.get(extra)
         if not specs:
             findings.append(('DRIVER-EXTRA',
                              '%s 的 [project.optional-dependencies] 里没有 %r —— %s 惰性导入的 '
                              '%s 没有声明位置，文案教的装法无法从依赖图复现'
-                             % (PYPROJECT, DRIVER_EXTRA, shown, DRIVER_REQUIREMENT)))
+                             % (PYPROJECT, extra, shown, ' / '.join(requirements))))
         else:
             for spec in specs:
-                if _requirement_name(spec) == DRIVER_REQUIREMENT:
+                name = _requirement_name(spec)
+                if name in declared:
                     m = FLOOR_RE.search(str(spec))
-                    declared.append(m.group(1) if m else '')
-            if not declared:
+                    declared[name].append(m.group(1) if m else '')
+            missing = [n for n in requirements if not declared[n]]
+            if missing:
                 findings.append(('DRIVER-EXTRA',
-                                 '%s 的 %r extra=%r 里没有需求名恰好是 %r 的条目'
-                                 % (PYPROJECT, DRIVER_EXTRA, specs, DRIVER_REQUIREMENT)))
+                                 '%s 的 %r extra=%r 里没有需求名恰好是 %s 的条目'
+                                 % (PYPROJECT, extra, specs,
+                                    ' / '.join(repr(n) for n in missing))))
+    text = read_text(os.path.join(root, module))
     if text is None:
         findings.append(('DRIVER-EXTRA',
                          '%s 不存在 —— 取不到安装提示，与 %s 的声明无从互相印证'
@@ -260,20 +281,20 @@ def check_driver_extra(root):
     if not hints:
         # 空转守卫：提取为空时「下限一致」那一半永远不会开火，却会打印 PASS。
         findings.append(('DRIVER-EXTRA',
-                         '%s 里提取不到安装提示（期望 `pip install \'%s>=X.Y\'` 这种形状）—— '
-                         '提取为空时下限比较形同虚设，拒绝通过'
-                         % (shown, DRIVER_REQUIREMENT)))
+                         '%s 里提取不到安装提示（期望 `pip install \'名称>=X.Y\'` 这种形状）—— '
+                         '提取为空时下限比较形同虚设，拒绝通过' % shown))
         return findings
-    hinted = sorted({floor for name, floor in hints if name == DRIVER_REQUIREMENT})
-    if not hinted:
-        findings.append(('DRIVER-EXTRA',
-                         '%s 的安装提示提到的是别的包（%s），没有 %r'
-                         % (shown, ', '.join(sorted({n for n, _ in hints})), DRIVER_REQUIREMENT)))
-    elif declared and hinted != sorted(set(declared)):
-        findings.append(('DRIVER-EXTRA',
-                         '版本下限两处不一致：%s 的 %r extra 写 %s，而 %s 教用户装的写 %s'
-                         % (PYPROJECT, DRIVER_EXTRA, ', '.join(sorted(set(declared))), shown,
-                            ', '.join(hinted))))
+    for name in requirements:
+        hinted = sorted({floor for n, floor in hints if n == name})
+        if not hinted:
+            findings.append(('DRIVER-EXTRA',
+                             '%s 的安装提示里没有 %r（只提到 %s）'
+                             % (shown, name, ', '.join(sorted({n for n, _ in hints})))))
+        elif declared[name] and hinted != sorted(set(declared[name])):
+            findings.append(('DRIVER-EXTRA',
+                             '版本下限两处不一致：%s 的 %r extra 里 %r 写 %s，而 %s 教用户装的写 %s'
+                             % (PYPROJECT, extra, name, ', '.join(sorted(set(declared[name]))),
+                                shown, ', '.join(hinted))))
     return findings
 
 
@@ -602,6 +623,7 @@ dependencies = []
 
 [project.optional-dependencies]
 postgres = ["psycopg[binary]>=3.1"]
+datasources = ["akshare>=1.18", "baostock>=0.9.4"]
 
 [tool.setuptools]
 packages = ["quanauto"]
@@ -624,16 +646,20 @@ jobs:
       - run: python tools/run_all_gates.py
 '''
 
-# 驱动安装提示的替身：真文件里那句话长得多，这里只要能被 HINT_RE 提取到就够。
+# 可选依赖安装提示的替身：真文件里那两行长得多，这里只要能被 HINT_RE 提取到就够。
 # 故意写成 ASCII，免得样例输出依赖控制台编码。
 DRIVER_HINT_OK = ('def _import_psycopg():\n'
                   '    raise InvalidConfigError("driver: pip install \'psycopg>=3.1\'")\n')
+DATASOURCES_HINT_OK = ("def _default_fetch(self, **kwargs):\n"
+                       "    # 装法：pip install 'akshare>=1.18' 或 "
+                       "pip install 'baostock>=0.9.4'\n"
+                       "    raise NotImplementedError\n")
 
 
 def _sandbox(tmp, *, pyproject=CLEAN_PYPROJECT, version='"1.2.3"', ci=CLEAN_CI,
              packages='"quanauto"', make_pkg=True, make_tests=True,
              context_md=None, impl_modules=(), driver_hint=DRIVER_HINT_OK,
-             github_md=None):
+             ds_hint=DATASOURCES_HINT_OK, github_md=None):
     """造一个最小仓库。每个样本只动一处，其余保持干净 —— 这样报出来的必定是那一处。
 
     `github_md` 是 `{'.github' 下的相对路径: 文本}`，用来构造 `.github/**/*.md` 扫描面的样本。
@@ -651,9 +677,13 @@ def _sandbox(tmp, *, pyproject=CLEAN_PYPROJECT, version='"1.2.3"', ci=CLEAN_CI,
                       encoding='utf-8', newline='\n') as fp:
                 fp.write('"""fake impl."""\n')
         if driver_hint is not None:
-            with open(os.path.join(root, PKG_NAME, os.path.basename(DRIVER_MODULE)), 'w',
+            with open(os.path.join(root, PKG_NAME, 'pgstore.py'), 'w',
                       encoding='utf-8', newline='\n') as fp:
                 fp.write(driver_hint)
+        if ds_hint is not None:
+            with open(os.path.join(root, PKG_NAME, 'datasources.py'), 'w',
+                      encoding='utf-8', newline='\n') as fp:
+                fp.write(ds_hint)
     if context_md is not None:
         with open(os.path.join(root, 'CONTEXT.md'), 'w', encoding='utf-8', newline='\n') as fp:
             fp.write(context_md)
@@ -758,12 +788,13 @@ def selftest():
                         context_md='契约、DDL、门禁 —— 真正的实现一行都还没写。见 `pyproject.toml`。\n'),
                ('IMPL-STATUS',))
         # 13b) 同一句话，但**还没有实现模块** -> 此刻它是对的，必须保持安静（防误报）
-        #      ⚠️ 这里必须显式 `driver_hint=None`：默认沙箱为了 DRIVER-EXTRA 会放一个
-        #      `pgstore.py`，而它本身就是「一个实现模块」⇒ 不拿掉就构造不出「零实现模块」
-        #      这个前置条件。拿掉之后 DRIVER-EXTRA 会**理应**开火（那个文件确实不见了），
-        #      本条真正断言的是 IMPL-STATUS **没有**跟着开火。
+        #      ⚠️ 这里必须显式 `driver_hint=None` **与** `ds_hint=None`：默认沙箱为了
+        #      DRIVER-EXTRA 会放 `pgstore.py` 与 `datasources.py`，而它们本身就是
+        #      「实现模块」⇒ 不拿掉就构造不出「零实现模块」这个前置条件。拿掉之后
+        #      DRIVER-EXTRA 会**理应**开火（那两个文件确实不见了），本条真正断言的
+        #      是 IMPL-STATUS **没有**跟着开火。
         expect('CLEAN-impl-status-accurate',
-               _sandbox(tmp, driver_hint=None,
+               _sandbox(tmp, driver_hint=None, ds_hint=None,
                         context_md='契约、DDL、门禁 —— 真正的实现一行都还没写。见 `pyproject.toml`。\n'),
                ('DRIVER-EXTRA',))
         # 13c) 同一个过期陈述写在 pyproject description 里 -> 同样被抓（三处都要管）
@@ -840,6 +871,28 @@ def selftest():
         expect('MUT-driver-extra-wrong-pkg',
                _sandbox(tmp, pyproject=CLEAN_PYPROJECT.replace(
                    'psycopg[binary]>=3.1', 'notpsycopg>=3.1')),
+               ('DRIVER-EXTRA',))
+        #     17e) 同一张清单的第二行（`datasources`，2026-10-02 扩面）：extra 整个消失
+        expect('MUT-datasources-extra-missing',
+               _sandbox(tmp, pyproject=CLEAN_PYPROJECT.replace(
+                   'datasources = ["akshare>=1.18", "baostock>=0.9.4"]\n', '')),
+               ('DRIVER-EXTRA',))
+        #     17f) 那一对里**只漂一条**（声明 1.19 / 提示 1.18）—— 逐条比对的主人
+        expect('MUT-datasources-floor-drift',
+               _sandbox(tmp, pyproject=CLEAN_PYPROJECT.replace(
+                   'akshare>=1.18', 'akshare>=1.19')),
+               ('DRIVER-EXTRA',))
+        #     17g) 空转守卫：`datasources.py` 里一条安装提示都没有 -> 拒绝通过
+        expect('GATE-datasources-hint-gone',
+               _sandbox(tmp, ds_hint='def _default_fetch(self, **kwargs):\n'
+                                     '    raise RuntimeError("boom")\n'),
+               ('DRIVER-EXTRA',))
+        #     17h) 提示里只提到两条中的一条（缺 `baostock`）-> DRIVER-EXTRA。
+        #         本条守着「逐条需求核」那一段：若只核「至少提到一个包」，它会静默变绿。
+        expect('MUT-datasources-partial-hint',
+               _sandbox(tmp, ds_hint="def _default_fetch(self, **kwargs):\n"
+                                     "    # pip install 'akshare>=1.18'\n"
+                                     "    raise NotImplementedError\n"),
                ('DRIVER-EXTRA',))
         # 18) `.github/**/*.md` 也在扫描面内（2026-09-25 扩面）
         #     这一层是**自动加载层**，原先零判据：写过期状态陈述、写死门禁数量都不会被抓。

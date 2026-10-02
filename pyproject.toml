@@ -34,10 +34,11 @@ datasources = ["akshare>=1.18", "baostock>=0.9.4"]
 # `pip install -e ".[postgres]"`（本机 `.venv` 里已有 psycopg 3.3.6 + psycopg-binary 3.3.6）。
 # ⚠️ 这里的版本下限与 pgstore.py 报错文案里教用户装的 `psycopg>=3.1` **必须一致**；
 # 两处只有下限要求相同（这里多写 `[binary]` 是为了开发机不必自带 libpq，给用户的
-# 消息保持最朴素的写法）。**这条一致性由 `skeleton` 门禁的 `DRIVER-EXTRA` 探测器守**
+# 消息保持最朴素的写法）。**这两对一致性由 `skeleton` 门禁的 `DRIVER-EXTRA` 探测器守**
 # （2026-09-25 补：任一处漂开即 FAIL；源码里提取不到提示也 FAIL，不许把「没提到」
-# 当成「一致」）。`[datasources]` 那一对至今仍靠人工 —— 要同样加牙就把它加进
-# `tools/verify_skeleton.py` 的 `DRIVER_EXTRA` 清单。
+# 当成「一致」。2026-10-02 扩面：`[datasources]` 那一对也并进同一张清单 ——
+# 下限写在上面那行，教用户装的命令写在 `quanauto/datasources.py` 的模块 docstring 里，
+# 清单是 `tools/verify_skeleton.py` 的 `DEP_EXTRAS`）。
 postgres = ["psycopg[binary]>=3.1"]
 
 [tool.setuptools]
