@@ -1,0 +1,119 @@
+{
+  "_note": "被引用的路径在克隆里取不到时，在这里登记一行。两件事必须写清：为什么不进仓（why）、归契约或计划的哪一节关（owner）。判定者是 tools/verify_citation_registry.py —— owner 必须命中契约或计划里的某个标题首 token、why 至少 12 个字、path 必须真的不在 git 索引里且真的被 .gitignore 排除（否则那一行被当作出错的登记）。行数必须等于契约里那句读数。登记不解除缺口：一条路径被登记，只说明「它不可达这件事被看见了」，不说明它已经进仓、也不说明引用它那句话现在还成立。",
+  "_kinds": {
+    "probe-script": "本机一次性的探针/触发脚本，跑完即弃；它本身是复现步骤，不是证据",
+    "probe-output": "本机一次性的探针输出（读数/日志），产生它的机器之外取不到",
+    "host-snapshot": "本机跑出来的快照报告，抬头只对产生它的那次运行成立",
+    "build-output": "构建产物的文件名带内容哈希，任何一次重打包都会改名"
+  },
+  "entries": [
+    {
+      "path": ".rounds/_amount-mod-report.txt",
+      "kind": "probe-output",
+      "owner": "B16",
+      "why": "金额取模对照的本机一次性读数，随 .rounds/_* 排除规则留在本机；结论写在 B16，原文件不入仓"
+    },
+    {
+      "path": ".rounds/_b20_verify.py",
+      "kind": "probe-script",
+      "owner": "B20.5",
+      "why": "B20 那批约束的本机核对脚本，跑完即弃；它只是一段一次性核对步骤，不是证据本身"
+    },
+    {
+      "path": ".rounds/_i2b1-probe-report.txt",
+      "kind": "probe-output",
+      "owner": "B16",
+      "why": "腾讯日线通道探针的本机输出，随 .rounds/_* 排除规则留在本机；结论写在 B16"
+    },
+    {
+      "path": ".rounds/_i2b1-smoke-report.txt",
+      "kind": "probe-output",
+      "owner": "B16",
+      "why": "I2b-1 真实取数冒烟的本机日志，随 .rounds/_* 排除规则留在本机；结论写在 B16"
+    },
+    {
+      "path": ".rounds/_i2b1_probe.py",
+      "kind": "probe-script",
+      "owner": "B15",
+      "why": "I2b-1 的通道对齐探针，被后来的实现取代后只留引用供追溯；脚本本身不入仓"
+    },
+    {
+      "path": ".rounds/_i2b1_smoke.py",
+      "kind": "probe-script",
+      "owner": "B16.9",
+      "why": "I2b-1 冒烟的一体化脚本，本机一次性；它记载的是复现步骤，不是跑过的凭证"
+    },
+    {
+      "path": ".rounds/_i2b1_smoke_trigger.py",
+      "kind": "probe-script",
+      "owner": "B16.9",
+      "why": "上面那份冒烟脚本的触发测试，同样本机一次性，随 .rounds/_* 排除规则留在本机"
+    },
+    {
+      "path": ".rounds/_i2b2_filter_trigger.py",
+      "kind": "probe-script",
+      "owner": "B17.2",
+      "why": "过滤器那一步的一次性触发测试，跑完即弃，随 .rounds/_* 排除规则留在本机"
+    },
+    {
+      "path": ".rounds/_i2b2_probe.py",
+      "kind": "probe-script",
+      "owner": "B14",
+      "why": "I2b-2 通道对齐探针，被后续探针取代后只留引用供追溯；脚本本身不入仓"
+    },
+    {
+      "path": ".rounds/_i2b3-roundtrip-report.txt",
+      "kind": "probe-output",
+      "owner": "B18",
+      "why": "真库往返读数的本机输出，抬头只对产生它的那次运行成立，随 .rounds/_* 排除规则留在本机"
+    },
+    {
+      "path": ".rounds/_i2b3-trigger-report.txt",
+      "kind": "probe-output",
+      "owner": "B18",
+      "why": "I2b-3 往返触发测试的本机输出，随 .rounds/_* 排除规则留在本机；结论写在 B18"
+    },
+    {
+      "path": ".rounds/_i2b3-trigger-report2.txt",
+      "kind": "probe-output",
+      "owner": "B18",
+      "why": "同一次往返的第二次运行输出，留引用是为了对照两次差异；原文件本机一次性"
+    },
+    {
+      "path": ".rounds/_i2b3_db_roundtrip.py",
+      "kind": "probe-script",
+      "owner": "B18.5",
+      "why": "真库往返探针，要活的容器 PostgreSQL 才跑得起来；判据依赖环境，所以不入仓"
+    },
+    {
+      "path": ".rounds/_i2b3_roundtrip_trigger.py",
+      "kind": "probe-script",
+      "owner": "B18.5",
+      "why": "上面那份往返探针的触发测试，同样依赖本机容器，随 .rounds/_* 排除规则留在本机"
+    },
+    {
+      "path": ".rounds/_i2c_step0_probe.py",
+      "kind": "probe-script",
+      "owner": "I2",
+      "why": "I2c 第 0 步的一次性探针，结论已写进计划那一节，脚本本身不入仓"
+    },
+    {
+      "path": ".rounds/_tencent-date-probe.txt",
+      "kind": "probe-output",
+      "owner": "B16",
+      "why": "腾讯日线日期字段的探针输出，随 .rounds/_* 排除规则留在本机；结论写在 B16"
+    },
+    {
+      "path": ".rounds/_tencent-precision-report.txt",
+      "kind": "probe-output",
+      "owner": "B16",
+      "why": "腾讯日线价格精度的本机读数，随 .rounds/_* 排除规则留在本机；结论写在 B16"
+    },
+    {
+      "path": ".rounds/_tencent-shape-probe.txt",
+      "kind": "probe-output",
+      "owner": "B16",
+      "why": "腾讯日线响应形状的探针输出，随 .rounds/_* 排除规则留在本机；结论写在 B16"
+    }
+  ]
+}

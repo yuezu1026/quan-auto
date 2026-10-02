@@ -460,6 +460,39 @@ GATES = [
         'selftest': ['tools/verify_data_center_table_wiring.py', '--selftest'],
     },
     {
+        'name': 'evidence-reachability',
+        'tier': 'A',
+        # 上一条管的是「表有没有写入方」，这一条管的是**另一类空地址**：引用。
+        # 本契约 / `docs/迭代计划.md` / `quanauto/*.py` / `tests/*.py` 里大量用反引号引用
+        # 证据路径，其中一批指向**本机才有**的文件 —— 它们被 `.gitignore` 的 `.rounds/_*`
+        # 排除，**克隆里没有它们**。而 `tools/verify_skeleton.py` 的 `check_map_paths()`
+        # 只做 `os.path.exists()`：文件在本机存在即通过。两者相乘就是一条实测出来的缝：
+        # **本机全绿，克隆里那批引用全部指向空地址。**
+        # 排除真值**只有一份**，在 `.gitignore` 里 ⇒ 本门禁调真 git（`check-ignore --stdin -z
+        # --verbose`）而不是自己解析一遍（自己写一份等于把仓库布局抄进 Python：以后加一条
+        # 排除规则，门禁会静默地不认它）。
+        # 判据面是**人手写的文本**（`.md`/`.py`/`.jsx`/`.js`/`.java`/`.yml`/`.html`）：
+        # `.txt`/`.json`/`.sql`/`.css`/`.xml` 是**产物**不是引用别人的一方，`.docx` 机器读不出
+        # 里面的反引号，都不在面里。
+        # 它判四条：① 被引用 + 不在索引 + 被排除 + 登记处没有 ⇒ `EVR-UNREACHABLE`；
+        # ② 登记行本身要过 `EVR-PATH-BAD`/`EVR-OWNER-MISSING`/`EVR-OWNER-BAD`/
+        # `EVR-REASON-SHORT`（owner 是**引用**：标题一改名那条登记就该红）；
+        # ③ 登记行不能作废（已进索引、或已不再被排除）⇒ `EVR-REGISTRY-GHOST`；
+        # ④ 契约里那句读数必须唯一且等于登记处行数 ⇒ `EVR-COUNT-MISMATCH`。
+        # 外加两条**空转守卫**（语料面为空 / 一条引用都没提出来）与一条
+        # `EVR-REGISTRY-UNTRACKED`（登记处自己不在索引里，那它就能骗过本门禁）。
+        # 边界：它**不判「被引用的路径根本不存在」** —— 反例路径是合法的（门禁自测的负样本
+        # 本来就该指向不存在的路径），机器区分不了「反例」与「笔误」，这一格明确不判；
+        # 它**不判内容**（只回答地址在不在，不回答那证据还支不支持引用它的论断）；
+        # 它**不跑任何探针**（不起容器、不连库、不联网）。**它不关闭附录 J 的 J-18**：
+        # 登记只说明「不可达被看见了」，不说明那条路径已经进仓。
+        'what': '被跟踪的正文里每个形状像仓库路径的反引号引用，要么在 git 索引里、要么在'
+                'tools/evidence-reachability.json 里登记（带 owner 与 why），且契约里那句'
+                '「被引用但不进仓的路径共 N 处」与登记处行数一致',
+        'runner': ['tools/verify_citation_registry.py'],
+        'selftest': ['tools/verify_citation_registry.py', '--selftest'],
+    },
+    {
         'name': 'platform-spec-parity',
         'tier': 'A',
         # 平台层读取侧切片（`platform/`，2026-09-29 追加）把 `quanauto/dashboard.py` 的
