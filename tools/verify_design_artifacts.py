@@ -20,9 +20,17 @@
      `.f-trace` 里数字序列的**前缀**（前者写「这帧回哪几条 PRD」，后者把同一条线画得更全）；
      三份产物的**屏集**一致。
   5. F5 / F6 两帧的**内容真的来自上游**，不是手抄：F5 段必须按原序命中 `quanauto/dashboard.py`
-     的指标标签，且那份渲染夹具里的展示串逐字在内；F6 段里必须完整出现 `quanauto/risk.py`
-     的每一条规则 id。
-  6. `docs/high fidelity/dashboard.html` 是**派生文件**：它与 `tools/gen_high_fidelity.py`
+     的指标标签，且那份渲染夹具里的展示串逐字在内；图纸里**七处「规则表面」**
+     （F6 的两张表 / A3 托盘弹出面板 / F1 拦截原因 Top3 / §09 的两张手机列表 /
+     M1 闸门摘要）必须与 `quanauto/risk.py` 的 `RULE_SPECS` + `RULE_DECISION` +
+     `BLACKLIST_RULE_ID` **逐行逐列**相等（行序 / 单位 / 收紧方向 / 默认阈值 / 判定 / 严重度；
+     名单型规则在图纸里是单独一张表，它的判定来自 `RiskViolation` 而不是 `RULE_SPECS`）。
+     ⚠️ 「规则 id 在稿里出现过」**不构成**对拍 —— 那是加厚前的口径，稿子把行序、单位、
+     方向、阈值、判定、严重度**六样里任意几样抄错**它都全绿（实测：把 `0.10` 改成 `0.11`
+     它一句话都不说）。「名字出现过」当覆盖判据是本仓库被咬过多次的那口井。
+  6. 手机屏那两处的 `.ph-lab` **自己报的条数**与它下面那张列表的行数一致（`DA-RULE-COUNT`）——
+     标签是一句**声明**，声明与产物是两件事，它们之间要有一条判据。
+  7. `docs/high fidelity/dashboard.html` 是**派生文件**：它与 `tools/gen_high_fidelity.py`
      现算的字节一致（`DA-FRESH`），不新鲜就报。
 
 它**不**主张、也测不到的事（写在这里是为了别让下一个人把它读大）：
@@ -30,6 +38,13 @@
   * **布局 / 视觉**照旧零覆盖 —— 本门禁一行几何都不查（静态文本里几何量恒为空）。
   * 三份手写图纸**没有生成器**，所以它们**画了什么、画得像不像**无人管；本门禁只查骨架、
     「已交付 / 提案」的标记、跨图纸一致性，以及 F5 / F6 两帧有没有抄错上游。
+  * **不判图纸没画出来的列**：M1 / M2 把「单位 / 方向 / 严重度」丢在竖屏之外（那是排版决定，
+    不是抄错）；F1 的 Top3 与 M1 的闸门摘要只**摘一段**（`subset` 口径：只逐行判对错 +
+    id 不重复，条数与行序不判）。⇒「没判」和「判过了」是两件不同的事，这里写清是前者。
+  * **不判 `—` 与「含义」列**：`—` 是「本格没有真值」的显式占位（名单型规则的阈值就是这样，
+    竖屏那两处也在用它）；`含义` 列在图纸里印的是**缩写**（`单策略回撤熔断阈值`），
+    而上游 `RuleSpec.description` 是带算式的长文本 ⇒ 那一列不是可对拍的值，
+    拿它对拍等于拿「散文抄没抄对」当判据。
   * `platform/` 那几条门禁一条都没碰，**也不因此构成平台层开工**（裁决 Q3 仍有效）。
   * 图纸里的 `proposal` 帧**仍然是提案**。`DA-FRAME-STATUS` 恰恰是在**钉死**这一点，
     不是在夸它们已交付。
@@ -84,10 +99,56 @@ MEDIA_RE = re.compile(r'@media\s*\(', re.M)
 TR_RE = re.compile(r'<tr\b[^>]*>(.*?)</tr>', re.S)
 CELL_RE = re.compile(r'<t[dh]\b[^>]*>(.*?)</t[dh]>', re.S)
 WF_TABLE_RE = re.compile(r'<table class="wf">')
+TABLE_RE = re.compile(r'<table\b[^>]*>(.*?)</table>', re.S)
+PH_LAB_RE = re.compile(r'<div class="ph-lab">(.*?)</div>', re.S)
+PH_ROW_RE = re.compile(r'<div class="ph-row">(.*?)</div>', re.S)
+NM_RE = re.compile(r'<span class="nm">(.*?)</span>', re.S)
+TH_RE = re.compile(r'<span class="th">(.*?)</span>', re.S)
+BADGE_RE = re.compile(r'<span class="badge[^"]*">(.*?)</span>', re.S)
+DECLARED_RE = re.compile(r'(\d+)\s*条')
+
+#: `.ph-row` 里三种格子的抽取器 —— `RULE_SURFACES[...]['cols']` 的值指向这里的键。
+#: 单列成一张表（而不是在解析里写 if/else）是为了让「再加一种格子」只改一处。
+PH_TOKENS = {'nm': NM_RE, 'badge': BADGE_RE, 'th': TH_RE}
 
 STRIP_COMMENT_RE = re.compile(r'<!--.*?-->', re.S)
 STRIP_STYLE_RE = re.compile(r'<style\b.*?</style>', re.S | re.I)
 STRIP_SCRIPT_RE = re.compile(r'<script\b.*?</script>', re.S | re.I)
+
+#: 上游的收紧方向枚举 → 图纸上印的形态。⚠️ 这张表**不是**近似：若上游出现一个表里没有的
+#: 枚举值，判据**拒绝通过**而不是跳过那一格 —— 跳过等于静默放行一个新方向。
+DIRECTION_TEXT = {'DECREASE': '收紧 \u2193'}
+
+#: 图纸里的「规则表面」——**每一处**在稿子里都声称「这里的规则取自仓库真值」。
+#: 判据跟着每一处**真正画出来的列**走（`cols`），不跟着「本可以画的列」走。
+#: `locate` 是**内容**定位键（表头必须同时含这几格 / `.ph-lab` 文本必须含这个串），
+#: 不是行号也不是「第几张表」—— 行号一插内容就漂，而漂了没人报。
+#: `expect`：`all` = `RULE_SPECS` 全部（按行序）· `all+blacklist` = 六条数值型 + 名单型 ·
+#: `blacklist` = 只有名单型那一条 · `subset` = 摘一段（逐行判对错 + id 不重复）。
+#: ⚠️ 往 `cols` 里加一列 = 那一列**从此逐格被对拍**；不加 = 那一列**没人管**（写在这里，
+#: 好让下一个人知道「没判」是选择，不是遗漏）。
+RULE_SURFACES = (
+    {'key': 'f6-num', 'name': 'F6 数值型规则表', 'kind': 'table',
+     'locate': ('规则 id', '默认阈值'),
+     'cols': {'rule_id': '规则 id', 'unit': '单位', 'direction': '方向',
+              'threshold': '默认阈值', 'action': '判定', 'severity': '严重度'},
+     'expect': 'all'},
+    {'key': 'f6-list', 'name': 'F6 名单型规则表', 'kind': 'table',
+     'locate': ('规则 id', '类型'),
+     'cols': {'rule_id': '规则 id', 'action': '判定'}, 'expect': 'blacklist'},
+    {'key': 'a3-panel', 'name': 'A3 托盘弹出面板', 'kind': 'table',
+     'locate': ('规则', '判定'),
+     'cols': {'rule_id': '规则', 'action': '判定'}, 'expect': 'all+blacklist'},
+    {'key': 'f1-top3', 'name': 'F1 拦截原因 Top3', 'kind': 'table',
+     'locate': ('命中规则', '裁决'),
+     'cols': {'rule_id': '命中规则', 'action': '裁决'}, 'expect': 'subset'},
+    {'key': 'm2-num', 'name': 'M2 手机竖屏·数值型', 'kind': 'phlist', 'locate': '数值型规则',
+     'cols': {'rule_id': 'nm', 'action': 'badge', 'threshold': 'th'}, 'expect': 'all'},
+    {'key': 'm2-list', 'name': 'M2 手机竖屏·名单型', 'kind': 'phlist', 'locate': '名单型规则',
+     'cols': {'rule_id': 'nm', 'action': 'badge'}, 'expect': 'blacklist'},
+    {'key': 'm1-summary', 'name': 'M1 手机竖屏·闸门摘要', 'kind': 'phlist', 'locate': '闸门摘要',
+     'cols': {'rule_id': 'nm', 'action': 'badge', 'threshold': 'th'}, 'expect': 'subset'},
+)
 
 
 class InputMissing(Exception):
@@ -152,6 +213,82 @@ def strip_body(text):
     s = STRIP_COMMENT_RE.sub('', text)
     s = STRIP_STYLE_RE.sub('', s)
     return STRIP_SCRIPT_RE.sub('', s)
+
+
+def elem_span(text, start, tag):
+    """从某个 `<tag` 的起点取回**配平的整个元素**（按同名标签计数）。
+
+    `span_at` 是给 `<span class="f-trace">` 用的，里面藏着内层 span；`.ph-list` 是同一个
+    问题的另一副面孔（里面藏着 `.ph-row`）。非贪婪 `(.*?)</div>` 会在第一个内层 `</div>`
+    上截断，于是「这张列表有几行」永远是 1 行 —— 而那正是判据要读到的东西。
+    """
+    open_re = re.compile(r'<%s\b[^>]*>' % tag)
+    close_re = re.compile(r'</%s>' % tag)
+    depth = 0
+    i = start
+    while i < len(text):
+        o = open_re.search(text, i)
+        c = close_re.search(text, i)
+        if c is None:
+            return text[start:]
+        if o is not None and o.start() < c.start():
+            depth += 1
+            i = o.end()
+        else:
+            depth -= 1
+            i = c.end()
+            if depth == 0:
+                return text[start:i]
+    return text[start:]
+
+
+def rule_tables(text):
+    """把每张表解析成 `{'start', 'header': [...], 'rows': [[...]]}`。
+
+    表头与每格都**剥掉标签取文本**：图纸里这些格子常常包着 `<span class="badge">` /
+    `<span class="th">`，拿原始 HTML 去比会把「判定」列全判错（而且错得很有说服力）。
+    """
+    out = []
+    for m in TABLE_RE.finditer(text):
+        rows = TR_RE.findall(m.group(1))
+        if len(rows) < 2:
+            continue
+        out.append({'start': m.start(),
+                    'header': [TAG_STRIP_RE.sub('', c).strip() for c in CELL_RE.findall(rows[0])],
+                    'rows': [[TAG_STRIP_RE.sub('', c).strip() for c in CELL_RE.findall(r)]
+                             for r in rows[1:]]})
+    return out
+
+
+def ph_list_after(text, needle):
+    """紧跟某个 `.ph-lab` 标签之后的那个 `.ph-list`（手机屏的行集合）。
+
+    返回 `(标签文本, 列表块, 未剥标签的列表块, 块起点)`；找不到返回 `None` —— 由调用方报
+    `DA-EXTRACT`（**不跳过**：一处表面定位不到就是那一处没有判据，「没有」与「判过了」
+    不能长得一样）。第三个元素是**带标签**的块：判据取的是人眼看到的文本，但自测要往里面
+    做变异，剥过标签的原字符串没法写回去。
+    """
+    for m in PH_LAB_RE.finditer(text):
+        label = TAG_STRIP_RE.sub('', m.group(1)).strip()
+        if needle not in label:
+            continue
+        j = text.find('<div class="ph-list">', m.end())
+        if j < 0:
+            return None
+        raw = elem_span(text, j, 'div')
+        return label, raw, j
+    return None
+
+
+def declared_count(label):
+    """`.ph-lab` 自称「下面那张列表有几行」。
+
+    ⚠️ 取**最后一个** `N 条`，不取第一个：M1 的标签是「闸门摘要 · 7 条里的 4 条」——
+    第一个数（7）是**规则总数**，最后一个（4）才是「这张列表露了几条」。取错一个，
+    一条**正确的**标签会被判红（那比漏报更糟：它教人放宽判据）。
+    """
+    ms = DECLARED_RE.findall(label or '')
+    return int(ms[-1]) if ms else None
 
 
 def frame_spans(text):
@@ -285,6 +422,104 @@ def rule_ids(src):
     return _call_first_args(_literal_assign(src, 'RULE_SPECS'), 'RuleSpec')
 
 
+def _enum_members(src, name):
+    """某个枚举类的成员名集合。
+
+    用来把「裁决动作」钉在**真的枚举成员**上。不查这个的话，判据比的就只是「字符串相等」
+    —— `REJECT` 到底是不是本仓库的一个合法裁决动作，它根本不知道。
+    """
+    out = set()
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.ClassDef) and node.name == name:
+            for st in node.body:
+                if isinstance(st, ast.Assign):
+                    out.update(t.id for t in st.targets
+                               if isinstance(t, ast.Name) and t.id.isupper())
+    return out
+
+
+def _const_or_attr(node):
+    """`0.10` / `'RATIO'` 这类常量，或 `RuleUnitEnum.RATIO` 这类**枚举成员访问**。
+
+    ⚠️ 上游的 `unit` / `direction` / 裁决动作都是 `Enum` 成员（`ast.Attribute`）而不是字面量 ——
+    只认 `ast.Constant` 的话 `RULE_SPECS` 一条都抽不到（实测 `specs=0`），而「抽到 0 条」在报告里
+    长成 `specs=0` 这一串数字，**不**是一眼可见的错误（下面的空转守卫才是接住它的那条网）。
+    取 `.attr`（成员名 `RATIO` / `DECREASE` / `REDUCE`）而不是反解源码：
+    前者与图纸上印的字对齐，后者会带上 `RuleUnitEnum.` 前缀。
+    """
+    if isinstance(node, ast.Constant):
+        return node.value
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
+
+def rule_model(src):
+    """`quanauto/risk.py` 的规则真值：id / 单位 / 收紧方向 / 默认阈值 + 判定 + 严重度 + 名单型。
+
+    ⚠️ 上游事实有**两条来路**：`RULE_SPECS`（数值口径）与 `RULE_DECISION` +
+    `BLACKLIST_RULE_ID`（裁决口径）。图纸的「判定」「严重度」两列抄的是后者 —— 加厚前
+    这一路上游**连读都没读**，于是「抄错判定」与「抄对判定」在报告里长得一模一样。
+
+    阈值按**原样常量**交给判据（上游就是 `0.10` / `3`，图纸印的也是这两个形态），
+    比较时按数值比：字符串比会把 `3` 与 `3.0` 判成不一致，而它俩说的是同一件事。
+
+    名单型的裁决动作取自真正的构造点
+    （`RiskViolation(rule_id=BLACKLIST_RULE_ID, …, action=RiskActionEnum.REJECT, …)`），
+    不是抄自 `RULE_DECISION`（那张表里没有它）。
+
+    返回 `{'specs': [{'rule_id','unit','direction','threshold'}, …],
+          'decisions': {rule_id: (action, severity)}, 'blacklist': (id, action) or None}`。
+    """
+    specs = []
+    node = _literal_assign(src, 'RULE_SPECS')
+    if isinstance(node, (ast.Tuple, ast.List)):
+        for elt in node.elts:
+            if not (isinstance(elt, ast.Call) and isinstance(elt.func, ast.Name)
+                    and elt.func.id == 'RuleSpec' and len(elt.args) >= 5):
+                continue
+            a = elt.args
+            vals = {name: _const_or_attr(a[k])
+                    for k, name in ((0, 'rule_id'), (2, 'unit'),
+                                    (3, 'direction'), (4, 'threshold'))}
+            if any(v is None for v in vals.values()):
+                continue
+            specs.append(vals)
+
+    decisions = {}
+    dn = _literal_assign(src, 'RULE_DECISION')
+    if isinstance(dn, ast.Dict):
+        for k, v in zip(dn.keys, dn.values):
+            # ⚠️ 键必须是**字符串常量**：本文件里还有一个 `{RiskActionEnum.PASS: 0, …}` 形状的
+            # 顺序字典（它的键是 Attribute）—— 不卡这一条，两张表会混进同一本账。
+            if not (isinstance(k, ast.Constant) and isinstance(k.value, str)
+                    and isinstance(v, ast.Tuple) and len(v.elts) == 2):
+                continue
+            pair = tuple(_const_or_attr(e) for e in v.elts)
+            if None not in pair:
+                decisions[k.value] = pair
+
+    black = None
+    bn = _literal_assign(src, 'BLACKLIST_RULE_ID')
+    if isinstance(bn, ast.Constant):
+        actions = _enum_members(src, 'RiskActionEnum')
+        found = []
+        for call in ast.walk(ast.parse(src)):
+            if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                    and call.func.id == 'RiskViolation'):
+                continue
+            kw = {w.arg: w.value for w in call.keywords}
+            rid, act = kw.get('rule_id'), kw.get('action')
+            if (isinstance(rid, ast.Name) and rid.id == 'BLACKLIST_RULE_ID'
+                    and isinstance(act, ast.Attribute) and act.attr in actions):
+                found.append(act.attr)
+        # 一个名单型规则该只有**一个**裁决动作；多了就是上游自己没说清，这时宁可判「提取不到」
+        # （判据会报 DA-EXTRACT），也不耍小聪明挑一个（挑错了没人看得出来）。
+        uniq = sorted(set(found))
+        black = (bn.value, uniq[0] if len(uniq) == 1 else None)
+    return {'specs': specs, 'decisions': decisions, 'blacklist': black}
+
+
 def load_generator(root):
     """加载 `tools/gen_high_fidelity.py`。
 
@@ -340,7 +575,9 @@ def collect(root, reg):
     with open(repo_path(root, up['metrics']), 'r', encoding='utf-8') as fh:
         art['metric_labels'] = metric_labels(fh.read())
     with open(repo_path(root, up['rules']), 'r', encoding='utf-8') as fh:
-        art['rule_ids'] = rule_ids(fh.read())
+        rules_src = fh.read()
+    art['rule_ids'] = rule_ids(rules_src)
+    art['rule_model'] = rule_model(rules_src)
     with open(repo_path(root, up['fixture']), 'r', encoding='utf-8') as fh:
         fx = json.load(fh)
     art['fixture_texts'] = [m.get('text') for m in fx.get('metrics', []) if isinstance(m, dict)]
@@ -364,6 +601,56 @@ def collect(root, reg):
 
 
 # ---------------------------------------------------------------- 现测（纯函数）
+
+def rule_surfaces(text):
+    """把登记的每一处「规则表面」解析成 `{'label','rows','raw','span','why'}`。
+
+    ⚠️ 定位靠**内容签名**（表头必须同时含这几格 / `.ph-lab` 文本必须含这个串），不靠行号，
+    也不靠「第几张表」：行号一插内容就漂，而漂了没人报（本仓库被咬过多次）。
+    ⚠️ 定位不到时**返回空行**而不是 raise：判据那边把它记成 `DA-EXTRACT` ——
+    「提取为空」必须判 FAIL，否则后面所有探测项都在空转却打印 PASS（本仓库的老账）。
+    """
+    out = {}
+    tables = rule_tables(text)
+    for surf in RULE_SURFACES:
+        rec = {'label': None, 'rows': [], 'raw': '', 'span': None, 'why': ''}
+        if surf['kind'] == 'table':
+            for tb in tables:
+                if all(h in tb['header'] for h in surf['locate']):
+                    idx = {k: tb['header'].index(v) for k, v in surf['cols'].items()}
+                    rows = []
+                    for r in tb['rows']:
+                        if max(idx.values()) >= len(r):
+                            continue
+                        rows.append({k: r[i] for k, i in idx.items()})
+                    s = tb['start']
+                    raw = elem_span(text, s, 'table')
+                    rec.update({'rows': rows, 'raw': raw, 'span': (s, s + len(raw))})
+                    break
+            if not rec['rows']:
+                rec['why'] = 'no <table> in design.html has all of the header(s) %s' % (surf['locate'],)
+        else:
+            got = ph_list_after(text, surf['locate'])
+            if got:
+                label, raw, j = got
+                rows = []
+                for rm in PH_ROW_RE.finditer(raw):
+                    # ⚠️ 行字典必须按**逻辑列名**（rule_id / action / threshold）建键：
+                    # `cols` 的值只是**在图纸里长什么样**（nm / badge / th），判据那边是按逻辑名
+                    # 取的。按 token 建键的话，`m2-list` 的 badge 永远读到空串 —— 而且报出来的是
+                    # 「图纸写的是 ''」，看起来像图纸的错，不是判据的错。
+                    cells = {}
+                    for col, token in surf['cols'].items():
+                        hit = PH_TOKENS[token].search(rm.group(1))
+                        cells[col] = TAG_STRIP_RE.sub('', hit.group(1)).strip() if hit else ''
+                    rows.append(cells)
+                rec.update({'label': label, 'rows': rows, 'raw': raw,
+                            'span': (j, j + len(raw))})
+            if not rec['rows']:
+                rec['why'] = 'no .ph-list right after a .ph-lab containing %r' % (surf['locate'],)
+        out[surf['name']] = rec
+    return out
+
 
 def measure(art, reg):
     A = reg['artifacts']
@@ -447,6 +734,9 @@ def measure(art, reg):
         p['high_trace'][fid] = NUM_RE.findall(TAG_STRIP_RE.sub('', span_at(fr['text'], m.start())))
     p['f5_span'] = by_id['f5']['span'] if 'f5' in by_id else None
     p['f6_span'] = by_id['f6']['span'] if 'f6' in by_id else None
+    p['rule_blocks'] = rule_surfaces(t)
+    p['rule_row_count'] = sum(len(v['rows']) for v in p['rule_blocks'].values())
+    p['rule_surface_count'] = len(p['rule_blocks'])
 
     # ---- 低保真 index.html
     t = art['text'][lo]
@@ -480,6 +770,12 @@ def measure(art, reg):
     p['metric_label_count'] = len(art['metric_labels'])
     p['rule_ids'] = art['rule_ids']
     p['rule_id_count'] = len(art['rule_ids'])
+    model = art['rule_model']
+    p['rule_specs'] = model['specs']
+    p['rule_spec_count'] = len(model['specs'])
+    p['rule_decisions'] = model['decisions']
+    p['rule_decision_count'] = len(model['decisions'])
+    p['blacklist_rule'] = model['blacklist']
     p['fixture_texts'] = art['fixture_texts']
     p['fixture_text_count'] = len(art['fixture_texts'])
     p['styles_bytes'] = len(art['styles_raw'])
@@ -488,6 +784,23 @@ def measure(art, reg):
 
 
 # ---------------------------------------------------------------- 判据层
+
+def _cell_ok(col, upstream, shown):
+    """图纸某一格的显示文本是否等于上游真值。
+
+    阈值按**数值**比（上游是 `0.10` 这种 float，图纸可能印 `0.10` 也可能印 `3`，
+    而 `3` 与 `3.0` 说的是同一件事）；其余按**字符串相等**比 —— 相等而不是包含：
+    包含判据会被「值后面多抄一段」蒙混过关，而相等不会。
+    """
+    if col == 'threshold':
+        try:
+            return abs(float(shown) - float(upstream)) < 1e-9
+        except (TypeError, ValueError):
+            return False
+    if col == 'direction':
+        return shown == DIRECTION_TEXT.get(upstream)
+    return shown == upstream
+
 
 def judge(art, reg):
     """纯函数：只吃 art（已现测）与 reg，吐出 [(code, msg)]。"""
@@ -502,7 +815,8 @@ def judge(art, reg):
     for name in ('high_frames', 'high_symbols', 'high_uses', 'high_anchor_count',
                  'high_anchor_links', 'high_td', 'high_bracket_places', 'high_css_sections',
                  'low_wf_frame_count', 'low_regions', 'low_trace_count', 'proto_probes',
-                 'metric_label_count', 'rule_id_count', 'fixture_text_count', 'styles_bytes'):
+                 'metric_label_count', 'rule_id_count', 'fixture_text_count', 'styles_bytes',
+                 'rule_spec_count', 'rule_decision_count', 'rule_row_count'):
         if not p.get(name):
             add('DA-EXTRACT', 'extraction `%s` came back empty -- every later check would '
                               'run on nothing; refusing to pass' % name)
@@ -591,7 +905,7 @@ def judge(art, reg):
         add('DA-SCREEN-SET', '%s screens %s != registry %s'
             % (A['proto'], sorted(set(p['proto_screens'])), sorted(reg['proto']['screens'])))
 
-    # ---- DA-UPSTREAM-F5 / F6：这两帧的内容必须是**真从上游来的**，不是手抄
+    # ---- DA-UPSTREAM-F5：F5 段的两半（指标标签按原序 + 夹具展示串逐字在内）
     labels = p['metric_labels']
     fx = [t for t in p['fixture_texts'] if t]
     f5 = art['text'][A['high']][p['f5_span'][0]:p['f5_span'][1]] if p['f5_span'] else ''
@@ -613,16 +927,92 @@ def judge(art, reg):
                               'first missing index %d'
             % (len(gone), len(fx), fx.index(gone[0])))
 
-    f6 = ''
-    if p['f6_span']:
-        f6 = art['text'][A['high']][p['f6_span'][0]:p['f6_span'][1]]
-    else:
-        add('DA-EXTRACT', 'design.html has no frame with id="f6"')
-    absent = [rid for rid in p['rule_ids'] if rid not in f6]
-    if absent:
-        add('DA-UPSTREAM-F6', 'frame f6 does not carry %d of %d risk rule id(s) from '
-                              'quanauto/risk.py; first absent index %d'
-            % (len(absent), len(p['rule_ids']), p['rule_ids'].index(absent[0])))
+    # ---- DA-UPSTREAM-RULES / DA-RULE-COUNT：图纸里**每一处规则表面**都必须是
+    #      `quanauto/risk.py` 的逐行逐列投影，而不是手抄。
+    #      ⚠️ 加厚前这里只要求「6 条规则 id 在 F6 段里出现过」——那是本仓库铁律 ⑥ 点名禁止的
+    #      「名字出现过当覆盖判据」：行序、单位、方向、阈值、判定、严重度**六样都可以是错的**，
+    #      而它一声不响（实测：`0.10` 改成 `0.11` 全绿）。
+    exp_rows = []
+    for sp in p['rule_specs']:
+        dec = p['rule_decisions'].get(sp['rule_id']) or (None, None)
+        exp_rows.append({'rule_id': sp['rule_id'], 'unit': sp['unit'],
+                         'direction': sp['direction'], 'threshold': sp['threshold'],
+                         'action': dec[0], 'severity': dec[1]})
+    by_id = {r['rule_id']: r for r in exp_rows}
+    bl = p['blacklist_rule']
+    bl_row = {'rule_id': bl[0], 'action': bl[1]} if bl and bl[1] else None
+    for surf in RULE_SURFACES:
+        key, name = surf['key'], surf['name']
+        rec = p['rule_blocks'].get(name) or {}
+        rows = rec.get('rows') or []
+        if not rows:
+            add('DA-EXTRACT', 'rule surface `%s` could not be located: %s'
+                % (key, rec.get('why') or 'no rows parsed'))
+            continue
+        if key.startswith('f6-'):
+            # 这两处表面声称的是「F6 里的表」⇒ 必须真的在那一帧里。只按表头签名找的话，
+            # 把 `id="f6"` 抹掉、或把表搬到另一帧去，它依旧找得到 ⇒ 那一帧没了而判据照样绿。
+            fspan, span = p['f6_span'], rec.get('span')
+            if (fspan is None or span is None or span[0] < fspan[0] or span[1] > fspan[1]):
+                add('DA-EXTRACT', 'surface `%s` is not inside the frame with id="f6" -- the frame '
+                                  'that claim is about is gone, or the table moved out of it'
+                    % key)
+        if surf['expect'] == 'subset':
+            # 摘一段：上游没说「一定要全列」⇒ **条数与行序不判**，只判「每一行都对」+ id 不重复。
+            # 这是写下来的口径（`cols` / `expect` 就在登记表旁边），不是漏判。
+            pairs = []
+            seen = set()
+            for i, row in enumerate(rows):
+                rid = row.get('rule_id') or ''
+                if rid in seen:
+                    add('DA-UPSTREAM-RULES', 'surface `%s` row %d repeats rule id %r'
+                        % (key, i + 1, rid))
+                seen.add(rid)
+                exp = by_id.get(rid) or (bl_row if bl_row and bl_row['rule_id'] == rid else None)
+                if exp is None:
+                    add('DA-UPSTREAM-RULES', 'surface `%s` row %d draws rule id %r, which is '
+                                             'not in quanauto/risk.py' % (key, i + 1, rid))
+                    continue
+                pairs.append((i + 1, row, exp))
+        else:
+            exp_list = list(exp_rows)
+            if surf['expect'] == 'all+blacklist':
+                exp_list = exp_list + ([bl_row] if bl_row else [])
+            elif surf['expect'] == 'blacklist':
+                exp_list = [bl_row] if bl_row else []
+            if not exp_list:
+                add('DA-EXTRACT', 'surface `%s`: upstream yielded no rule row to compare -- the '
+                                  'row-by-row test would be vacuous' % key)
+                continue
+            if len(rows) != len(exp_list):
+                add('DA-UPSTREAM-RULES', 'surface `%s` draws %d data row(s); quanauto/risk.py '
+                                         'implies %d' % (key, len(rows), len(exp_list)))
+            pairs = [(i + 1, r, exp_list[i]) for i, r in enumerate(rows) if i < len(exp_list)]
+        for num, got, exp in pairs:
+            for col in sorted(surf['cols']):
+                up = exp.get(col)
+                if up is None:
+                    # 上游这一列没有真值（名单型规则没有阈值 / 上游没给裁决）⇒ 本列**不判**。
+                    # 这是「上游缺」，不是「提取失败」；提取失败会让 rows 为空并报 DA-EXTRACT。
+                    continue
+                if col == 'direction' and up not in DIRECTION_TEXT:
+                    add('DA-UPSTREAM-RULES', 'surface `%s` row %d: upstream tightening_direction '
+                                             '%r has no form on this drawing -- refusing to '
+                                             'pass rather than silently skipping the column'
+                        % (key, num, up))
+                    continue
+                shown = got.get(col, '')
+                if not _cell_ok(col, up, shown):
+                    add('DA-UPSTREAM-RULES', 'surface `%s` row %d, column %s: the drawing says '
+                                             '%r but quanauto/risk.py says %r'
+                        % (key, num, surf['cols'][col], afold(shown), up))
+        # `.ph-lab` 自称的条数与它下面那张列表的行数，是一对**声明 / 产物**：
+        # 声明写错与列表画错是两回事，但它们之间得有一条判据（不然那句声明没人管）。
+        if surf['kind'] == 'phlist':
+            declared = declared_count(rec.get('label'))
+            if declared is not None and declared != len(rows):
+                add('DA-RULE-COUNT', 'surface `%s`: the .ph-lab declares %d rule row(s) but the '
+                                     'list under it holds %d' % (key, declared, len(rows)))
 
     # ---- DA-COUNT：登记表 == 现测值，且这个值在指名的 README 里逐字写着
     for c in reg.get('claims', []):
@@ -684,14 +1074,19 @@ def judge(art, reg):
 
 # ---------------------------------------------------------------- 自测
 
-def _synth(base, reg, texts, board_raw=None, docs=None):
+def _synth(base, reg, texts, board_raw=None, docs=None, upstream=None):
     art = {'root': base['root'], 'text': texts, 'probes': {}, 'stats': {},
            'notes': [], 'board_error': None, 'board_expected': base['board_expected'],
            'board_checks': base.get('board_checks'),
            'metric_labels': base['metric_labels'], 'rule_ids': base['rule_ids'],
+           'rule_model': dict(base['rule_model']),
            'fixture_texts': base['fixture_texts'],
            'styles_raw': base['styles_raw'], 'styles_text': base['styles_text'],
            'docs': dict(base.get('docs') or {})}
+    # 上游那一侧也要能造样本：AST 读写回一个空列表（模拟「提取不到规则」）必须是 DA-EXTRACT，
+    # 而不是「两边都没内容 ⇒ 视作一致」。
+    if upstream:
+        art['rule_model'].update(upstream)
     if docs:
         art['docs'].update(docs)
     # 磁盘是 CRLF（`.gitattributes` 是 `* -text`），而 text 是 LF 归一化过的 ⇒ 直接 encode 会每个换行
@@ -738,15 +1133,25 @@ def selftest():
     ok = True
     seen = set()
 
-    def scenario(tag, texts, want, board_raw=None, docs=None):
+    def scenario(tag, texts, want, board_raw=None, docs=None, upstream=None,
+                 want_msg=None):
+        """`want_msg` 是可选的**靶子断言**：光有检查码不够 —— 同一个码可能由**别的**表面报出来
+        （那样这次变异等于没打到靶子，而报告长得一模一样）。
+        """
         nonlocal ok
-        art = _synth(base, reg, texts, board_raw, docs)
-        codes = [c for c, _ in judge(art, reg)]
+        art = _synth(base, reg, texts, board_raw, docs, upstream)
+        found = judge(art, reg)
+        codes = [c for c, _ in found]
         seen.update(codes)
         if want is None:
             good = not codes
         else:
             good = want in codes
+        if good and want_msg is not None:
+            good = any(want_msg in msg for _, msg in found)
+            if not good:
+                print('    MISS %s: no finding mentions %r -- the right code fired for the '
+                      'wrong target' % (tag, afold(want_msg)))
         print('  [%-30s] issues=%d codes=%s %s'
               % (tag, len(codes), sorted(set(codes)) or '[]', 'OK' if good else 'MISSED'))
         if not good:
@@ -865,27 +1270,145 @@ def selftest():
                   % base['metric_labels'].index(cand[0]))
             scenario('NEG-upstream-f5-label', t, 'DA-UPSTREAM-F5')
 
-    # 10) DA-UPSTREAM-F6：把一条规则 id 的**所有**出现都改坏（只改一处、或者只加后缀，都会静默空转）
-    t = dict(real)
-    if not base['probes']['f6_span']:
-        print('    MISS DA-UPSTREAM-F6: no frame with id="f6"')
+    # 10) DA-UPSTREAM-RULES：**每个登记的规则表面各一条负样本**。逐个手写会漏掉将来新加的
+    #     表面（那时「新表面没人测」与「新表面没判据」长得一模一样），所以按 RULE_SURFACES 自动造。
+    #     变异把该表面**第一行的规则 id**换成哨兵：判据比的是**相等**（不是前缀搜索），整串换掉就行；
+    #     命中数不是 1 就判 HARNESS 失败（打不到靶子的变异不算证据）。
+    for surf in RULE_SURFACES:
+        rec = base['probes']['rule_blocks'].get(surf['name']) or {}
+        rows, span = rec.get('rows') or [], rec.get('span')
+        shown = rows[0].get('rule_id') if rows else ''
+        if not span or not shown:
+            print('    MISS DA-UPSTREAM-RULES(%s): the surface was not located in the real '
+                  'artifacts' % surf['key'])
+            ok = False
+            continue
+        s, e = span
+        blk = real[HI][s:e]
+        hit = blk.count(shown)
+        if hit != 1:
+            print('    MISS DA-UPSTREAM-RULES(%s): rule id %r occurs %d time(s) in its own '
+                  'block' % (surf['key'], afold(shown), hit))
+            ok = False
+            continue
+        t = dict(real)
+        t[HI] = real[HI][:s] + blk.replace(shown, shown + 'ZZ') + real[HI][e:]
+        if t[HI] == real[HI]:
+            print('    MISS DA-UPSTREAM-RULES(%s): mutation was a no-op' % surf['key'])
+            ok = False
+            continue
+        print('    applied: DA-UPSTREAM-RULES(%s) rule id %r -> sentinel'
+              % (surf['key'], afold(shown)))
+        # 靶子断言：报出的那条必须**点名这一处表面** —— 同一个码从别的表面冒出来也算没打到。
+        scenario('NEG-rules-id-%s' % surf['key'], t, 'DA-UPSTREAM-RULES',
+                 want_msg='surface `%s`' % surf['key'])
+
+    f6rec = base['probes']['rule_blocks'].get('F6 数值型规则表') or {}
+    f6blk = real[HI][f6rec['span'][0]:f6rec['span'][1]] if f6rec.get('span') else ''
+
+    # 10b) 行序：把 F6 数值表的**前两行对调**。旧口径只要求「id 出现过」⇒ 对调之后它照样全绿；
+    #      这一条是「逐行逐列」相对「名字出现过」的最直接增量。
+    a, b = [r['rule_id'] for r in (f6rec.get('rows') or [])[:2]] or ['', '']
+    if not f6blk or a == b or f6blk.count(a) != 1 or f6blk.count(b) != 1:
+        print('    MISS DA-UPSTREAM-RULES(order): cannot swap the first two RULE_SPECS rows')
         ok = False
     else:
-        s, e = base['probes']['f6_span']
-        f6blk = real[HI][s:e]
-        rid = base['rule_ids'][0]
-        n = f6blk.count(rid)
-        if n < 1:
-            print('    MISS DA-UPSTREAM-F6: rule id %r never appears in frame f6' % rid)
+        t = dict(real)
+        s, e = f6rec['span']
+        swapped = f6blk.replace(a, '\x00').replace(b, a).replace('\x00', b)
+        t[HI] = real[HI][:s] + swapped + real[HI][e:]
+        if swapped == f6blk:
+            print('    MISS DA-UPSTREAM-RULES(order): swap was a no-op')
             ok = False
         else:
-            t[HI] = real[HI][:s] + f6blk.replace(rid, rid[:-1] + 'Q') + real[HI][e:]
-            if t[HI] == real[HI]:
-                print('    MISS DA-UPSTREAM-F6: mangling the rule id was a no-op')
-                ok = False
-            else:
-                print('    applied: DA-UPSTREAM-F6 (rule id 0 x%d mangled)' % n)
-                scenario('NEG-upstream-f6-rule', t, 'DA-UPSTREAM-F6')
+            print('    applied: DA-UPSTREAM-RULES(order) swapped %s <-> %s' % (a, b))
+            scenario('NEG-rules-order-swap', t, 'DA-UPSTREAM-RULES')
+
+    # 10c) 默认阈值：F6 数值表里 max_sector_pct 那一行的 0.30 -> 0.31。
+    #      这一格旧口径**根本不看**（它只看 id）⇒ 这是新牙的直接证据。
+    if f6blk.count('0.30') != 1:
+        print('    MISS DA-UPSTREAM-RULES(threshold): 0.30 occurs %d time(s) in the F6 numeric '
+              'table' % f6blk.count('0.30'))
+        ok = False
+    else:
+        t = dict(real)
+        s, e = f6rec['span']
+        t[HI] = real[HI][:s] + f6blk.replace('0.30', '0.31') + real[HI][e:]
+        print('    applied: DA-UPSTREAM-RULES(threshold) 0.30 -> 0.31')
+        scenario('NEG-rules-threshold', t, 'DA-UPSTREAM-RULES', want_msg='column 默认阈值')
+
+    # 10d) 名单型规则：F6 那张单独的表里 REJECT -> HALT。名单型的判定**不在** `RULE_SPECS`
+    #      里（它来自 RiskViolation(rule_id=BLACKLIST_RULE_ID, action=RiskActionEnum.REJECT)）
+    #      ⇒ 这条证明那一路真值也被钉住了。
+    lrec = base['probes']['rule_blocks'].get('F6 名单型规则表') or {}
+    lblk = real[HI][lrec['span'][0]:lrec['span'][1]] if lrec.get('span') else ''
+    if lblk.count('REJECT') != 1:
+        print('    MISS DA-UPSTREAM-RULES(blacklist): REJECT occurs %d time(s) in the F6 '
+              'list-type table' % lblk.count('REJECT'))
+        ok = False
+    else:
+        t = dict(real)
+        s, e = lrec['span']
+        t[HI] = real[HI][:s] + lblk.replace('REJECT', 'HALT') + real[HI][e:]
+        print('    applied: DA-UPSTREAM-RULES(blacklist) REJECT -> HALT')
+        scenario('NEG-rules-blacklist', t, 'DA-UPSTREAM-RULES')
+
+    # 10e) 空转：F6 数值表的表头被改一个字 ⇒ 那一处表面**定位不到**。定位不到必须报 DA-EXTRACT
+    #      （提取为空 = 后面的判据全在空转），**不是**「跳过这一处」。
+    t = dict(real)
+    t[HI] = _mut(t[HI], '<th class="n">默认阈值</th>', '<th class="n">阈值</th>', 1,
+                 'DA-EXTRACT-table-locate')
+    if t[HI] is None:
+        ok = False
+    else:
+        scenario('NEG-rules-table-gone', t, 'DA-EXTRACT')
+
+    # 10f) 空转：§09 那张数值表的 `.ph-lab` 标签被改掉 ⇒ 同一处表面定位不到
+    #      （这一条同时证明标签是**定位键**，不是装饰）。
+    #      ⚠️ 变异必须把定位键**改坏**，不能只是加尾巴：第一版写的是「数值型规则」→
+    #      「数值型规则ZZ」，而后者**仍然包含**前者 ⇒ 表面照样定位得到、报出的是别的码，
+    #      看上去就像这条守卫根本不存在（前缀陷阱，本仓库已经被咬过一次）。
+    t = dict(real)
+    t[HI] = _mut(t[HI], '数值型规则 · 6 条', '数值规则 · 6 条', 1, 'DA-EXTRACT-phlab-locate')
+    if t[HI] is None:
+        ok = False
+    else:
+        scenario('NEG-rules-phlab-gone', t, 'DA-EXTRACT')
+
+    # 10g) 空转：**上游**读成空（AST 抽不到任何 RuleSpec）⇒ 也必须是 DA-EXTRACT，
+    #      而不是「两边都没内容 ⇒ 视作一致」（那是空转里最危险的形态：报告比真通过还干净）。
+    scenario('NEG-rules-upstream-empty', dict(real), 'DA-EXTRACT', upstream={'specs': []})
+
+    # 10h) DA-RULE-COUNT：M1 的 `.ph-lab` 自称「7 条里的 4 条」⇒ 改成 5 条（声明与产物就不是一回事了）
+    t = dict(real)
+    t[HI] = _mut(t[HI], '7 条里的 4 条', '7 条里的 5 条', 1, 'DA-RULE-COUNT')
+    if t[HI] is None:
+        ok = False
+    else:
+        scenario('NEG-rules-count-declared', t, 'DA-RULE-COUNT',
+                 want_msg='surface `m1-summary`')
+
+    # 10i) 方向：F6 数值表**第一行**的方向格（「收紧 ↓」）改成「放宽 ↑」。
+    #      这一格要经过 DIRECTION_TEXT 那张「上游枚举 → 图纸形态」映射表 ——
+    #      上面的 0.30->0.31 走的是数值比较那一路，**测不到这条分支**。
+    #      按绝对偏移只换第一处（同一个「收紧 ↓」在表里出现 6 次，按文本替换会一口气改 6 行，
+    #      那样报出的就不是「第一行那一格」了）。
+    ARROW = '\u6536\u7d27 \u2193'
+    i0 = real[HI].find(ARROW, f6rec['span'][0]) if f6rec.get('span') else -1
+    if i0 < 0 or i0 + len(ARROW) > (f6rec['span'][1] if f6rec.get('span') else 0):
+        print('    MISS DA-UPSTREAM-RULES(direction): no direction cell inside the F6 numeric '
+              'table')
+        ok = False
+    else:
+        t = dict(real)
+        t[HI] = real[HI][:i0] + '\u653e\u5bbd \u2191' + real[HI][i0 + len(ARROW):]
+        if t[HI] == real[HI]:
+            print('    MISS DA-UPSTREAM-RULES(direction): mutation was a no-op')
+            ok = False
+        else:
+            print('    applied: DA-UPSTREAM-RULES(direction) first direction cell flipped')
+            scenario('NEG-rules-direction', t, 'DA-UPSTREAM-RULES',
+                     want_msg='column 方向')
 
     # 11) DA-COUNT 的两个靶子：① 读数被改 ② 那一句被删掉（文档侧在 art['docs'] 里改）
     c0 = [c for c in reg['claims'] if c['probe'] == 'high_bytes']
@@ -910,7 +1433,7 @@ def selftest():
 
     for code in ('DA-EXTRACT', 'DA-USE-UNDEF', 'DA-ANCHOR-UNDEF', 'DA-DUP-ID', 'DA-FRAME-STATUS',
                  'DA-TRACE-PRD', 'DA-WF-REGION', 'DA-SCREEN-SET', 'DA-UPSTREAM-F5',
-                 'DA-UPSTREAM-F6', 'DA-COUNT', 'DA-FRESH'):
+                 'DA-UPSTREAM-RULES', 'DA-RULE-COUNT', 'DA-COUNT', 'DA-FRESH'):
         if code not in seen:
             print('  [%-30s] %s' % ('DETECTOR-NEVER-FIRED', code))
             ok = False
@@ -953,10 +1476,14 @@ def main(argv):
              p['high_bracket_kinds'], p['high_bracket_n'], p['high_css_sections'], p['high_media'],
              p['high_disabled'], p['high_clickable'], p['high_disabled_no_title']))
     print('extracted: low-frames=%s regions=%d trace-rows=%d | proto-probes=%d screens=%d '
-          '| board=%d bytes (regenerated=%d) | upstream: labels=%d rules=%d fixture-texts=%d'
+          '| board=%d bytes (regenerated=%d) | upstream: labels=%d rules=%d fixture-texts=%d '
+          '| rules: surfaces=%d rows=%d(specs=%d decisions=%d blacklist=%s)'
           % (p['low_wf_frames'], p['low_regions'], len(p['low_trace']), p['proto_probes'],
              len(set(p['proto_screens'])), p['board_bytes'], p['board_expected_bytes'],
-             len(p['metric_labels']), len(p['rule_ids']), len(p['fixture_texts'])))
+             len(p['metric_labels']), len(p['rule_ids']), len(p['fixture_texts']),
+             len(p['rule_blocks']), p['rule_row_count'], p['rule_spec_count'],
+             p['rule_decision_count'],
+             p['blacklist_rule'][0] if p['blacklist_rule'] else '-'))
     for fid in reg['wf']['frames']:
         print('extracted: trace[%s] low=%s high=%s'
               % (fid, [r['prd'] for r in p['low_trace'] if r['fid'] == fid][:1],

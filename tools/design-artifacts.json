@@ -254,7 +254,8 @@
       "template": "`quanauto/risk.py` 的 **{value}** 条 `GLOBAL_RULE_IDS`",
       "doc": "docs/high fidelity/README.md",
       "unit": "条",
-      "caliber": "RULE_SPECS 里每个 RuleSpec 的第一个位置参（GLOBAL_RULE_IDS 是同一份清单的顺序副本）"
+      "caliber": "RULE_SPECS 里每个 RuleSpec 的第一个位置参（GLOBAL_RULE_IDS 是同一份清单的顺序副本）。⚠️ 这个数**只**管条数；「这些 id 在稿里长得对不对」归 DA-UPSTREAM-RULES（逐行逐列），不要把这个 claim 读成那份判据",
+      "forbidden": ["全部出现（浏览器实测共 7 个 id"]
     },
     {
       "probe": "fixture_text_count",
@@ -263,6 +264,22 @@
       "doc": "docs/high fidelity/README.md",
       "unit": "条",
       "caliber": "夹具 metrics[].text 的条数"
+    },
+    {
+      "probe": "rule_surface_count",
+      "expected": 7,
+      "template": "共 **{value}** 处规则表面",
+      "doc": "docs/high fidelity/README.md",
+      "unit": "处",
+      "caliber": "图纸里声称「这里的规则取自仓库真值」的表面处数（登记在 tools/verify_design_artifacts.py 的 RULE_SURFACES：F6 两张表 / A3 托盘面板 / F1 Top3 / §09 两张手机列表 / M1 闸门摘要）。⚠️ 加一处表面要**同时**改这里、README 与 RULE_SURFACES —— 只改代码会让 README 立刻漂（而那是双向判据，马上报）"
+    },
+    {
+      "probe": "rule_row_count",
+      "expected": 28,
+      "template": "对拍了 **{value}** 行",
+      "doc": "docs/high fidelity/README.md",
+      "unit": "行",
+      "caliber": "七处规则表面**真正画出来的**数据行合计（6+1+7+3+6+1+4）。⚠️ 它不等于「规则条数」：M1 的 4 行是 7 条里的一段（摘录）⇒ 两种口径的数要分开写，拿一个去核另一个必错"
     },
     {
       "probe": "low_bytes",
