@@ -1,0 +1,2122 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>智能量化交易平台 · 高保真 UI 设计稿（八帧）</title>
+<!--
+  ============================================================================
+  这份文件是什么：
+    一份**高保真 UI 设计稿**，把 `docs/low fidelity/` 的两份低保真产物（静态规格板
+    + 可交互原型）与仓库里已交付的真实语义，画成一套带视觉语言的界面稿。
+    视觉语言参考：D:/project-ai2/file-share/feature02/file-share-tool2/docs/designs/
+    fst-3end-ui-design.html（下称「参考稿」）。
+
+  它不是什么（三条，与低保真同一口径）：
+    ① 不是规格、不是契约、不是门禁 —— **没有牙**，不被任何门禁读取、不解除任何缺口；
+    ② 不主张任何未开工的模块有实现：八帧里只有 F5 有对应代码（platform/web/），
+       其余七帧每一帧都带「提案」章，且整帧用**点划线外框**标出。
+       §03 那张「应用外壳」帧（S0）**同样是提案** —— 已交付页面没有侧栏与常驻顶栏；
+    ③ 图里的每个数字都标了来源：仓库里有真值的写真值（并注明出处），
+       仓库里没有的用两类占位标记 —— `—`（这一格没有值）与方括号占位符
+       （`[占位]` / `[策略ID]` / `[时间]` / `[金额]` / `[代码]` / `[日期]` / `[名称]` …）。
+       高保真**不等于**编数。
+
+  三条硬规矩（写在文件里，方便下一个读的人先看到）：
+    A. 除「主题切换」与「锚点跳转」外，本稿**一切控件都 disabled**，并各自在 title 里
+       写明「缺什么能力」。设计稿最容易犯的错是画一个能按但没有实现的开关。
+    B. F5 的**信息**（字段、标签、分组、行序、展示文本）以已交付页面为准，本稿只换皮；
+       F5 的**皮肤**是提案。同一屏的两个主张分开放，别互相读。
+    C. 色调不承担唯一语义：状态一律「文字 + 形状 + 颜色」三重编码，灰度可读。
+  ============================================================================
+-->
+<style>
+/* ============ 00 · Design Tokens（逐字取自参考稿 L12-24 的 :root）============ */
+:root{
+  --brand:#2F6FED; --brand-h:#1E5BD0; --brand-soft:#E7EFFD; --brand-soft2:#D5E3FB;
+  --ok:#15966F; --ok-soft:#E2F4ED; --warn:#C77E0A; --warn-soft:#FAEFDC;
+  --err:#D43C3C; --err-soft:#FBE7E7; --info:#5B6B82; --info-soft:#EDF0F5;
+  --bg:#EEF2F8; --bg2:#E6EBF4; --surface:#FFFFFF; --surface2:#F3F6FC; --surface3:#E9EEF8;
+  --text:#14213A; --text2:#5A6A83; --text3:#8E9BAE;
+  --icon:#5F6F8E; --icon-strong:#33415A; --icon-soft:#93A0B6;
+  --line:#E1E7F1; --line2:#C9D3E4;
+  --shadow:0 1px 2px rgba(20,33,58,.05),0 4px 14px rgba(20,33,58,.06);
+  --shadow-lg:0 8px 30px rgba(16,26,46,.16);
+  --r-s:6px; --r-m:10px; --r-l:14px; --r-xl:20px;
+  --font:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",Roboto,sans-serif;
+  --mono:"SF Mono","JetBrains Mono",Consolas,"Courier New",monospace;
+  --ring:0 0 0 3px rgba(47,111,237,.22);
+
+  /* 本稿新增（**不是**从参考稿抄来的，是这一款的域内设计决策，逐条在 §01.4 登记）： */
+  --up:#B3372F;                 /* 涨：与 --err 同色系但**更沉**，避免与「错误」混淆 */
+  --down:#0E7A5C;               /* 跌：与 --ok 同色系但**更沉**，避免与「成功」混淆 */
+  --hatch:repeating-linear-gradient(45deg,var(--surface3) 0 7px,var(--surface2) 7px 14px);
+}
+/* ============ 01 · Design Tokens（深色，逐字取自参考稿 L26 的 :root[data-theme=dark]） */
+:root[data-theme="dark"]{
+  --brand:#6C9BFF; --brand-h:#8CB0FF; --brand-soft:#1B2A4C; --brand-soft2:#22345E;
+  --ok:#37C795; --ok-soft:#123B2D; --warn:#EDAE3F; --warn-soft:#3B2E13;
+  --err:#F06D6D; --err-soft:#421F1F; --info:#A8B4C8; --info-soft:#242C3C;
+  --bg:#0B101E; --bg2:#0D1424; --surface:#151E31; --surface2:#1B2740; --surface3:#21304C;
+  --text:#EAF0FA; --text2:#A0AEC4; --text3:#6D7B94;
+  --icon:#A3B1C9; --icon-strong:#CBD6E8; --icon-soft:#71809C;
+  --line:#283650; --line2:#3A4A68;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 4px 14px rgba(0,0,0,.28);
+  --shadow-lg:0 10px 34px rgba(0,0,0,.5);
+  --ring:0 0 0 3px rgba(108,155,255,.3);
+  --up:#F0918B; --down:#5FD0AC;
+}
+
+/* ============ 02 · Base（参考稿 L34-70 的同一套基底）============ */
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:
+  radial-gradient(680px 320px at 12% -80px,var(--brand-soft),transparent 70%),
+  radial-gradient(560px 300px at 88% -40px,var(--brand-soft2),transparent 70%),
+  radial-gradient(900px 420px at 50% 108%,var(--surface2),transparent 70%),
+  var(--bg);
+  color:var(--text);font-family:var(--font);font-size:14px;line-height:1.55;
+  padding-bottom:64px}
+a{color:var(--brand);text-decoration:none}
+b,strong{font-weight:800}
+em{font-style:normal}
+code{font-family:var(--mono);font-size:12px;background:var(--surface3);border-radius:5px;padding:1px 5px}
+:focus-visible{outline:none;box-shadow:var(--ring);border-radius:var(--r-s)}
+svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.wrap{max-width:1180px;margin:0 auto;padding:0 24px}
+
+/* ============ 03 · Masthead（参考稿 L71-100 的同形）============ */
+.masthead{position:sticky;top:0;z-index:50;backdrop-filter:blur(12px);
+  background:color-mix(in srgb,var(--bg) 80%,transparent);border-bottom:1px solid var(--line)}
+.masthead .wrap{display:flex;align-items:center;gap:14px;height:60px}
+.logo{display:flex;align-items:center;gap:9px;font-weight:800;font-size:15px;white-space:nowrap}
+.logo small{font-weight:600;font-size:11.5px;color:var(--text2);letter-spacing:.04em}
+.logo-mark{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,var(--brand),#1E5BD0);
+  display:grid;place-items:center;color:#fff;box-shadow:0 3px 8px rgba(47,111,237,.35);flex:none}
+.mast-nav{margin-left:auto;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.pill{font-size:12.5px;font-weight:700;color:var(--text2);padding:6px 12px;border-radius:99px;
+  border:1px solid transparent;transition:.13s;white-space:nowrap}
+.pill:hover{background:var(--surface);color:var(--text);border-color:var(--line)}
+.theme-btn{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:700;color:var(--text2);
+  background:var(--surface);border:1px solid var(--line);padding:6px 12px;border-radius:99px;cursor:pointer;transition:.13s}
+.theme-btn:hover{color:var(--brand);border-color:var(--brand-soft2)}
+.theme-btn .ic-sun{display:none}
+:root[data-theme="dark"] .theme-btn .ic-sun{display:inline}
+:root[data-theme="dark"] .theme-btn .ic-moon{display:none}
+
+/* ============ 04 · Hero / Section scaffolding（参考稿 L101-140 的同形）============ */
+.hero{padding:44px 0 8px}
+.kicker{display:inline-flex;align-items:center;gap:7px;font-size:11.5px;font-weight:800;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--brand);background:var(--brand-soft);border-radius:99px;padding:5px 12px}
+.hero h1{font-size:34px;line-height:1.2;letter-spacing:-.5px;margin:14px 0 12px;font-weight:800}
+.hero h1 em{color:var(--brand)}
+.hero p{margin:0;max-width:820px;color:var(--text2);font-size:14px}
+.principles{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-top:20px}
+.principle{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-m);padding:14px 15px;box-shadow:var(--shadow)}
+.principle b{display:block;font-size:13px;margin-bottom:3px}
+.principle span{font-size:12px;color:var(--text2)}
+
+.sec{padding-top:38px;padding-bottom:4px}
+.sec-head{display:flex;align-items:center;gap:12px;margin-bottom:6px}
+.sec-num{font-family:var(--mono);font-size:12px;font-weight:800;color:var(--brand);background:var(--brand-soft);
+  border-radius:7px;padding:4px 9px;flex:none}
+.sec-head h2{font-size:21px;margin:0;letter-spacing:-.2px}
+.sec-sub{color:var(--text2);font-size:13px;margin-bottom:16px;max-width:900px}
+
+/* ============ 05 · Token board（参考稿 .tok / .chip / .icon-spec 同形）============ */
+.token-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px}
+.tok{display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--line);
+  border-radius:var(--r-m);padding:9px 11px;box-shadow:var(--shadow)}
+.tok .chip{width:30px;height:30px;flex:none;border-radius:9px;border:1px solid var(--line2)}
+.tok .meta b{display:block;font-family:var(--mono);font-size:11.5px}
+.tok .meta i{display:block;font-size:11px;color:var(--text3)}
+.spec{border:1px solid var(--line);border-radius:var(--r-m);background:var(--surface);padding:14px 16px;margin-top:14px;box-shadow:var(--shadow);overflow-x:auto}
+.spec h4{margin:0 0 8px;font-size:14px;display:flex;align-items:center;gap:8px}
+.spec h4 svg{width:15px;height:15px;color:var(--brand)}
+.spec-tbl{width:100%;border-collapse:collapse;font-size:12.5px}
+.spec-tbl th,.spec-tbl td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+.spec-tbl th{font-size:11px;letter-spacing:.06em;color:var(--text3);text-transform:uppercase;font-weight:800}
+.spec-tbl tr:last-child td{border-bottom:none}
+.spec-tbl td.m{font-family:var(--mono);font-size:12px;white-space:nowrap}
+.spec-tbl td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+
+/* ============ 06 · Components（按钮 / 徽章 / 进度 / 控件，参考稿同形）============ */
+.btn{display:inline-flex;align-items:center;gap:7px;font-family:inherit;font-size:13px;font-weight:700;
+  padding:8px 14px;border-radius:9px;border:1px solid transparent;cursor:pointer;transition:.13s;white-space:nowrap}
+.btn svg{width:15px;height:15px;flex:none}
+.btn:active{transform:translateY(1px) scale(.985)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn:disabled:active{transform:none}
+.btn-pri{background:var(--brand);color:#fff;box-shadow:0 1px 2px rgba(47,111,237,.3)}
+.btn-soft{background:var(--brand-soft);color:var(--brand);border-color:var(--brand-soft2)}
+.btn-ghost{background:transparent;color:var(--text2);border-color:var(--line2)}
+.btn-err-soft{background:var(--err-soft);color:var(--err);border-color:color-mix(in srgb,var(--err) 25%,transparent)}
+.btn-warn-soft{background:var(--warn-soft);color:var(--warn);border-color:color-mix(in srgb,var(--warn) 28%,transparent)}
+.btn-sm{font-size:12px;padding:5px 10px}
+.btn-block{width:100%;justify-content:center}
+.badge{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:800;border-radius:99px;padding:3px 9px;white-space:nowrap}
+.badge svg{width:12px;height:12px}
+.b-pri{background:var(--brand-soft);color:var(--brand)}
+.b-ok{background:var(--ok-soft);color:var(--ok)}
+.b-warn{background:var(--warn-soft);color:var(--warn)}
+.b-err{background:var(--err-soft);color:var(--err)}
+.b-info{background:var(--info-soft);color:var(--info)}
+.b-mute{background:var(--surface3);color:var(--text3)}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;color:var(--text2);
+  background:var(--surface);border:1px solid var(--line);border-radius:99px;padding:4px 11px;white-space:nowrap}
+.chip.on{background:var(--brand);color:#fff;border-color:var(--brand)}
+.chip.ghost{border-style:dashed;color:var(--text3)}
+.dot{width:7px;height:7px;border-radius:99px;flex:none;display:inline-block}
+.dot.ok{background:var(--ok);box-shadow:0 0 0 3px var(--ok-soft)}
+.dot.off{background:var(--icon-soft);box-shadow:0 0 0 3px var(--surface3)}
+.dot.warn{background:var(--warn);box-shadow:0 0 0 3px var(--warn-soft)}
+.dot.err{background:var(--err);box-shadow:0 0 0 3px var(--err-soft)}
+.dot.pri{background:var(--brand);box-shadow:0 0 0 3px var(--brand-soft)}
+.progress{height:6px;border-radius:99px;background:var(--surface3);overflow:hidden;flex:none}
+.progress>i{display:block;height:100%;background:var(--brand);border-radius:99px}
+.progress.p-ok>i{background:var(--ok)}
+.progress.p-warn>i{background:var(--warn)}
+.progress.p-err>i{background:var(--err)}
+.sw{width:34px;height:20px;border-radius:99px;background:var(--line2);position:relative;flex:none;display:inline-block}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:99px;background:#fff;
+  box-shadow:0 1px 2px rgba(16,26,46,.3);transition:.15s}
+.sw.on{background:var(--brand)}
+.sw.on::after{left:16px}
+.seg{display:inline-flex;background:var(--surface3);border-radius:9px;padding:2px;gap:2px}
+.seg button{font-family:inherit;font-size:12px;font-weight:700;color:var(--text2);background:transparent;border:none;
+  padding:5px 12px;border-radius:7px;cursor:pointer;white-space:nowrap}
+.seg button.on{background:var(--surface);color:var(--text);box-shadow:var(--shadow)}
+.field{width:100%;font-family:inherit;font-size:13px;color:var(--text);background:var(--surface);
+  border:1px solid var(--line2);border-radius:9px;padding:8px 11px}
+.field:focus{box-shadow:var(--ring);border-color:var(--brand)}
+.field:disabled{background:var(--surface2);color:var(--text3)}
+.fld-lab{display:block;font-size:11.5px;font-weight:800;color:var(--text2);margin:0 0 5px}
+.iconbtn{width:30px;height:30px;display:inline-grid;place-items:center;border-radius:8px;border:none;
+  background:transparent;color:var(--icon);cursor:pointer;transition:.13s}
+.iconbtn svg{width:16px;height:16px}
+.iconbtn:hover{background:var(--surface3);color:var(--icon-strong)}
+.iconbtn:disabled{opacity:.45;cursor:not-allowed}
+.iconbtn:disabled:hover{background:transparent;color:var(--icon)}
+
+/* ============ 07 · Data table（参考稿 .tl 同族，本稿单列一套）============ */
+.tbl{width:100%;border-collapse:collapse;font-size:12.5px}
+.tbl thead th{font-size:11px;font-weight:800;letter-spacing:.05em;color:var(--text3);text-align:left;
+  padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+.tbl tbody td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:middle}
+.tbl tbody tr:last-child td{border-bottom:none}
+.tbl tbody tr:hover{background:var(--surface2)}
+.tbl td.n,.tbl th.n{text-align:right;font-variant-numeric:tabular-nums}
+.tbl td.mono{font-family:var(--mono);font-size:11.5px;white-space:nowrap}
+.tbl-wrap{border:1px solid var(--line);border-radius:var(--r-m);background:var(--surface);overflow-x:auto}
+.muted{color:var(--text3)}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+/* ============ 08 · Cards / KPI / lists（参考稿 .p-card / .kpi 同形）============ */
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-m);padding:14px 15px;box-shadow:var(--shadow);min-width:0}
+/* 栅格 / 弹性子项默认 min-width:0 —— 不加的话，卡内的表格会把整幅撑出视口（宽度计算里“最小内容宽”优先）*/
+.grid > *,.card > *,.pane > *,.card-h > *{min-width:0}
+.card+.card{margin-top:12px}
+.card-h{display:flex;align-items:center;gap:9px;margin-bottom:10px;flex-wrap:wrap}
+.card-h h4{margin:0;font-size:13.5px;display:flex;align-items:center;gap:8px}
+.card-h h4 svg{width:15px;height:15px;color:var(--brand)}
+.card-h .r{margin-left:auto;display:flex;align-items:center;gap:8px}
+.grid{display:grid;gap:12px}
+.g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.g3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.g4{grid-template-columns:repeat(4,minmax(0,1fr))}
+.kpi{background:var(--surface2);border:1px solid var(--line);border-radius:var(--r-m);padding:11px 13px;min-width:0}
+.kpi.dark{background:linear-gradient(135deg,#1B2540,#0F1730);border-color:#26314F;color:#EAF0FA}
+.kpi .k{font-size:11px;font-weight:800;letter-spacing:.06em;color:var(--text3);text-transform:uppercase}
+.kpi.dark .k{color:#9FB0D0}
+.kpi .v{font-size:22px;font-weight:800;letter-spacing:-.4px;margin:3px 0 2px;font-variant-numeric:tabular-nums;
+  overflow-wrap:anywhere}
+.kpi .v.sm{font-size:15px}
+.kpi .u{font-size:11px;color:var(--text3);line-height:1.5}
+.kpi.dark .u{color:#9FB0D0}
+.kv{display:flex;flex-direction:column;gap:0}
+.kv-row{display:flex;align-items:baseline;gap:10px;padding:7px 0;border-bottom:1px dashed var(--line)}
+.kv-row:last-child{border-bottom:none}
+.kv-row dt{font-size:12px;color:var(--text2);flex:none;min-width:74px}
+.kv-row dd{margin:0;font-size:12.5px;font-weight:700;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.hint{font-size:11.5px;color:var(--text3);line-height:1.6;margin:8px 0 0}
+.hint b{color:var(--text2)}
+
+/* ============ 09 · Flow chain（参考稿 .flow 同形）============ */
+.flow{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.flow .node{font-size:11.5px;font-weight:700;background:var(--surface);border:1px solid var(--line);
+  border-radius:9px;padding:6px 10px;white-space:nowrap}
+.flow .node.dash{border-style:dashed;color:var(--text2)}
+.flow .node.done{background:var(--ok-soft);border-color:color-mix(in srgb,var(--ok) 25%,transparent);color:var(--ok)}
+.flow .node.run{background:var(--brand-soft);border-color:var(--brand-soft2);color:var(--brand);box-shadow:var(--ring)}
+.flow .node.stop{background:var(--text);border-color:var(--text);color:var(--bg)}
+.flow .arrow{color:var(--icon-soft);font-size:12px}
+.flow-lab{font-size:11px;font-weight:800;color:var(--text3);min-width:88px;flex:none}
+.flow-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.flow-line+.flow-line{margin-top:8px}
+
+/* ============ 10 · Chart placeholder / notes（斜线阴影 = 图表占位，继承低保真图例）==== */
+.ph{border:1px dashed var(--line2);border-radius:var(--r-m);background:var(--hatch);display:grid;place-items:center;
+  text-align:center;font-size:12px;color:var(--text2);padding:16px;line-height:1.7}
+.ph.h80{min-height:80px}
+.ph.h120{min-height:120px}
+.ph b{color:var(--text)}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;color:var(--text2)}
+.legend i{display:inline-flex;align-items:center;gap:6px;font-style:normal}
+.lg-sw{width:22px;height:12px;border-radius:3px;border:1px solid var(--line2);background:var(--surface)}
+.lg-sw.solid{border-style:solid;border-color:var(--brand-soft2);background:var(--brand-soft)}
+.lg-sw.dash{border-style:dashed}
+.lg-sw.hatch{background:var(--hatch)}
+.lg-sw.inv{background:var(--text);border-color:var(--text)}
+
+/* ============ 11 · Frame chrome（设备/窗口外框，参考稿 .frame/.win 同形）============ */
+.frame{margin-top:16px;border:1px solid var(--line);border-radius:var(--r-l);background:var(--surface);
+  box-shadow:var(--shadow);overflow:hidden}
+.f-cap{display:flex;align-items:center;gap:9px;padding:10px 14px;background:var(--surface2);border-bottom:1px solid var(--line);
+  flex-wrap:wrap}
+.fid{font-family:var(--mono);font-size:11.5px;font-weight:800;color:var(--brand);background:var(--brand-soft);border-radius:7px;padding:2px 8px;flex:none}
+.f-cap h3{margin:0;font-size:14.5px}
+.f-cap .r{margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.f-trace{font-size:11.5px;color:var(--text3);max-width:460px;text-align:right;overflow-wrap:anywhere}
+.win{border:1px solid var(--line2);border-radius:var(--r-l);margin:14px;overflow:hidden;background:var(--bg2)}
+.win-bar{display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--surface3);border-bottom:1px solid var(--line)}
+.win-dots{display:flex;gap:5px;flex:none}
+.win-dots i{width:9px;height:9px;border-radius:99px;display:block}
+.win-dots i:nth-child(1){background:#F4645F}
+.win-dots i:nth-child(2){background:#F6BD3F}
+.win-dots i:nth-child(3){background:#3DC550}
+.win-title{font-size:11.5px;color:var(--text2);font-weight:700}
+.win-title.mono{font-family:var(--mono);font-weight:600}
+/* 提案帧：整帧点划线 + 弱化投影 —— 低保真图例的「点划线框 = 提案」在带颜色的稿里必须活下来 */
+.frame.proposal{border-style:dashed;border-color:var(--line2);box-shadow:none}
+.frame.proposal .win{border-style:dashed}
+.frame.delivered{border-color:color-mix(in srgb,var(--ok) 38%,var(--line));box-shadow:0 0 0 1px var(--ok-soft),var(--shadow)}
+
+/* ============ 12 · App shell inside frames（参考稿 .desk/.desk-side/.dev-item 同族）==== */
+.app{display:grid;grid-template-columns:206px minmax(0,1fr);align-items:stretch;background:var(--surface)}
+.app-side{background:var(--surface2);border-right:1px solid var(--line);padding:12px 10px;display:flex;flex-direction:column;gap:2px}
+.side-logo{display:flex;align-items:center;gap:8px;padding:2px 6px 10px}
+.side-logo b{font-size:13px}
+.side-logo i{font-style:normal;font-size:10.5px;color:var(--text3)}
+.side-logo .logo-mark{width:24px;height:24px;border-radius:7px}
+.side-lab{font-size:10px;font-weight:800;letter-spacing:.1em;color:var(--text3);padding:8px 6px 4px}
+.nav-item{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:9px;font-size:12.5px;font-weight:700;
+  color:var(--text2);border:1px solid transparent}
+.nav-item svg{width:16px;height:16px;color:var(--icon);flex:none}
+.nav-item.on{background:var(--surface);color:var(--text);border-color:var(--line);box-shadow:var(--shadow)}
+.nav-item.on svg{color:var(--brand)}
+.nav-item .cnt{margin-left:auto;font-size:10.5px;font-weight:800;color:var(--text3);background:var(--surface3);
+  border-radius:99px;padding:0 6px;line-height:16px;flex:none}
+.nav-item.on .cnt{background:var(--brand-soft);color:var(--brand)}
+.nav-sub{padding-left:26px;font-size:11.5px;font-weight:600;color:var(--text3);padding-top:3px;padding-bottom:3px}
+.side-foot{margin-top:auto;padding:10px 6px 2px;border-top:1px dashed var(--line);font-size:10.5px;color:var(--text3);line-height:1.7}
+.app-main{min-width:0;display:flex;flex-direction:column}
+.app-top{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);
+  background:var(--surface);flex-wrap:wrap}
+.app-top .ttl{min-width:0}
+.app-top .ttl b{display:block;font-size:14.5px;letter-spacing:-.2px}
+.app-top .ttl i{font-style:normal;font-size:11.5px;color:var(--text3)}
+.app-top .sp{flex:1}
+.envset{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.env{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:800;border-radius:99px;padding:4px 11px;white-space:nowrap}
+.env.prod{background:var(--err-soft);color:var(--err)}
+.env.res{background:var(--info-soft);color:var(--info)}
+.env.cross{background:var(--brand-soft);color:var(--brand)}
+.killslot{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:800;color:#fff;
+  background:var(--text);border-radius:99px;padding:4px 11px;white-space:nowrap}
+.killslot .k{color:var(--bg);opacity:.9}
+.killslot.armed{background:var(--err)}
+.pane{padding:14px;display:flex;flex-direction:column;gap:14px;background:var(--bg);min-width:0}
+
+/* ============ 13 · Inline annotation channel（继承低保真 ①②③ 注解编号）============ */
+.anno{display:inline-grid;place-items:center;width:16px;height:16px;border-radius:99px;background:var(--brand-soft);
+  color:var(--brand);font-size:10.5px;font-weight:800;flex:none;font-family:var(--mono);vertical-align:1px}
+.notes{margin:0 14px 16px;padding-left:22px;font-size:12px;color:var(--text2);line-height:1.75}
+.notes li{margin-bottom:6px}
+.notes li::marker{font-family:var(--mono);font-weight:800;color:var(--brand)}
+.gap{border-left:3px solid var(--warn);background:var(--warn-soft);border-radius:0 var(--r-m) var(--r-m) 0;
+  padding:11px 13px;font-size:12px;color:var(--text);line-height:1.7}
+.gap b{color:var(--warn)}
+.gap.err{border-left-color:var(--err);background:var(--err-soft)}
+.gap.err b{color:var(--err)}
+.gap.ok{border-left-color:var(--ok);background:var(--ok-soft)}
+.gap.ok b{color:var(--ok)}
+.rulebox{border:1px dashed var(--line2);border-radius:var(--r-m);background:var(--surface2);padding:11px 13px;
+  font-size:12px;color:var(--text2);line-height:1.7}
+.rulebox b{color:var(--text)}
+.dlrow{display:flex;align-items:center;gap:9px;padding:8px 10px;border-bottom:1px solid var(--line)}
+.dlrow:last-child{border-bottom:none}
+.dlrow .ic{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;flex:none;background:var(--brand-soft);color:var(--brand)}
+.dlrow .ic svg{width:15px;height:15px}
+.dlrow .ic.ok{background:var(--ok-soft);color:var(--ok)}
+.dlrow .ic.warn{background:var(--warn-soft);color:var(--warn)}
+.dlrow .ic.err{background:var(--err-soft);color:var(--err)}
+.dlrow .info{flex:1;min-width:0}
+.dlrow .info b{display:block;font-size:12.5px}
+.dlrow .info i{font-style:normal;font-size:11px;color:var(--text3)}
+.dlrow .act{display:flex;gap:6px;flex:none;flex-wrap:wrap;justify-content:flex-end}
+
+/* ============ 14 · Curve / K-line slot（净值曲线可画；K 线是缺口。见 F4 注解）============ */
+.curve{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-m);padding:12px 14px}
+.curve svg{display:block;width:100%;height:150px;stroke-width:1.6}
+.curve-foot{display:flex;align-items:center;gap:10px;font-size:11px;color:var(--text3);margin-top:6px;flex-wrap:wrap}
+.mk-lane{position:relative;height:34px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-m);overflow:hidden}
+.mk-lane::before{content:"";position:absolute;inset:0;background:var(--hatch);opacity:.55}
+.mk{position:absolute;top:50%;width:0;height:0}
+.mk.buy{border-left:6px solid transparent;border-right:6px solid transparent;border-bottom:9px solid var(--up);transform:translate(-6px,-11px)}
+.mk.sell{border-left:6px solid transparent;border-right:6px solid transparent;border-top:9px solid var(--down);transform:translate(-6px,2px)}
+.mk-tag{position:absolute;top:50%;transform:translateY(-50%);font-size:10px;font-weight:800;font-family:var(--mono);
+  background:var(--surface);border:1px solid var(--line2);border-radius:5px;padding:1px 5px;white-space:nowrap}
+.up{color:var(--up);font-weight:800}
+.down{color:var(--down);font-weight:800}
+.flat{color:var(--text3);font-weight:800}
+
+/* ============ 15 · Footer / misc ============ */
+.foot{color:var(--text3);font-size:12px;text-align:center;margin-top:52px;line-height:2}
+.foot b{color:var(--text2)}
+.noimpl{border-left:3px solid var(--info);background:var(--info-soft);border-radius:0 var(--r-m) var(--r-m) 0;
+  padding:10px 12px;font-size:12px;color:var(--text2);line-height:1.7}
+.noimpl b{color:var(--text)}
+.anchor{scroll-margin-top:74px}
+@media (max-width:980px){
+  .g4{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .app{grid-template-columns:1fr}
+  .app-side{border-right:none;border-bottom:1px solid var(--line)}
+  .hero h1{font-size:27px}
+}
+@media (max-width:700px){
+  .g2,.g3{grid-template-columns:1fr}
+  .f-trace{text-align:left;max-width:none}
+  .wrap{padding-left:14px;padding-right:14px}
+  .masthead .wrap{flex-wrap:wrap;height:auto;min-height:60px;padding-top:8px;padding-bottom:8px}
+  .mast-nav{margin-left:0;width:100%}
+  .hero h1{font-size:22px}
+  .kpi .v{font-size:19px}
+}
+</style>
+</head>
+<body>
+
+<!-- ==========================================================================
+     图标系统：内联 SVG <symbol> 精灵 + <use> 复用（参考稿 L745-793 的同一手法）
+     规则沿用参考稿 §07.1 的四条：线稿为纲 · 语义着色 · 尺寸四档 · 实心仅作点缀
+     ========================================================================== -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false"><defs>
+  <symbol id="i-cockpit" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 9h18M9 21V9"/></symbol>
+  <symbol id="i-db" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/></symbol>
+  <symbol id="i-pool" viewBox="0 0 24 24"><path d="M4 5h16M6 10h12M9 15h6M11 20h2"/></symbol>
+  <symbol id="i-lab" viewBox="0 0 24 24"><path d="M9 3v6L4.5 18A2 2 0 0 0 6.3 21h11.4a2 2 0 0 0 1.8-3L15 9V3M8 3h8M7 14h10"/></symbol>
+  <symbol id="i-gauge" viewBox="0 0 24 24"><path d="M4 19a9 9 0 1 1 16 0"/><path d="M12 19l4.5-6"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4.3-2.9 8-7 9-4.1-1-7-4.7-7-9V6z"/><path d="M9 12l2 2 4-4"/></symbol>
+  <symbol id="i-strategy" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M8.5 6h7M6 8.5V14a4 4 0 0 0 4 4M18 8.5V14a4 4 0 0 1-4 4"/></symbol>
+  <symbol id="i-sched" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4M8 14h3M8 17h6"/></symbol>
+  <symbol id="i-kill" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 16.5v.5"/></symbol>
+  <symbol id="i-run" viewBox="0 0 24 24"><path d="M7 4l12 8-12 8z"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M4 12.5l5.5 5.5L20 7"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-arr-r" viewBox="0 0 24 24"><path d="M5 12h13M13 6.5l5.5 5.5L13 17.5"/></symbol>
+  <symbol id="i-arr-d" viewBox="0 0 24 24"><path d="M12 4.5v13M6.5 12L12 17.5 17.5 12"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7.5V12l3.5 2"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h4M9 13h6M9 17h4"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17v.5"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.6-6 10-6 10 6 10 6-3.6 6-10 6-10-6-10-6z"/><circle cx="12" cy="12" r="2.6"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="2.5"/><path d="M8.5 10V7a3.5 3.5 0 0 1 7 0v3"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4.5h6V7M6.5 7l1 13h9l1-13M10 11v6M14 11v6"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.4-5.7M20 4v4h-4"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M18.7 5.3l-1.4 1.4M6.7 17.3l-1.4 1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/></symbol>
+  <symbol id="i-cube" viewBox="0 0 24 24"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 1 0-5.7l2-2a4 4 0 0 1 5.7 5.7l-1.2 1.2"/><path d="M14 10a4 4 0 0 1 0 5.7l-2 2A4 4 0 0 1 6.3 12l1.2-1.2"/></symbol>
+  <symbol id="i-filter" viewBox="0 0 24 24"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.6"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0"/></symbol>
+  <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 19V5M4 19h16"/><path d="M8 19v-6M12 19V8M16 19v-4"/></symbol>
+  <symbol id="i-flow" viewBox="0 0 24 24"><rect x="3" y="4" width="7" height="5" rx="1.5"/><rect x="14" y="15" width="7" height="5" rx="1.5"/><path d="M6.5 9v6.5h7.5"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M4 6h.01M4 12h.01M4 18h.01"/></symbol>
+  <symbol id="i-candles" viewBox="0 0 24 24"><path d="M7 6v12M7 9h0M17 6v12"/><rect x="4.5" y="9" width="5" height="6" rx="1"/><rect x="14.5" y="8" width="5" height="7" rx="1"/></symbol>
+  <symbol id="i-scale" viewBox="0 0 24 24"><path d="M12 4v16M6 8h12"/><path d="M6 8l-3 6h6zM18 8l-3 6h6z"/></symbol>
+  <symbol id="i-layout" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 10h18M9 10v10"/></symbol>
+</defs></svg>
+
+<!-- ==========================================================================
+     常驻抬头：8 帧的锚点 + 主题切换（本稿**唯一的**两个真控件）
+     ========================================================================== -->
+<header class="masthead">
+  <div class="wrap">
+    <div class="logo">
+      <span class="logo-mark" aria-hidden="true"><svg width="17" height="17"><use href="#i-chart"/></svg></span>
+      智能量化交易平台
+      <small>高保真设计稿 · v1（八帧）</small>
+    </div>
+    <nav class="mast-nav">
+      <a class="pill" href="#tokens">01 tokens</a>
+      <a class="pill" href="#comp">02 组件</a>
+      <a class="pill" href="#shell">03 应用外壳</a>
+      <a class="pill" href="#frames">04 八帧</a>
+      <a class="pill" href="#states">05 状态矩阵</a>
+      <a class="pill" href="#trace">06 追溯与缺口</a>
+      <a class="pill" href="#bounds">07 边界</a>
+      <button class="theme-btn" id="themeBtn" type="button" aria-pressed="false">
+        <svg class="ic-moon" width="15" height="15" aria-hidden="true"><use href="#i-moon"/></svg><svg class="ic-sun" width="15" height="15" aria-hidden="true"><use href="#i-sun"/></svg><span id="themeTxt">深色</span>
+      </button>
+    </nav>
+  </div>
+</header>
+
+<main>
+<!-- ==========================================================================
+     HERO
+     ========================================================================== -->
+<section class="wrap hero" id="top">
+  <span class="kicker"><svg width="13" height="13" aria-hidden="true"><use href="#i-cube"/></svg>HIGH-FIDELITY SPEC · 参考稿视觉语言移植</span>
+  <h1>把「已经想清楚的东西」画成<em>能看的界面</em>，<br>并且不假装它已经能跑。</h1>
+  <p>
+    这份稿子的输入有两个：<code>docs/low fidelity/</code> 里那份已经把信息架构、八帧、状态矩阵、追溯表想清楚的低保真，
+    以及仓库里**已经交付的真实语义**（F5 绩效看板的字段与展示文本、F6 的六条风控规则与默认阈值、F4 的报告夹具）。
+    视觉语言参考 <code>fst-3end-ui-design.html</code>。输出是这一份带 token、带组件、带八帧的界面稿
+    —— 它换的是「皮肤」，不换低保真已经定下的结构与判断。
+  </p>
+  <div class="principles">
+    <div class="principle">
+      <b>① 只有 F5 是已交付</b>
+      <span>其余七帧每一帧都带「提案」章、整帧点划线外框。低保真图例里的「实线=已交付 / 点划线=提案」在彩色稿里必须活下来。</span>
+    </div>
+    <div class="principle">
+      <b>② 数字要么有出处，要么是 [占位]</b>
+      <span>高保真不等于编数。仓库里有真值的写真值并注明出处；没有的保留占位符，且占位符看起来就像占位符。</span>
+    </div>
+    <div class="principle">
+      <b>③ 控件不可按，并且写明为什么</b>
+      <span>除主题切换与锚点跳转，本稿所有按钮 <code>disabled</code>，各自 <code>title</code> 里写清缺哪一项能力。</span>
+    </div>
+    <div class="principle">
+      <b>④ 颜色不承担唯一语义</b>
+      <span>状态一律「文字 + 形状 + 颜色」三重编码；把颜色去掉之后，这张稿子仍然读得出来。</span>
+    </div>
+  </div>
+</section>
+
+<!-- ==========================================================================
+     01 · TOKENS
+     ========================================================================== -->
+<section class="wrap sec anchor" id="tokens">
+  <div class="sec-head"><span class="sec-num">01</span><h2>Design Tokens</h2></div>
+  <p class="sec-sub">
+    色板与圆角、字体栈<strong>逐字</strong>取自参考稿的 <code>:root</code>（浅色）与
+    <code>:root[data-theme="dark"]</code>（深色）。这一节的作用是让「本稿的蓝」与「参考稿的蓝」
+    可核对：任何一格的值都能在参考稿里找到同一行。
+  </p>
+
+  <div class="token-grid">
+    <div class="tok"><span class="chip" style="background:#2F6FED"></span><span class="meta"><b>--brand</b><i>#2F6FED · 主色</i></span></div>
+    <div class="tok"><span class="chip" style="background:#1E5BD0"></span><span class="meta"><b>--brand-h</b><i>#1E5BD0 · 悬停</i></span></div>
+    <div class="tok"><span class="chip" style="background:#E7EFFD"></span><span class="meta"><b>--brand-soft</b><i>#E7EFFD · 主色淡底</i></span></div>
+    <div class="tok"><span class="chip" style="background:#D5E3FB"></span><span class="meta"><b>--brand-soft2</b><i>#D5E3FB · 主色淡边</i></span></div>
+    <div class="tok"><span class="chip" style="background:#15966F"></span><span class="meta"><b>--ok</b><i>#15966F · 通过</i></span></div>
+    <div class="tok"><span class="chip" style="background:#C77E0A"></span><span class="meta"><b>--warn</b><i>#C77E0A · 待人工</i></span></div>
+    <div class="tok"><span class="chip" style="background:#D43C3C"></span><span class="meta"><b>--err</b><i>#D43C3C · 拒绝 / 危险</i></span></div>
+    <div class="tok"><span class="chip" style="background:#5B6B82"></span><span class="meta"><b>--info</b><i>#5B6B82 · 中性信息</i></span></div>
+    <div class="tok"><span class="chip" style="background:#EEF2F8"></span><span class="meta"><b>--bg</b><i>#EEF2F8 · 页面底</i></span></div>
+    <div class="tok"><span class="chip" style="background:#FFFFFF"></span><span class="meta"><b>--surface</b><i>#FFFFFF · 卡片面</i></span></div>
+    <div class="tok"><span class="chip" style="background:#E1E7F1"></span><span class="meta"><b>--line</b><i>#E1E7F1 · 分隔线</i></span></div>
+    <div class="tok"><span class="chip" style="background:#14213A"></span><span class="meta"><b>--text</b><i>#14213A · 正文</i></span></div>
+    <div class="tok"><span class="chip" style="background:#B3372F"></span><span class="meta"><b>--up</b><i>#B3372F · 本稿新增（涨）</i></span></div>
+    <div class="tok"><span class="chip" style="background:#0E7A5C"></span><span class="meta"><b>--down</b><i>#0E7A5C · 本稿新增（跌）</i></span></div>
+  </div>
+
+  <div class="spec">
+    <h4><svg aria-hidden="true"><use href="#i-scale"/></svg>01.1 · 尺寸 / 字体栈（沿用参考稿，未改一格）</h4>
+    <table class="spec-tbl">
+      <thead><tr><th>Token</th><th>值</th><th>本稿里的用处</th></tr></thead>
+      <tbody>
+        <tr><td class="m">--r-s</td><td class="m">6px</td><td>小徽章里的图标底、代码块</td></tr>
+        <tr><td class="m">--r-m</td><td class="m">10px</td><td>卡片 / KPI / 表格容器 / 输入框</td></tr>
+        <tr><td class="m">--r-l</td><td class="m">14px</td><td>帧外框 / 窗口外框</td></tr>
+        <tr><td class="m">--r-xl</td><td class="m">20px</td><td>移动端设备框（本稿未用，保留 token）</td></tr>
+        <tr><td class="m">--font</td><td class="m">Segoe UI → PingFang SC → Microsoft YaHei</td><td>全部正文；中文优先命中系统屏显字</td></tr>
+        <tr><td class="m">--mono</td><td class="m">SF Mono → JetBrains Mono → Consolas</td><td>版本号 / 阈值 / 规则 id / 报告 id（<strong>凡是要逐字核对的东西都用等宽</strong>）</td></tr>
+        <tr><td class="m">字号</td><td class="m">34 / 21 / 14.5 / 13.5 / 12.5 / 11.5 / 11</td><td>h1 / h2 / 帧标题 / 卡片标题 / 表格正文 / 说明 / 表头与 KPI 标签</td></tr>
+        <tr><td class="m">--shadow</td><td class="m">0 1px 2px …,0 4px 14px …</td><td>卡片；<strong>提案帧被刻意去掉投影</strong>（见 01.2）</td></tr>
+        <tr><td class="m">--ring</td><td class="m">0 0 0 3px rgba(47,111,237,.22)</td><td>键盘焦点；只在 <code>:focus-visible</code> 上，不落成常驻描边</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="spec">
+    <h4><svg aria-hidden="true"><use href="#i-candles"/></svg>01.2 · 本稿新增的 3 个 token（**不是**从参考稿抄来的）</h4>
+    <p class="hint" style="margin:0 0 8px">
+      参考稿是「设备互传」，没有行情语义。本稿要画涨跌与图表占位，所以新增三个变量。
+      它们不是「参考稿里有」的东西，是<strong>这一款的设计决策</strong>，逐条给理由。
+    </p>
+    <table class="spec-tbl">
+      <thead><tr><th>Token</th><th>值（浅 / 深）</th><th>为什么这么定</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="m">--up</td><td class="m">#B3372F / #F0918B</td>
+          <td>涨。取<strong>红</strong>是因为 A 股口径红涨绿跌；但把明度压到比 <code>--err</code> 更沉，
+            并且<strong>规定它只出现在行情/成交字段上</strong>，绝不用来表达「出错了」。</td>
+        </tr>
+        <tr>
+          <td class="m">--down</td><td class="m">#0E7A5C / #5FD0AC</td>
+          <td>跌。同理与 <code>--ok</code> 同色系但更沉。<strong>状态色与涨跌色是两套语义，禁止互换</strong>
+            —— 这也是 F5 那一屏不打算给绩效数字上色的原因（见 04·F5 注解 6）。</td>
+        </tr>
+        <tr>
+          <td class="m">--hatch</td><td class="m">45° 斜线，surface2/3 交替</td>
+          <td>图表占位。直接继承低保真图例里的「斜线阴影块 = 图表占位」，让<strong>缺口在彩色稿里仍然一眼可辨</strong>，
+            不会因为换了皮肤就被读成「已经画好了」。</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="spec">
+    <h4><svg aria-hidden="true"><use href="#i-check"/></svg>01.3 · 借来的语言 vs 本稿的裁决（六条，逐条可核）</h4>
+    <table class="spec-tbl">
+      <thead><tr><th>#</th><th>参考稿的做法</th><th>本稿</th><th>理由</th></tr></thead>
+      <tbody>
+        <tr><td class="m">1</td><td>设备框固定高度（<code>.desk{height:640px}</code>）+ 内部滚动</td>
+          <td><strong>改：内容自然流动，不设固定高度</strong></td>
+          <td>那是「三端预览器」，每屏只展示一部分；本稿八帧每帧都有十几行表格，固定高度会把内容藏进滚动条里，读者核对不到。</td></tr>
+        <tr><td class="m">2</td><td>背景三层 radial-gradient 品牌淡色晕染</td><td>沿用</td><td>同一族，无冲突。</td></tr>
+        <tr><td class="m">3</td><td>按钮可点、点了有 toast</td>
+          <td><strong>改：一律 <code>disabled</code>，<code>title</code> 写明缺什么</strong></td>
+          <td>参考稿是「三端都能跑」的成品稿；本稿只有 F5 有实现。<strong>画一个能按但没有实现的开关，是这份稿子最容易犯的错。</strong></td></tr>
+        <tr><td class="m">4</td><td>用 <code>绿=成功 / 红=失败</code> 表达状态</td>
+          <td><strong>加约束：红绿只表达状态，不表达涨跌</strong></td>
+          <td>量化界面里「红」同时是「涨」和「错」，分不清就会出事。靠新增 <code>--up/--down</code> + 规定使用域来分开。</td></tr>
+        <tr><td class="m">5</td><td>顶栏只有一个主题切换</td>
+          <td><strong>加：环境徽标 + Kill Switch 常驻</strong></td>
+          <td>低保真已经把「环境可见性」与「Kill Switch 每屏可达」定成硬约束（F1 注解 1、F6 注解 3），这两样必须在壳里。</td></tr>
+        <tr><td class="m">6</td><td>整页无「提案 / 已交付」标记</td>
+          <td><strong>加：帧级状态章 + 点划线外框</strong></td>
+          <td>参考稿的所有页面都真的存在；本稿八帧里七帧不存在。不加这层标记，这份稿子就成了一句假话。</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+<!-- ==========================================================================
+     02 · COMPONENTS
+     ========================================================================== -->
+<section class="wrap sec anchor" id="comp">
+  <div class="sec-head"><span class="sec-num">02</span><h2>组件条（带用法约束，不是样式清单）</h2></div>
+  <p class="sec-sub">
+    参考稿的 §01 是「token + 组件条」。本稿沿用它的形态，但每一条都补一句<strong>域内约束</strong>——
+    量化界面里「点错了」比「看不懂」贵得多，所以每个组件都要写清它<strong>不许</strong>用在什么地方。
+  </p>
+
+  <div class="card">
+    <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-list"/></svg>02.1 · 动作（全部 disabled —— 本稿唯一可用的动作是主题切换与锚点）</h4>
+      <span class="r"><span class="badge b-info"><svg aria-hidden="true"><use href="#i-lock"/></svg>无可实现</span></span>
+    </div>
+    <div class="grid g2" style="gap:14px">
+      <div>
+        <div class="flow" style="gap:8px">
+          <button class="btn btn-pri" type="button" disabled title="本稿无实现：F4 回测运行需要引擎 + 数据中心落库链路"><svg aria-hidden="true"><use href="#i-run"/></svg>运行回测</button>
+          <button class="btn btn-soft" type="button" disabled title="本稿无实现：只读稿没有写路径">提交审批</button>
+          <button class="btn btn-ghost" type="button" disabled title="本稿无实现">取消</button>
+          <button class="btn btn-warn-soft" type="button" disabled title="本稿无实现：需要人工二次确认通道">降级</button>
+          <button class="btn btn-err-soft" type="button" disabled title="本稿无实现：Kill Switch 需要真实的全局熔断开关，本稿只是一个画出来的按钮"><svg aria-hidden="true"><use href="#i-kill"/></svg>触发 Kill Switch</button>
+        </div>
+        <p class="hint">
+          <b>约束：</b>危险动作（触发熔断 / 清仓 / 删除规则）必须<strong>反白或危险色</strong> + <strong>二次确认</strong>，
+          且<strong>不可以</strong>是列表行尾的默认焦点按钮。<code>disabled</code> 在这里不是「还没做完」的偷懒，
+          而是把「本稿没有实现」写成可核对的事实 —— 悬停任一按钮，<code>title</code> 会说出缺哪一项能力。
+        </p>
+      </div>
+      <div>
+        <div class="flow" style="gap:8px">
+          <span class="badge b-ok"><svg aria-hidden="true"><use href="#i-check"/></svg>通过</span>
+          <span class="badge b-warn">缩减</span>
+          <span class="badge b-err"><svg aria-hidden="true"><use href="#i-x"/></svg>拒绝</span>
+          <span class="badge b-pri">提案</span>
+          <span class="badge b-info">待人工</span>
+          <span class="badge b-mute">未触发</span>
+        </div>
+        <p class="hint">
+          <b>约束：</b>风控的三类判定 <code>PASS / REDUCE / REJECT</code>（HALT 只在熔断里出现）是<strong>三个不同的词</strong>，
+          「缩减」既不是通过也不是拒绝 —— 界面上不许出现「通过（已缩减）」这种合并写法。
+          徽章一律带文字，<strong>不出现纯图标状态</strong>。
+        </p>
+      </div>
+    </div>
+
+    <div class="grid g2" style="gap:14px;margin-top:14px">
+      <div>
+        <div class="flow" style="gap:12px;align-items:center">
+          <span class="dot ok"></span><span style="font-size:11.5px;color:var(--text2)">正常</span>
+          <span class="dot pri"></span><span style="font-size:11.5px;color:var(--text2)">进行中</span>
+          <span class="dot warn"></span><span style="font-size:11.5px;color:var(--text2)">待人工</span>
+          <span class="dot err"></span><span style="font-size:11.5px;color:var(--text2)">熔断</span>
+          <span class="dot off"></span><span style="font-size:11.5px;color:var(--text2)">未启用</span>
+        </div>
+        <div style="margin-top:10px;display:flex;flex-direction:column;gap:7px;max-width:340px">
+          <div class="progress"><i style="width:38%"></i></div>
+          <div class="progress p-ok"><i style="width:100%"></i></div>
+          <div class="progress p-warn"><i style="width:62%"></i></div>
+          <div class="progress p-err"><i style="width:80%"></i></div>
+        </div>
+        <p class="hint">
+          <b>约束：</b>圆点只是<strong>强化</strong>，右侧永远有文字。进度条的百分比取自服务端的「已处理 n / N」，
+          页面<strong>不自己算</strong>比例。
+        </p>
+      </div>
+      <div>
+        <div class="flow" style="gap:10px;align-items:center">
+          <span class="sw on" title="本稿无实现"></span>
+          <span style="font-size:11.5px;color:var(--text2)">规则启用</span>
+          <span class="seg"><button class="on" type="button" disabled title="本稿无实现">浅色</button><button type="button" disabled title="本稿无实现">深色</button></span>
+          <span class="chip">全市场池</span>
+          <span class="chip on">沪深300池</span>
+          <span class="chip ghost">+ 新建池</span>
+        </div>
+        <div style="margin-top:10px;display:flex;gap:10px;align-items:flex-end;max-width:340px">
+          <label style="flex:1;min-width:0"><span class="fld-lab">比例类阈值（0,1]</span>
+            <input class="field" value="0.10" disabled title="本稿无实现"></label>
+          <label style="flex:1;min-width:0"><span class="fld-lab">不接受百分数</span>
+            <input class="field" value="20%" disabled title="本稿无实现：这一格刻意画成被打回的样子"></label>
+        </div>
+        <p class="hint">
+          <b>约束：</b>比例输入框<strong>只收 <code>(0,1]</code> 的小数</strong>，不收 <code>20%</code>。
+          右侧那格是<strong>故意</strong>画成「填错了」的样例 —— 一个既能读成 2 成又能读成 20 倍的输入框，
+          迟早会有人填错。
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-flow"/></svg>02.2 · 流程链与占位块</h4></div>
+    <div class="flow-line"><span class="flow-lab">日频交易循环</span>
+      <div class="flow">
+        <span class="node done">选源与区间</span><span class="arrow">→</span>
+        <span class="node done">取数</span><span class="arrow">→</span>
+        <span class="node run">帧校验</span><span class="arrow">→</span>
+        <span class="node">盖 source / data_version</span><span class="arrow">→</span>
+        <span class="node">落库</span><span class="arrow">→</span>
+        <span class="node">写批次留痕</span>
+      </div>
+    </div>
+    <div class="flow-line"><span class="flow-lab">策略进化循环</span>
+      <div class="flow">
+        <span class="node dash">失效检测</span><span class="arrow">→</span>
+        <span class="node dash">假设生成</span><span class="arrow">→</span>
+        <span class="node dash">回测验证</span><span class="arrow">→</span>
+        <span class="node stop">晋级推荐（人工）</span>
+      </div>
+    </div>
+    <p class="hint">
+      <b>约束：</b>链上的节点有四种状态：已完成（绿淡底）/ 进行中（主色描边 + 焦点环）/ 待办（中性）/ 端点（反白）。
+      反白<strong>只留给「人工动作」</strong>，一屏里最多一处 —— 反白用多了就不叫强调了。
+    </p>
+    <div class="grid g3" style="margin-top:12px">
+      <div class="ph h80">斜线阴影 = <b>图表占位</b><br>本稿的缺口用这个画法表达</div>
+      <div class="rulebox">点划线框 = <b>提案</b><br>整帧外框是虚线，说明这一帧没有实现</div>
+      <div class="gap"><b>缺口块</b>：写「要什么、为什么现在给不了、该修哪一侧」，而不是写「待完善」。</div>
+    </div>
+  </div>
+</section>
+
+<!-- ==========================================================================
+     03 · APP SHELL
+     ========================================================================== -->
+<section class="wrap sec anchor" id="shell">
+  <div class="sec-head"><span class="sec-num">03</span><h2>应用外壳</h2></div>
+  <p class="sec-sub">
+    八帧共用同一个壳：左侧五个一级区 + 常驻顶栏。低保真把两件事定成了硬约束 ——
+    <strong>环境徽标常驻可见</strong>、<strong>Kill Switch 每屏可达</strong>。这两样落在外壳上，不在某一帧里。
+  </p>
+
+  <div class="frame proposal">
+    <div class="f-cap">
+      <span class="fid">S0</span><h3>外壳 · 五区导航 + 常驻顶栏</h3>
+      <span class="badge b-warn"><svg aria-hidden="true"><use href="#i-eye"/></svg>提案</span>
+      <span class="r"><span class="f-trace">来源：低保真 §2 信息架构 + 各帧 globalbar（F1~F8 逐帧都有）· <b>核对：platform/web/src/App.jsx 只有 header + 报告选择工具条，无侧栏</b></span></span>
+    </div>
+    <div class="win">
+      <div class="win-bar"><span class="win-dots"><i></i><i></i><i></i></span>
+        <span class="win-title">平台外壳 · 桌面浏览器 · 最小可用宽度 1180px</span>
+        <span class="win-title mono" style="margin-left:auto">shell</span>
+      </div>
+      <div class="app">
+        <aside class="app-side">
+          <div class="side-logo"><span class="logo-mark"><svg width="14" height="14"><use href="#i-chart"/></svg></span><span><b>量化平台</b><br><i>v1 · 只读稿</i></span></div>
+          <div class="side-lab">总览</div>
+          <a class="nav-item on" href="#f1"><svg aria-hidden="true"><use href="#i-cockpit"/></svg>驾驶舱<span class="cnt">F1</span></a>
+          <div class="side-lab">数据</div>
+          <a class="nav-item" href="#f2"><svg aria-hidden="true"><use href="#i-db"/></svg>数据中心<span class="cnt">F2</span></a>
+          <a class="nav-item" href="#f3"><svg aria-hidden="true"><use href="#i-pool"/></svg>股票池<span class="cnt">F3</span></a>
+          <div class="side-lab">研究</div>
+          <a class="nav-item" href="#f4"><svg aria-hidden="true"><use href="#i-lab"/></svg>回测实验室<span class="cnt">F4</span></a>
+          <a class="nav-item" href="#f5"><svg aria-hidden="true"><use href="#i-gauge"/></svg>绩效看板<span class="cnt">F5</span></a>
+          <a class="nav-item" href="#f7"><svg aria-hidden="true"><use href="#i-strategy"/></svg>策略中心<span class="cnt">F7</span></a>
+          <div class="side-lab">交易</div>
+          <a class="nav-item" href="#f6"><svg aria-hidden="true"><use href="#i-shield"/></svg>风控控制台<span class="cnt">F6</span></a>
+          <a class="nav-item" href="#f8"><svg aria-hidden="true"><use href="#i-sched"/></svg>组合调度<span class="cnt">F8</span></a>
+          <div class="side-foot">
+            五区：总览 / 数据 / 研究 / 交易 / 绩效<br>
+            <b>顶栏的环境徽标与 Kill Switch 跨区常驻</b>
+          </div>
+        </aside>
+        <div class="app-main">
+          <div class="app-top">
+            <div class="ttl"><b>帧标题放这里</b><i>副标题：这一屏在回答什么问题</i></div>
+            <span class="sp"></span>
+            <div class="envset">
+              <span class="env res"><svg width="12" height="12" aria-hidden="true"><use href="#i-cube"/></svg>研究环境</span>
+              <span class="env prod">生产环境</span>
+              <span class="env cross">跨环境</span>
+            </div>
+            <span class="killslot" title="本稿无实现"><span class="k">KILL SWITCH</span><span>未触发</span></span>
+          </div>
+          <div class="pane">
+            <div class="dlrow" style="background:var(--surface);border:1px solid var(--line);border-radius:var(--r-m)">
+              <span class="ic"><svg aria-hidden="true"><use href="#i-layout"/></svg></span>
+              <span class="info"><b>① 环境徽标（三态：研究 / 生产 / 跨环境）</b>
+                <i>常驻在每一帧的顶栏右侧。它是「我现在看的这一屏代表哪个环境」的唯一答案。</i></span>
+            </div>
+            <div class="dlrow" style="background:var(--surface);border:1px solid var(--line);border-radius:var(--r-m)">
+              <span class="ic err"><svg aria-hidden="true"><use href="#i-kill"/></svg></span>
+              <span class="info"><b>② Kill Switch（每屏可达，反白）</b>
+                <i>反白是「这是危险动作」的形状语言。它一经触发，所有下单路径都停 —— Agent 与策略都绕不过。</i></span>
+            </div>
+            <div class="dlrow" style="background:var(--surface);border:1px solid var(--line);border-radius:var(--r-m)">
+              <span class="ic warn"><svg aria-hidden="true"><use href="#i-user"/></svg></span>
+              <span class="info"><b>③ 人工决策区（唯一写操作区）</b>
+                <i>每个需要人拍板的东西都聚到 F1 的一个区里，不让它散落成「某个页面角落里的一个按钮」。</i></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <ol class="notes">
+      <li><b>为什么要有外壳帧：</b>八帧共用同一套导航与顶栏，单独看某一帧会以为「环境徽标是那一屏自己加的」。把它抽出来画一次，五次重复才变成一条约束。</li>
+      <li><b>导航里写了帧号（<code>F1</code>…<code>F8</code>）是<strong>这份稿子</strong>的需要，不是产品的需要</strong> —— 真实界面上那一格应当放数量角标（待采集批次数 / 待人工决策数）。本稿保留帧号，是为了让读者能把图和低保真的八帧对上号。</li>
+      <li><b>绩效区在导航里只有一项</b>（F5）。需求里的绩效模块确实只有这一屏可交付，其余（归因、报表导出）在 §06 的缺口清单里，<strong>不在这里画假入口</strong>。</li>
+      <li><b>断点：</b>1180px 以上是设计宽度；980px 以下侧栏塌到顶部；700px 以下所有多列网格变单列。本稿在 700px 处只保证「不溢出」，不保证好用 —— 桌面端产品，移动端只是兜底。</li>
+      <li><b>这一帧也是提案，不是已交付。</b>已交付的 <code>platform/web/src/App.jsx</code> 只有一个 <code>&lt;header&gt;</code> 加一个报告选择工具条，<b>没有侧栏、没有常驻顶栏、没有环境徽标位</b> ⇒ 图里这一整套外壳目前只存在于本稿与低保真里。它标成 <b>提案</b>（点划线外框），与 F1~F4 / F6~F8 同一待遇。</li>
+    </ol>
+  </div>
+</section>
+
+<section class="wrap sec anchor" id="frames">
+  <div class="sec-head"><span class="sec-num">04</span><h2>八帧</h2></div>
+  <p class="sec-sub">
+    帧内容的结构与判断<strong>全部继承</strong>低保真的 <code>index.html</code> 八帧（区域划分、表格列、KPI、
+    注解）；本稿做的是三件事：换视觉语言、把有真值的地方换成真值、把缺口标得更清楚。
+    <strong>每一帧的状态章（已交付 / 提案）都可以对着仓库现状核。</strong>
+  </p>
+</section>
+<!-- ==========================================================================
+     F1 · 平台总览 · 驾驶舱                                    【提案】
+     ========================================================================== -->
+<article class="frame proposal anchor" id="f1">
+  <div class="f-cap">
+    <span class="fid">F1</span><h3>平台总览 · 驾驶舱</h3>
+    <span class="badge b-warn"><svg aria-hidden="true"><use href="#i-eye"/></svg>提案</span>
+    <span class="r"><span class="f-trace">PRD §一 双循环 · §四 4.1 · 源：docs/low fidelity/index.html F1（追溯编号以低保真 §6 追溯表为准）</span></span>
+  </div>
+  <div class="win">
+    <div class="win-bar"><span class="win-dots"><i></i><i></i><i></i></span>
+      <span class="win-title">驾驶舱 · 桌面浏览器 1180px</span>
+      <span class="win-title mono" style="margin-left:auto">/overview</span>
+    </div>
+    <div class="app">
+      <aside class="app-side">
+        <div class="side-logo"><span class="logo-mark"><svg width="14" height="14"><use href="#i-chart"/></svg></span><span><b>量化平台</b><br><i>v1 · 只读稿</i></span></div>
+        <div class="side-lab">总览</div>
+        <a class="nav-item on" href="#f1"><svg aria-hidden="true"><use href="#i-cockpit"/></svg>驾驶舱<span class="cnt">F1</span></a>
+        <div class="side-lab">数据</div>
+        <a class="nav-item" href="#f2"><svg aria-hidden="true"><use href="#i-db"/></svg>数据中心<span class="cnt">F2</span></a>
+        <a class="nav-item" href="#f3"><svg aria-hidden="true"><use href="#i-pool"/></svg>股票池<span class="cnt">F3</span></a>
+        <div class="side-lab">研究</div>
+        <a class="nav-item" href="#f4"><svg aria-hidden="true"><use href="#i-lab"/></svg>回测实验室<span class="cnt">F4</span></a>
+        <a class="nav-item" href="#f5"><svg aria-hidden="true"><use href="#i-gauge"/></svg>绩效看板<span class="cnt">F5</span></a>
+        <a class="nav-item" href="#f7"><svg aria-hidden="true"><use href="#i-strategy"/></svg>策略中心<span class="cnt">F7</span></a>
+        <div class="side-lab">交易</div>
+        <a class="nav-item" href="#f6"><svg aria-hidden="true"><use href="#i-shield"/></svg>风控控制台<span class="cnt">F6</span></a>
+        <a class="nav-item" href="#f8"><svg aria-hidden="true"><use href="#i-sched"/></svg>组合调度<span class="cnt">F8</span></a>
+        <div class="side-foot">顶栏徽标与 Kill Switch 跨区常驻</div>
+      </aside>
+      <div class="app-main">
+        <div class="app-top">
+          <div class="ttl"><b>驾驶舱</b><i>今天这条链走到哪一步、有没有被否决、有没有事要人拍板</i></div>
+          <span class="sp"></span>
+          <div class="envset"><span class="env cross"><svg width="12" height="12" aria-hidden="true"><use href="#i-cube"/></svg>跨环境总览</span></div>
+          <span class="killslot" title="本稿无实现：真实 Kill Switch 状态需读取风控进程的持久状态"><span class="k">KILL SWITCH</span><span>未触发</span></span>
+        </div>
+        <div class="pane">
+
+          <div class="card">
+            <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-flow"/></svg>双循环状态</h4>
+              <span class="r"><span class="chip ghost">上一交易日 · [日期]</span></span>
+            </div>
+            <div class="flow-line"><span class="flow-lab">交易循环（日频）</span>
+              <div class="flow">
+                <span class="node done">数据采集</span><span class="arrow">→</span>
+                <span class="node done">数据校验与落库</span><span class="arrow">→</span>
+                <span class="node done">股票池生成</span><span class="arrow">→</span>
+                <span class="node done">市场状态识别</span><span class="arrow">→</span>
+                <span class="node done">策略信号</span><span class="arrow">→</span>
+                <span class="node run">组合调度汇总</span><span class="arrow">→</span>
+                <span class="node">风控校验</span><span class="arrow">→</span>
+                <span class="node">下单执行</span><span class="arrow">→</span>
+                <span class="node">绩效与归因</span><span class="arrow">→</span>
+                <span class="node">反馈回池</span>
+              </div>
+            </div>
+            <div class="flow-line"><span class="flow-lab">进化循环（低频）</span>
+              <div class="flow">
+                <span class="node dash">失效检测</span><span class="arrow">→</span>
+                <span class="node dash">失效诊断</span><span class="arrow">→</span>
+                <span class="node dash">假设生成</span><span class="arrow">→</span>
+                <span class="node dash">代码生成</span><span class="arrow">→</span>
+                <span class="node dash">回测验证</span><span class="arrow">→</span>
+                <span class="node dash">样本外验证</span><span class="arrow">→</span>
+                <span class="node dash">压力测试</span><span class="arrow">→</span>
+                <span class="node stop">人工晋级决策</span><span class="arrow">→</span>
+                <span class="node dash">模拟盘 / 灰度</span>
+              </div>
+            </div>
+            <p class="hint">
+              十步就是<b>十盏灯</b>，与低保真 §3.1 那一行一一对应（含末步「反馈回池」）。<b>步数两处不同是刻意的</b>：
+              下面的「今日巡检」是另一种粒度（当日任务书），合并了几步，所以格数少于灯数。
+              风控校验是<b>唯一能否决整条链</b>的节点 —— 它一旦拒绝，后面的灯当天不会再亮。
+            </p>
+          </div>
+
+          <div class="grid g2">
+            <div class="card">
+              <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-clock"/></svg>今日巡检</h4><span class="r"><span class="badge b-mute">6 项 · 另一种粒度</span></span></div>
+              <div class="tbl-wrap">
+                <table class="tbl">
+                  <thead><tr><th>巡检项</th><th>时点</th><th>产出</th><th>状态</th></tr></thead>
+                  <tbody>
+                    <tr><td>数据采集</td><td class="mono">[时点]</td><td class="mono">[批次号]</td><td><span class="badge b-ok"><svg aria-hidden="true"><use href="#i-check"/></svg>完成</span></td></tr>
+                    <tr><td>校验与落库</td><td class="mono">[时点]</td><td class="mono">[批次号]</td><td><span class="badge b-ok"><svg aria-hidden="true"><use href="#i-check"/></svg>完成</span></td></tr>
+                    <tr><td>股票池生成</td><td class="mono">[时点]</td><td class="mono">[池版本]</td><td><span class="badge b-ok"><svg aria-hidden="true"><use href="#i-check"/></svg>完成</span></td></tr>
+                    <tr><td>信号生成</td><td class="mono">[时点]</td><td class="mono">[信号数]</td><td><span class="badge b-pri">进行中</span></td></tr>
+                    <tr><td>风控校验</td><td class="mono">[时点]</td><td class="mono">[裁决数]</td><td><span class="badge b-mute">待运行</span></td></tr>
+                    <tr><td>绩效与归因</td><td class="mono">[时点]</td><td class="mono">[报告 id]</td><td><span class="badge b-mute">待运行</span></td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <p class="hint">可点进 F2~F8。<b>状态用文字 + 形状 + 颜色三重编码</b>，颜色去掉之后仍然读得出来。</p>
+            </div>
+
+            <div class="card">
+              <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-shield"/></svg>风控摘要</h4><span class="r"><a class="chip" href="#f6">去 F6</a></span></div>
+              <div class="grid g2" style="gap:10px">
+                <div class="kpi"><div class="k">今日裁决</div><div class="v">[n]</div><div class="u">通过 / 缩减 / 拒绝 三类分开计</div></div>
+                <div class="kpi"><div class="k">被拦下的开仓</div><div class="v">[n]</div><div class="u">只拦开仓 —— 平仓的路一直在</div></div>
+              </div>
+              <p class="hint" style="margin:10px 0 6px">拦截原因 Top3（<b>规则 id 取仓库真值</b>，条数是占位）：</p>
+              <div class="tbl-wrap">
+                <table class="tbl">
+                  <thead><tr><th>命中规则</th><th class="n">次数</th><th>裁决</th></tr></thead>
+                  <tbody>
+                    <tr><td class="mono">max_position_pct</td><td class="n">[n]</td><td><span class="badge b-warn">REDUCE</span></td></tr>
+                    <tr><td class="mono">max_sector_pct</td><td class="n">[n]</td><td><span class="badge b-warn">REDUCE</span></td></tr>
+                    <tr><td class="mono">max_daily_trades</td><td class="n">[n]</td><td><span class="badge b-err">REJECT</span></td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <p class="hint">三条规则 id 与它们的裁决口径取自 <code>quanauto/risk.py</code> 的 <code>RULE_SPECS</code> / <code>RULE_DECISION</code>。</p>
+            </div>
+          </div>
+
+          <div class="card" style="border-left:3px solid var(--brand)">
+            <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-user"/></svg>待人工决策（本屏唯一写操作区）</h4><span class="r"><span class="badge b-info">3 项</span></span></div>
+            <div class="dlrow">
+              <span class="ic"><svg aria-hidden="true"><use href="#i-strategy"/></svg></span>
+              <span class="info"><b>晋级提案：[策略ID] [vN] → 小资金灰度</b><i>证据链见 F8 的 Agent 提案流；批准动作在 F7 的状态机上</i></span>
+              <span class="act"><button class="btn btn-sm btn-soft" type="button" disabled title="本稿无实现：晋级需要一个真实的状态机写路径">去评审</button></span>
+            </div>
+            <div class="dlrow">
+              <span class="ic err"><svg aria-hidden="true"><use href="#i-alert"/></svg></span>
+              <span class="info"><b>降级提案：[策略ID] 触发 [退出条件]</b><i>降级走<b>渐进式减仓</b>，不集中清仓</i></span>
+              <span class="act"><button class="btn btn-sm btn-ghost" type="button" disabled title="本稿无实现">查看</button></span>
+            </div>
+            <div class="dlrow">
+              <span class="ic warn"><svg aria-hidden="true"><use href="#i-gear"/></svg></span>
+              <span class="info"><b>阈值变更提案：[规则 id] [旧值] → [新值]</b><i>变更走审批，不在这一屏直接改生效值</i></span>
+              <span class="act"><button class="btn btn-sm btn-warn-soft" type="button" disabled title="本稿无实现：阈值变更需要审批通道 + risk_rule_audit 留痕">提交审批</button></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <ol class="notes">
+    <li><b>环境徽标常驻且本屏是例外。</b>F1 是「跨环境总览」，所以它的徽标读「跨环境」；其余七帧读它们各自的环境。<b>徽标不允许被折叠、不允许只在设置页出现</b> —— 看错环境是这一行里最贵的错误。</li>
+    <li><b>Kill Switch 每屏可达</b>（反白 + 顶栏右侧）。它一经触发，所有下单路径都停，Agent 与策略都绕不过。所以它的形状是「危险」的形状，不是普通按钮。</li>
+    <li><b>巡检项可点进 F2~F8。</b>总览不复制下游的信息，只给「在哪一步、什么状态、点进去看谁」。</li>
+    <li><b>待人工决策是全屏唯一的写操作区。</b>把它聚成一块，是为了让「需要人拍板的事」有一个固定的地方 —— 散落成「某个页面角落里的小按钮」就必然被漏掉。</li>
+    <li><b>状态用文字 + 形状 + 颜色三重编码</b>，不用颜色单独承担语义：色弱、灰度打印、深色主题下都要能读。</li>
+    <li><b>本帧数字全是占位</b>：只有规则 id（<code>max_position_pct</code> / <code>max_sector_pct</code> / <code>max_daily_trades</code>）与它们的裁决口径是仓库真值，计数与日期都是 <code>[方括号]</code>。理由是：总览的数字要有真实来源才有意义，而这一层的上游（采集 / 池 / 信号）都还没接上。</li>
+  </ol>
+</article>
+
+<!-- ==========================================================================
+     F2 · 数据中心                                              【提案】
+     ========================================================================== -->
+<article class="frame proposal anchor" id="f2">
+  <div class="f-cap">
+    <span class="fid">F2</span><h3>数据中心 · 采集 · 质量 · 数据源</h3>
+    <span class="badge b-warn"><svg aria-hidden="true"><use href="#i-eye"/></svg>提案</span>
+    <span class="r"><span class="f-trace">PRD §三 模块1 · 源：docs/low fidelity/index.html F2 · 语义源：quanauto/ingest.py / datasources.py</span></span>
+  </div>
+  <div class="win">
+    <div class="win-bar"><span class="win-dots"><i></i><i></i><i></i></span>
+      <span class="win-title">数据中心 · 桌面浏览器 1180px</span>
+      <span class="win-title mono" style="margin-left:auto">/data</span>
+    </div>
+    <div class="app">
+      <aside class="app-side">
+        <div class="side-logo"><span class="logo-mark"><svg width="14" height="14"><use href="#i-chart"/></svg></span><span><b>量化平台</b><br><i>v1 · 只读稿</i></span></div>
+        <div class="side-lab">总览</div>
+        <a class="nav-item" href="#f1"><svg aria-hidden="true"><use href="#i-cockpit"/></svg>驾驶舱<span class="cnt">F1</span></a>
+        <div class="side-lab">数据</div>
+        <a class="nav-item on" href="#f2"><svg aria-hidden="true"><use href="#i-db"/></svg>数据中心<span class="cnt">F2</span></a>
+        <a class="nav-item" href="#f3"><svg aria-hidden="true"><use href="#i-pool"/></svg>股票池<span class="cnt">F3</span></a>
+        <div class="side-lab">研究</div>
+        <a class="nav-item" href="#f4"><svg aria-hidden="true"><use href="#i-lab"/></svg>回测实验室<span class="cnt">F4</span></a>
+        <a class="nav-item" href="#f5"><svg aria-hidden="true"><use href="#i-gauge"/></svg>绩效看板<span class="cnt">F5</span></a>
+        <a class="nav-item" href="#f7"><svg aria-hidden="true"><use href="#i-strategy"/></svg>策略中心<span class="cnt">F7</span></a>
+        <div class="side-lab">交易</div>
+        <a class="nav-item" href="#f6"><svg aria-hidden="true"><use href="#i-shield"/></svg>风控控制台<span class="cnt">F6</span></a>
+        <a class="nav-item" href="#f8"><svg aria-hidden="true"><use href="#i-sched"/></svg>组合调度<span class="cnt">F8</span></a>
+        <div class="side-foot">顶栏徽标与 Kill Switch 跨区常驻</div>
+      </aside>
+      <div class="app-main">
+        <div class="app-top">
+          <div class="ttl"><b>数据中心</b><i>这批数据是从哪来的、什么时候可见、能不能用来回测</i></div>
+          <span class="sp"></span>
+          <div class="envset"><span class="env res"><svg width="12" height="12" aria-hidden="true"><use href="#i-cube"/></svg>研究环境</span></div>
+          <span class="killslot" title="本稿无实现"><span class="k">KILL SWITCH</span><span>未触发</span></span>
+        </div>
+        <div class="pane">
+
+          <div class="card">
+            <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-scale"/></svg>口径提示（本层的五条底线）</h4></div>
+            <div class="grid g4" style="gap:10px">
+              <div class="kpi"><div class="k">财报</div><div class="v sm">以披露日期为准</div><div class="u">不是报告期 —— 用错就是未来函数</div></div>
+              <div class="kpi"><div class="k">指数成分股</div><div class="v sm">PIT 快照</div><div class="u">按当时的成分，不是今天的成分</div></div>
+              <div class="kpi"><div class="k">复权价</div><div class="v sm">读取时现算</div><div class="u">不是落库时就乘好</div></div>
+              <div class="kpi"><div class="k">分红</div><div class="v sm">公告日可见 · 事件日取值</div><div class="u">可见性用公告日，取值与窗口用事件日</div></div>
+            </div>
+            <p class="hint">第五条是关于形状的：<b>每条数据两个时间戳</b>（事件发生 + 我什么时候能知道它）。只存一个时间戳的数据没法做 PIT 回测。</p>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-list"/></svg>采集批次</h4>
+              <span class="r"><span class="chip ghost">按数据版本筛选</span></span></div>
+            <div class="tbl-wrap">
+              <table class="tbl">
+                <thead><tr><th>批次号</th><th>数据源</th><th>表 / schema</th><th>区间</th><th class="n">行数</th><th>数据版本</th><th>结果</th></tr></thead>
+                <tbody>
+                  <tr><td class="mono">[run id]</td><td>csv</td><td class="mono">daily_bar</td><td class="mono">[起] ~ [止]</td><td class="n">[n]</td><td class="mono">000001.SZ:sample_prices.csv:60</td><td><span class="badge b-ok"><svg aria-hidden="true"><use href="#i-check"/></svg>落库</span></td></tr>
+                  <tr><td class="mono">[run id]</td><td>csv</td><td class="mono">factor</td><td class="mono">[起] ~ [止]</td><td class="n">[n]</td><td class="mono">[版本串]</td><td><span class="badge b-ok"><svg aria-hidden="true"><use href="#i-check"/></svg>落库</span></td></tr>
+                  <tr><td class="mono">[run id]</td><td>csv</td><td class="mono">dividend</td><td class="mono">[起] ~ [止]</td><td class="n">[n]</td><td class="mono">[版本串]</td><td><span class="badge b-ok"><svg aria-hidden="true"><use href="#i-check"/></svg>落库</span></td></tr>
+                  <tr style="background:var(--err-soft)">
+                    <td class="mono">[run id]</td><td>csv</td><td class="mono">financial</td><td class="mono">[起] ~ [止]</td><td class="n">0</td><td class="muted">—</td>
+                    <td><span class="badge b-err"><svg aria-hidden="true"><use href="#i-x"/></svg>拒绝：[项]</span></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="hint">
+              被拒绝的行<b>留在表里</b>并显示拒绝原因是刻意的：只把失败记进日志的表，看不出「这一批少了一天」。
+              数据版本串的形状（<code>标的:文件名:行数</code>）取自 <code>docs/high fidelity/dashboard.html</code>
+              里那份真实报告夹具的 <code>dataVersion</code>。
+            </p>
+          </div>
+
+          <div class="grid g2">
+            <div class="card">
+              <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-alert"/></svg>数据质量</h4></div>
+              <div class="grid g2" style="gap:10px">
+                <div class="kpi"><div class="k">缺行</div><div class="v">[n]</div><div class="u"><span class="badge b-warn">提案</span></div></div>
+                <div class="kpi"><div class="k">重复</div><div class="v">[n]</div><div class="u"><span class="badge b-warn">提案</span></div></div>
+                <div class="kpi" style="border-color:color-mix(in srgb,var(--ok) 30%,var(--line))"><div class="k">值域越界</div><div class="v">[n]</div><div class="u"><span class="badge b-ok"><svg aria-hidden="true"><use href="#i-check"/></svg>已实现</span></div></div>
+                <div class="kpi" style="border-color:color-mix(in srgb,var(--ok) 30%,var(--line))"><div class="k">帧级键重复</div><div class="v">[n]</div><div class="u"><span class="badge b-ok"><svg aria-hidden="true"><use href="#i-check"/></svg>已实现</span></div></div>
+              </div>
+              <p class="hint">
+                「已实现」的两格对应 <code>quanauto/datasources.py</code> 的 <code>validate_frame</code> —— 它真的判值域与帧级自然键重复。
+                另两格<b>标「提案」</b>：缺行与重复这两项判据仓库里还没有。
+                <b>一处有实现、一处没有，就要分开画</b>，不能都画成绿的。
+              </p>
+            </div>
+
+            <div class="card">
+              <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-link"/></svg>数据源登记</h4>
+                <span class="r"><button class="btn btn-sm btn-soft" type="button" disabled title="本稿无实现：数据源登记表的写路径未落地">登记数据源</button></span></div>
+              <div class="tbl-wrap">
+                <table class="tbl">
+                  <thead><tr><th>数据源</th><th>鉴权</th><th>覆盖</th><th>最近一次成功</th></tr></thead>
+                  <tbody>
+                    <tr><td class="mono">csv</td><td>—</td><td>本地夹具</td><td class="mono">[时间]</td></tr>
+                    <tr><td class="mono">eastmoney</td><td>公开接口</td><td>日线 / 复权因子</td><td class="mono">[时间]</td></tr>
+                    <tr><td class="mono">[源名]</td><td class="muted">—</td><td class="muted">—</td><td class="muted">尚未接入</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <p class="hint">「质量分」这一列<b>不画</b>：两个 ingestor 都还没有评分口径，画一列没有判据的数字等于给它发一张合格证。</p>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-flow"/></svg>本轮流水线</h4>
+              <span class="r"><span class="badge b-info">不提供「强制落库」按钮</span></span></div>
+            <div class="flow">
+              <span class="node done">选源与区间</span><span class="arrow">→</span>
+              <span class="node done">取数</span><span class="arrow">→</span>
+              <span class="node run">帧校验</span><span class="arrow">→</span>
+              <span class="node">盖 source / data_version</span><span class="arrow">→</span>
+              <span class="node">落库</span><span class="arrow">→</span>
+              <span class="node">写批次留痕</span>
+            </div>
+            <div class="rulebox" style="margin-top:10px">
+              <b>没有「强制落库」这个按钮是设计决策，不是漏画。</b>
+              校验不通过时可以「修数据重跑」，但不能「跳过校验写进去」——
+              一个能跳过校验的按钮，一定会在某个赶时间的下午被按下去。
+            </div>
+            <p class="hint">
+              这条链在仓库里已经有编排层（<code>quanauto/ingest.py</code>：取数 → <code>validate_frame</code> → 盖
+              <code>source</code>/<code>data_version</code> → 落库 → 写 <code>dc_ingest_run</code>）。
+              <b>但它没有产品调用点，也没在真库上跑过</b> —— 本帧仍然是提案，别把这句读成「数据中心已交付」。
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <ol class="notes">
+    <li><b>可见性用公告日、取值用事件日</b>：分红那条规则是 PIT 的典型形态。界面上把它印在「口径提示」里，而不是藏进文档 —— 用错时间戳这件事，事后从结果上看不出来。</li>
+    <li><b>被拒绝的批次留在表里</b>，带原因。只写日志的表会让「少了一天」这件事在界面上隐身。</li>
+    <li><b>数据质量的四格必须分开画实现状态</b>：值域与帧级键重复有判据，缺行与重复没有。四处全画绿，就是对两处不存在的能力发合格证。</li>
+    <li><b>不画「质量分」。</b>没有口径的分数比没有分数更糟 —— 它会被当成判据用。</li>
+    <li><b>不提供强制落库。</b>见上面的决定框。</li>
+    <li><b>依赖标注：</b>本帧的接线状态看仓库现状，不要看这张图。规则 id、数据版本串的形状是仓库真值，行数与时间戳是 <code>[占位]</code>。</li>
+  </ol>
+</article>
+<!-- ==========================================================================
+     F3 · 股票池管理                                            【提案】
+     ========================================================================== -->
+<article class="frame proposal anchor" id="f3">
+  <div class="f-cap">
+    <span class="fid">F3</span><h3>股票池管理 · 规则链 · 漏斗 · 当日成分</h3>
+    <span class="badge b-warn"><svg aria-hidden="true"><use href="#i-eye"/></svg>提案</span>
+    <span class="r"><span class="f-trace">PRD §三 模块2 · 源：docs/low fidelity/index.html F3</span></span>
+  </div>
+  <div class="win">
+    <div class="win-bar"><span class="win-dots"><i></i><i></i><i></i></span>
+      <span class="win-title">股票池 · 桌面浏览器 1180px</span>
+      <span class="win-title mono" style="margin-left:auto">/pool</span>
+    </div>
+    <div class="app">
+      <aside class="app-side">
+        <div class="side-logo"><span class="logo-mark"><svg width="14" height="14"><use href="#i-chart"/></svg></span><span><b>量化平台</b><br><i>v1 · 只读稿</i></span></div>
+        <div class="side-lab">总览</div>
+        <a class="nav-item" href="#f1"><svg aria-hidden="true"><use href="#i-cockpit"/></svg>驾驶舱<span class="cnt">F1</span></a>
+        <div class="side-lab">数据</div>
+        <a class="nav-item" href="#f2"><svg aria-hidden="true"><use href="#i-db"/></svg>数据中心<span class="cnt">F2</span></a>
+        <a class="nav-item on" href="#f3"><svg aria-hidden="true"><use href="#i-pool"/></svg>股票池<span class="cnt">F3</span></a>
+        <div class="side-lab">研究</div>
+        <a class="nav-item" href="#f4"><svg aria-hidden="true"><use href="#i-lab"/></svg>回测实验室<span class="cnt">F4</span></a>
+        <a class="nav-item" href="#f5"><svg aria-hidden="true"><use href="#i-gauge"/></svg>绩效看板<span class="cnt">F5</span></a>
+        <a class="nav-item" href="#f7"><svg aria-hidden="true"><use href="#i-strategy"/></svg>策略中心<span class="cnt">F7</span></a>
+        <div class="side-lab">交易</div>
+        <a class="nav-item" href="#f6"><svg aria-hidden="true"><use href="#i-shield"/></svg>风控控制台<span class="cnt">F6</span></a>
+        <a class="nav-item" href="#f8"><svg aria-hidden="true"><use href="#i-sched"/></svg>组合调度<span class="cnt">F8</span></a>
+        <div class="side-foot">顶栏徽标与 Kill Switch 跨区常驻</div>
+      </aside>
+      <div class="app-main">
+        <div class="app-top">
+          <div class="ttl"><b>股票池管理</b><i>今天这份名单是怎么筛出来的，谁被剔掉了、为什么</i></div>
+          <span class="sp"></span>
+          <div class="envset"><span class="env res"><svg width="12" height="12" aria-hidden="true"><use href="#i-cube"/></svg>研究环境</span></div>
+          <span class="killslot" title="本稿无实现"><span class="k">KILL SWITCH</span><span>未触发</span></span>
+        </div>
+        <div class="pane">
+
+          <div class="card">
+            <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-filter"/></svg>规则链</h4>
+              <span class="r"><span class="badge b-info"><svg aria-hidden="true"><use href="#i-lock"/></svg>顺序不可拖拽</span></span></div>
+            <div class="flow" style="align-items:stretch">
+              <span class="node done" style="text-align:left">① 硬性排除<br><i style="font-style:normal;color:var(--text3);font-size:11px">ST · 退市整理 · 上市未满 N 日</i></span>
+              <span class="arrow">→</span>
+              <span class="node done" style="text-align:left">② 财务健康<br><i style="font-style:normal;color:var(--text3);font-size:11px">[指标] · 以披露日期为准</i></span>
+              <span class="arrow">→</span>
+              <span class="node run" style="text-align:left">③ 流动性门槛<br><i style="font-style:normal;color:var(--text3);font-size:11px">日均成交额 ≥ [阈值]</i></span>
+              <span class="arrow">→</span>
+              <span class="node dash" style="text-align:left">④ 行业中性化（可选）<br><i style="font-style:normal;color:var(--text3);font-size:11px">关掉时这一级不参与筛选</i></span>
+            </div>
+            <p class="hint">
+              <b>顺序是判据，不是排列</b> —— 先按流动性砍掉一半再算财务健康，和反过来算，得到的名单不是同一份。
+              所以这条链<b>不可拖拽</b>，也<b>不许</b>做成「勾选启用某几步」的自由组合。
+            </p>
+          </div>
+
+          <div class="grid g2">
+            <div class="card">
+              <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-scale"/></svg>过滤漏斗</h4></div>
+              <div class="tbl-wrap">
+                <table class="tbl">
+                  <thead><tr><th>环节</th><th class="n">剩余</th><th class="n">剔除</th><th>说明</th></tr></thead>
+                  <tbody>
+                    <tr><td>全市场</td><td class="n">[n]</td><td class="n muted">—</td><td>起点</td></tr>
+                    <tr><td>① 硬性排除</td><td class="n">[n]</td><td class="n">[n]</td><td>ST / 退市整理</td></tr>
+                    <tr><td>② 财务健康</td><td class="n">[n]</td><td class="n">[n]</td><td>按披露日期取值</td></tr>
+                    <tr><td>③ 流动性门槛</td><td class="n">[n]</td><td class="n">[n]</td><td>日均成交额</td></tr>
+                    <tr><td>④ 行业中性化（已关闭）</td><td class="n muted">[n]</td><td class="n muted">—</td><td>本批未启用</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <p class="hint">关闭的一级画成灰的、<b>但仍然占一行</b>：抽掉那一行会让人以为链上只有三级。</p>
+            </div>
+
+            <div class="card">
+              <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-pool"/></svg>池选择</h4>
+                <span class="r"><button class="btn btn-sm btn-soft" type="button" disabled title="本稿无实现：新建股票池需要写路径 + 规则集持久化"><svg aria-hidden="true"><use href="#i-plus"/></svg>新建池</button></span></div>
+              <div class="flow" style="gap:8px">
+                <span class="chip on">全市场池</span>
+                <span class="chip">沪深300池</span>
+                <span class="chip">动量池</span>
+                <span class="chip ghost">[自定义池]</span>
+              </div>
+              <div class="grid g2" style="gap:10px;margin-top:12px">
+                <div class="kpi"><div class="k">本次入池</div><div class="v">[n]</div><div class="u">支</div></div>
+                <div class="kpi"><div class="k">池版本</div><div class="v sm mono">[池版本]</div><div class="u">回测抬头要引用它</div></div>
+              </div>
+              <p class="hint">池版本是<b>可重现性的一部分</b>：同一套参数配不同的池版本，跑出来不是同一个回测。</p>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-list"/></svg>当日成分</h4>
+              <span class="r"><span class="badge b-warn"><svg aria-hidden="true"><use href="#i-alert"/></svg>手动覆盖必须填理由</span></span></div>
+            <div class="tbl-wrap">
+              <table class="tbl">
+                <thead><tr><th>代码</th><th>名称</th><th class="n">市值分位</th><th class="n">日均成交额</th><th>行业</th><th>加入日期</th><th>最近剔除原因</th></tr></thead>
+                <tbody>
+                  <tr><td class="mono">000001.SZ</td><td>[名称]</td><td class="n">[分位]</td><td class="n">[金额]</td><td>[行业]</td><td class="mono">[日期]</td><td class="muted">—</td></tr>
+                  <tr><td class="mono">[代码]</td><td>[名称]</td><td class="n">[分位]</td><td class="n">[金额]</td><td>[行业]</td><td class="mono">[日期]</td><td class="muted">—</td></tr>
+                  <tr><td class="mono">[代码]</td><td>[名称]</td><td class="n">[分位]</td><td class="n">[金额]</td><td>[行业]</td><td class="mono">[日期]</td><td>流动性门槛（手动覆盖）</td></tr>
+                  <tr><td class="mono">[代码]</td><td>[名称]</td><td class="n">[分位]</td><td class="n">[金额]</td><td>[行业]</td><td class="mono">[日期]</td><td class="muted">—</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="rulebox" style="margin-top:10px">
+              <b>手动加入 / 手动剔除都要留理由</b>，并且理由与「哪台机器按哪条规则决定的」在同一个字段族里。
+              一个能静默手动加票的池子，回测结果就没有解释力 —— 你会不知道那个超额收益是不是人手挑出来的。
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <ol class="notes">
+    <li><b>规则链的顺序是判据。</b>组内是<b>与</b>（全部满足），组间是<b>顺序过滤</b>。所以界面上不许出现「拖动排序」，也不许出现「启用第 2、4 条」这种自由组合。</li>
+    <li><b>关闭的一级仍然占一行</b>（画灰），因为链的形状本身是信息。</li>
+    <li><b>手动覆盖必须留理由</b>，且与自动决策同表可见。见上面的决定框。</li>
+    <li><b>池版本可重现。</b>所以它要在回测抬头里出现，而不只是在这一屏的角落里。</li>
+  </ol>
+</article>
+
+<!-- ==========================================================================
+     F4 · 回测实验室                                            【提案】
+     ========================================================================== -->
+<article class="frame proposal anchor" id="f4">
+  <div class="f-cap">
+    <span class="fid">F4</span><h3>回测实验室 · 配置 · 可重现性 · 结果</h3>
+    <span class="badge b-warn"><svg aria-hidden="true"><use href="#i-eye"/></svg>提案</span>
+    <span class="r"><span class="f-trace">PRD §三 模块6 · 源：docs/low fidelity/index.html F4 · 数值源：platform/web/test/report-view.fixture.json</span></span>
+  </div>
+  <div class="win">
+    <div class="win-bar"><span class="win-dots"><i></i><i></i><i></i></span>
+      <span class="win-title">回测实验室 · 桌面浏览器 1180px</span>
+      <span class="win-title mono" style="margin-left:auto">/backtest</span>
+    </div>
+    <div class="app">
+      <aside class="app-side">
+        <div class="side-logo"><span class="logo-mark"><svg width="14" height="14"><use href="#i-chart"/></svg></span><span><b>量化平台</b><br><i>v1 · 只读稿</i></span></div>
+        <div class="side-lab">总览</div>
+        <a class="nav-item" href="#f1"><svg aria-hidden="true"><use href="#i-cockpit"/></svg>驾驶舱<span class="cnt">F1</span></a>
+        <div class="side-lab">数据</div>
+        <a class="nav-item" href="#f2"><svg aria-hidden="true"><use href="#i-db"/></svg>数据中心<span class="cnt">F2</span></a>
+        <a class="nav-item" href="#f3"><svg aria-hidden="true"><use href="#i-pool"/></svg>股票池<span class="cnt">F3</span></a>
+        <div class="side-lab">研究</div>
+        <a class="nav-item on" href="#f4"><svg aria-hidden="true"><use href="#i-lab"/></svg>回测实验室<span class="cnt">F4</span></a>
+        <a class="nav-item" href="#f5"><svg aria-hidden="true"><use href="#i-gauge"/></svg>绩效看板<span class="cnt">F5</span></a>
+        <a class="nav-item" href="#f7"><svg aria-hidden="true"><use href="#i-strategy"/></svg>策略中心<span class="cnt">F7</span></a>
+        <div class="side-lab">交易</div>
+        <a class="nav-item" href="#f6"><svg aria-hidden="true"><use href="#i-shield"/></svg>风控控制台<span class="cnt">F6</span></a>
+        <a class="nav-item" href="#f8"><svg aria-hidden="true"><use href="#i-sched"/></svg>组合调度<span class="cnt">F8</span></a>
+        <div class="side-foot">顶栏徽标与 Kill Switch 跨区常驻</div>
+      </aside>
+      <div class="app-main">
+        <div class="app-top">
+          <div class="ttl"><b>回测实验室</b><i>这次跑的到底是哪个版本的数据、哪个版本的策略、哪些参数</i></div>
+          <span class="sp"></span>
+          <div class="envset"><span class="env res"><svg width="12" height="12" aria-hidden="true"><use href="#i-cube"/></svg>研究环境</span></div>
+          <span class="killslot" title="本稿无实现"><span class="k">KILL SWITCH</span><span>未触发</span></span>
+        </div>
+        <div class="pane">
+
+          <div class="grid g2">
+            <div class="card">
+              <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-gear"/></svg>回测配置</h4></div>
+              <div class="spec">
+                <table class="spec-tbl">
+                  <tbody>
+                    <tr><td>策略</td><td class="m">ma-cross@1.0.0</td></tr>
+                    <tr><td>股票池</td><td class="m">全市场池 · [池版本]</td></tr>
+                    <tr><td>回测库</td><td class="m">含已退市标的（生存者偏差）</td></tr>
+                    <tr><td>区间</td><td class="m">2024-01-02 ~ 2024-03-25</td></tr>
+                    <tr><td>初始资金</td><td class="m">100000.00</td></tr>
+                    <tr><td>成本</td><td class="m">佣金 [费率] · 印花税 [费率] · 滑点 [bps]</td></tr>
+                    <tr><td>复权口径</td><td class="m">后复权 ｜ 不复权 + 分红再投资 ｜ <s>前复权（不给）</s></td></tr>
+                    <tr><td>随机种子</td><td class="m">7</td></tr>
+                    <tr><td>风控参数</td><td class="m">取 F6 当前生效版本 [版本号]</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <p class="hint">
+                <b>「前复权」划掉不是偷懒</b>：前复权价会随最新一条数据变化，同一个回测今天跑和明天跑能得到两个结论。
+                不给这个选项，比给一个会漂的选项更负责。
+              </p>
+            </div>
+
+            <div class="card">
+              <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-lock"/></svg>可重现性抬头</h4>
+                <span class="r"><span class="badge b-ok"><svg aria-hidden="true"><use href="#i-check"/></svg>四要素齐</span></span></div>
+              <div class="grid g2" style="gap:10px">
+                <div class="kpi"><div class="k">数据版本</div><div class="v sm mono">000001.SZ:sample_prices.csv:60</div><div class="u">标的 : 来源 : 行数</div></div>
+                <div class="kpi"><div class="k">策略版本</div><div class="v sm mono">ma-cross@1.0.0</div><div class="u">代码版本，不是策略名</div></div>
+                <div class="kpi"><div class="k">参数</div><div class="v sm mono">[参数指纹]</div><div class="u">同一份参数 → 同一个指纹</div></div>
+                <div class="kpi"><div class="k">随机种子</div><div class="v sm mono">7</div><div class="u">没有种子就没有可重现</div></div>
+              </div>
+              <p class="hint">
+                上面四格里的<b>数据版本、策略版本、随机种子、区间、初始资金都是仓库真值</b>
+                （取自那份真实报告夹具）。参数指纹仍是占位 —— 仓库还没有这套指纹口径。
+              </p>
+            </div>
+          </div>
+
+          <div class="card" style="border-left:3px solid var(--err)">
+            <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-alert"/></svg>校验错误（示例：被拦住的一次配置）</h4>
+              <span class="r"><span class="badge b-err">2 项 · 不可运行</span></span></div>
+            <div class="dlrow">
+              <span class="ic err"><svg aria-hidden="true"><use href="#i-x"/></svg></span>
+              <span class="info"><b>复权口径选了「前复权」</b><i>该口径不提供 —— 它会让同一份配置在不同日期跑出不同结论</i></span>
+            </div>
+            <div class="dlrow">
+              <span class="ic err"><svg aria-hidden="true"><use href="#i-x"/></svg></span>
+              <span class="info"><b>区间终点晚于数据版本的最新交易日</b><i>数据版本 = 000001.SZ:sample_prices.csv:60，最新到 2024-03-25</i></span>
+            </div>
+            <p class="hint"><b>有校验错误时「运行回测」不可点</b>（不是点了才报错）—— 先拦住，再解释。</p>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-run"/></svg>运行条</h4>
+              <span class="r"><span class="badge b-pri">进行中 · 已处理 [n] / [N]</span></span></div>
+            <div class="flow" style="gap:10px;align-items:center">
+              <button class="btn btn-pri" type="button" disabled title="本稿无实现：回测运行需要引擎 + 数据中心落库链路"><svg aria-hidden="true"><use href="#i-run"/></svg>运行回测</button>
+              <button class="btn btn-ghost" type="button" disabled title="本稿无实现">取消</button>
+              <div class="progress" style="flex:1;min-width:120px"><i style="width:38%"></i></div>
+              <span class="mono" style="font-size:12px;color:var(--text2)">38%</span>
+            </div>
+            <p class="hint">百分比与「已处理 n / N」都取自服务端的进度计数，<b>页面不自己按时间估算</b>。</p>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-candles"/></svg>结果图</h4>
+              <span class="r"><span class="legend">
+                <i><span class="lg-sw hatch"></span>图表占位</i>
+                <i><span class="lg-sw dash"></span>提案</i>
+              </span></span></div>
+            <div class="ph h120"><span>K 线图占位 · 本稿不画假 K 线<br><i style="font-style:normal;color:var(--text3);font-size:11px">买卖点标记：买入 ▲ 17 处 · 卖出 ▼ 19 处（取自低保真原型里真的画出来的那 36 个标记）</i></span></div>
+            <div class="curve" style="margin-top:12px">
+              <h5 style="margin:0 0 6px;font-size:12.5px">净值曲线占位 · 60 个点 · 区间 2024-01-02 ~ 2024-03-25</h5>
+              <div class="ph h80">净值曲线占位 · 数据已存在（夹具里 <code>equityCurve = 60</code> 点）但本稿不画折线<br>折线的形状由服务端下发的点决定，不在这里手工摆</div>
+              <div class="curve-foot"><span>累计收益 <b class="down">-3.2043%</b></span><span>·</span><span>最大回撤 <b class="up">5.4043%</b></span><span>·</span><span>期末净值 <b class="mono">96795.65</b></span><span>·</span><span>成交 <b class="mono">1</b> 笔</span></div>
+            </div>
+            <div class="gap err" style="margin-top:12px">
+              <b>已知缺口：K 线要 OHLCV，而回测报告里没有。</b>
+              报告的结构计数只有 <code>equity_curve / trades / orders</code>（<code>quanauto/dashboard.py</code> 的
+              <code>STRUCTURE_COUNTS</code>），没有逐日 OHLC。
+              <b>要修就修产品侧</b>（让报告多带一组行情，或者由页面按数据版本自己取），
+              <b>不许</b>在这一稿里凭空画一根好看的 K 线。
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <ol class="notes">
+    <li><b>可重现性抬头是四要素</b>（数据版本 / 策略版本 / 参数 / 随机种子），不是「跑过了」三个字。少任何一项，这份报告只能看，不能复。</li>
+    <li><b>「前复权」不给</b>：会漂的选项比没有这个选项更危险。</li>
+    <li><b>校验失败时运行按钮不可点</b>，并且错误块用双线左边框 + 说明 —— 不是一句「参数错误」。</li>
+    <li><b>K 线是占位，买卖点标记是真的。</b>低保真的原型里买卖点确实画出来了（36 个），因为那几个点来自 <code>trades</code>；缺的是逐日 OHLC。两件事分开说，别混成「K 线也没有」。</li>
+    <li><b>缺失项写「要什么、为什么现在给不了、该修哪一侧」</b>（见上面那个缺口块），不写「待完善」。</li>
+    <li><b>本帧的复现四要素取自真实报告夹具</b>；成本费率、池版本、参数指纹仍是占位。</li>
+  </ol>
+</article>
+<!-- ==========================================================================
+     F5 · 绩效看板                                     【已交付（信息）】
+     ========================================================================== -->
+<article class="frame delivered anchor" id="f5">
+  <div class="f-cap">
+    <span class="fid">F5</span><h3>绩效看板 · 报告 · 曲线 · 指标分组</h3>
+    <span class="badge b-ok"><svg aria-hidden="true"><use href="#i-check"/></svg>已交付</span>
+    <span class="r"><span class="f-trace">PRD §三 模块10 · 实现：platform/web/src/App.jsx · 数值源：report-view.fixture.json（14 项指标逐字取自真值）</span></span>
+  </div>
+
+  <div class="rulebox" style="margin:0 0 12px">
+    <b>这一帧的两句话必须分开说：</b>
+    <b>① 它的信息已交付</b> —— 字段、分组、分组内顺序、每个数字的文本，全部来自 <code>platform/web/</code> 那份真实实现，
+    本稿<strong>没有改一个字</strong>（改了它，四条平台层门禁的比对对象就断了）。
+    <b>② 它的皮肤是提案</b> —— 底色、卡片、圆角、字号是这次换的。所以这一帧的外框是<strong>实线</strong>
+    （表示「有实现」），而里面的<strong>外观</strong>仍然只属于本稿。
+    把这两句合成「F5 高保真了」，是这页里最容易犯的错。
+  </div>
+
+  <div class="win">
+    <div class="win-bar"><span class="win-dots"><i></i><i></i><i></i></span>
+      <span class="win-title">绩效看板 · 桌面浏览器 1180px · 唯一已交付的帧</span>
+      <span class="win-title mono" style="margin-left:auto">/performance</span>
+    </div>
+    <div class="app">
+      <aside class="app-side">
+        <div class="side-logo"><span class="logo-mark"><svg width="14" height="14"><use href="#i-chart"/></svg></span><span><b>量化平台</b><br><i>v1 · 只读稿</i></span></div>
+        <div class="side-lab">总览</div>
+        <a class="nav-item" href="#f1"><svg aria-hidden="true"><use href="#i-cockpit"/></svg>驾驶舱<span class="cnt">F1</span></a>
+        <div class="side-lab">数据</div>
+        <a class="nav-item" href="#f2"><svg aria-hidden="true"><use href="#i-db"/></svg>数据中心<span class="cnt">F2</span></a>
+        <a class="nav-item" href="#f3"><svg aria-hidden="true"><use href="#i-pool"/></svg>股票池<span class="cnt">F3</span></a>
+        <div class="side-lab">研究</div>
+        <a class="nav-item" href="#f4"><svg aria-hidden="true"><use href="#i-lab"/></svg>回测实验室<span class="cnt">F4</span></a>
+        <a class="nav-item on" href="#f5"><svg aria-hidden="true"><use href="#i-gauge"/></svg>绩效看板<span class="cnt">F5</span></a>
+        <a class="nav-item" href="#f7"><svg aria-hidden="true"><use href="#i-strategy"/></svg>策略中心<span class="cnt">F7</span></a>
+        <div class="side-lab">交易</div>
+        <a class="nav-item" href="#f6"><svg aria-hidden="true"><use href="#i-shield"/></svg>风控控制台<span class="cnt">F6</span></a>
+        <a class="nav-item" href="#f8"><svg aria-hidden="true"><use href="#i-sched"/></svg>组合调度<span class="cnt">F8</span></a>
+        <div class="side-foot">顶栏徽标与 Kill Switch 跨区常驻</div>
+      </aside>
+      <div class="app-main">
+        <div class="app-top">
+          <div class="ttl"><b>回测绩效看板</b><i>这一份报告跑的是哪个版本、结果是多少</i></div>
+          <span class="sp"></span>
+          <div class="envset"><span class="env res"><svg width="12" height="12" aria-hidden="true"><use href="#i-cube"/></svg>研究环境</span></div>
+          <span class="killslot" title="本稿无实现"><span class="k">KILL SWITCH</span><span>未触发</span></span>
+        </div>
+        <div class="pane">
+
+          <div class="card">
+            <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-file"/></svg>报告抬头</h4>
+              <span class="r"><span class="badge b-ok">status: SUCCESS</span>
+                <span class="chip ghost">按报告 id 选择</span></span></div>
+            <div class="spec">
+              <table class="spec-tbl">
+                <tbody>
+                  <tr><td>报告 / 标的 / 窗口</td><td class="m">report-seed7-a · 000001.SZ · 2024-01-02 ~ 2024-03-25</td></tr>
+                  <tr><td>状态 / 策略 / 数据版本</td><td class="m">SUCCESS · ma-cross@1.0.0 · 000001.SZ:sample_prices.csv:60</td></tr>
+                  <tr><td>结构（equity_curve / trades / orders）</td><td class="m">60 / 3 / 3</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="hint">
+              抬头里的结构计数是 <b>记录条数</b>（<code>trades: 3</code>），指标里的「成交笔数」是 <b>1</b> ——
+              本稿<b>原样呈现两个数</b>，不替产品解释它们为什么不同。
+              <b>两格之差是照抄出来的，不是画错</b>：抬头只有「策略版本 + 数据版本」两格，这是已交付页面的形状。
+            </p>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-chart"/></svg>净值曲线</h4>
+              <span class="r"><span class="chip ghost">60 个点 · 服务端下发</span></span></div>
+            <div class="curve">
+              <svg viewBox="0 0 720 150" preserveAspectRatio="none" aria-label="净值曲线（示意形状，取自已交付页面同一份夹具）">
+                <polyline fill="none" stroke="var(--brand)" points="0,20 12,20 24,20 36,20 48,20 60,20 72,20 84,20 96,20 108,20 120,20 132,20 144,20 156,20 168,20 180,20 192,20 204,20 216,20 228,20 240,20 252,20 264,20 276,20 288,20 300,20 312,20 324,20 336,20 348,20 360,20 372,20 384,20 396,20 408,20 420,20 432,20 444,20 456,20 468,20 480,20 492,20 504,20 516,20 528,20 540,20 552,20 564,20 576,20 588,20 600,20 612,20 624,20 636,20 648,20 660,20 672,20 684,20 696,20 708,20 720,20"/>
+                <line x1="0" y1="20" x2="720" y2="20" stroke="var(--line2)" stroke-dasharray="4 4"/>
+              </svg>
+              <div class="curve-foot">
+                <span>区间 2024-01-02 ~ 2024-03-25</span><span>·</span>
+                <span>起点净值 <b class="mono">100000.00</b></span><span>·</span>
+                <span>终点净值 <b class="mono">96795.65</b></span>
+              </div>
+            </div>
+            <p class="hint">
+              这条线是<b>夹具里那 60 个点的真实形状</b>：前段净值恒为 <code>100000.0</code>、回撤恒为 <code>0.0</code>，
+              所以它是一条平线。<b>平线是数据说的，不是我画漏了</b> —— 同一份夹具里 <code>total_trades</code> 是 1，
+              早期没有成交，净值自然不动。
+            </p>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-scale"/></svg>指标分组</h4>
+              <span class="r"><span class="badge b-info">分组内顺序 = 服务端规格表顺序</span></span></div>
+            <div class="grid g2">
+              <div>
+                <div class="side-lab" style="padding-left:0">收益 · 3 项</div>
+                <div class="tbl-wrap"><table class="tbl">
+                  <tbody>
+                    <tr><td>累计收益</td><td class="n"><b class="down">-3.2043%</b></td></tr>
+                    <tr><td>年化收益</td><td class="n"><b class="down">-12.9863%</b></td></tr>
+                    <tr><td>期末净值</td><td class="n"><b class="mono">96795.65</b></td></tr>
+                  </tbody>
+                </table></div>
+                <div class="side-lab" style="padding-left:0;margin-top:12px">风险 · 4 项</div>
+                <div class="tbl-wrap"><table class="tbl">
+                  <tbody>
+                    <tr><td>最大回撤</td><td class="n"><b class="mono">5.4043%</b></td></tr>
+                    <tr><td>夏普比率</td><td class="n"><b class="down">-1.5102</b></td></tr>
+                    <tr><td>索提诺比率</td><td class="n"><b class="down">-1.7471</b></td></tr>
+                    <tr><td>卡玛比率</td><td class="n"><b class="down">-2.4029</b></td></tr>
+                  </tbody>
+                </table></div>
+              </div>
+              <div>
+                <div class="side-lab" style="padding-left:0">成交 · 6 项</div>
+                <div class="tbl-wrap"><table class="tbl">
+                  <tbody>
+                    <tr><td>胜率</td><td class="n"><b class="mono">0.0000%</b></td></tr>
+                    <tr><td>盈亏比（总额）</td><td class="n"><b class="mono">0.0000</b></td></tr>
+                    <tr><td>盈亏比（均额）</td><td class="n"><b class="mono">0.0000</b></td></tr>
+                    <tr><td>最大连续亏损</td><td class="n"><b class="mono">1</b></td></tr>
+                    <tr><td>平均持仓天数</td><td class="n"><b class="mono">2.00</b></td></tr>
+                    <tr><td>成交笔数</td><td class="n"><b class="mono">1</b></td></tr>
+                  </tbody>
+                </table></div>
+                <div class="side-lab" style="padding-left:0;margin-top:12px">成本 · 1 项</div>
+                <div class="tbl-wrap"><table class="tbl">
+                  <tbody>
+                    <tr><td>累计佣金</td><td class="n"><b class="mono">182.75</b></td></tr>
+                  </tbody>
+                </table></div>
+              </div>
+            </div>
+            <p class="hint">
+              <b>3 / 4 / 6 / 1 = 14 项</b>，与 <code>quanauto/dashboard.py</code> 的 <code>METRIC_SPECS</code> 逐行一致，
+              <b>分组内顺序也是规格的一部分</b>（它本身就是显示口径）—— 换顺序等于换口径。
+              每个数字都是<b>服务端算好的文本</b>，页面不做任何格式化。
+            </p>
+          </div>
+
+          <div class="card" style="border-left:3px solid var(--err)">
+            <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-alert"/></svg>取不到报告时的样子</h4></div>
+            <div class="gap err"><b>报告不存在 / 读不到 ⇒ 报错，不退回 0。</b>
+              指标全填 <code>0.0000</code> 的页面看起来像「这个策略没赚也没亏」，而它真实的意思是「我们不知道」。</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <ol class="notes">
+    <li><b>本帧是八帧里唯一已交付的一帧</b>（<code>platform/</code> 那层只读切片真的渲染它）。其余七帧是提案，用点划线外框标出。</li>
+    <li><b>抬头两格之差是照抄出来的，不是画错。</b>F4 想要四要素，F5 抬头只画策略版本 + 数据版本。这一点在低保真 README 里就登记为「刻意的内部张力」。<b>要改就改产品侧，不要改这一稿</b> —— 改了它，四条平台层门禁的比对对象就断了。</li>
+    <li><b>每个绩效数字都是服务端算好下发的文本</b>，页面原样呈现。<b>前端不许再格式化一遍</b> —— 两侧各算一套，迟早会有一套算错（这件事仓库里真的发生过：两侧在 6887 / 73929 ≈ 9.3% 的输入上打印出不同的串）。</li>
+    <li><b>指标由服务端规格表驱动</b>（键 / 分组 / 标签 / 量纲 / 小数位 / 顺序），页面不手抄规格表。</li>
+    <li><b>取不到报告就报错，不退回 0。</b>见上面的缺口块。</li>
+    <li><b>净值曲线是真实形状</b>（前段恒为 100000.0 ⇒ 平线）。这里没有「画得更好看一点」的空间。</li>
+  </ol>
+</article>
+
+<!-- ==========================================================================
+     F6 · 风控控制台                                            【提案】
+     ========================================================================== -->
+<article class="frame proposal anchor" id="f6">
+  <div class="f-cap">
+    <span class="fid">F6</span><h3>风控控制台 · Kill Switch · 规则与阈值 · 决策留痕</h3>
+    <span class="badge b-warn"><svg aria-hidden="true"><use href="#i-eye"/></svg>提案</span>
+    <span class="r"><span class="f-trace">PRD §三 模块8 · §四 4.1 · 源：docs/low fidelity/index.html F6 · 数值源：quanauto/risk.py RULE_SPECS + db/risk_control.sql</span></span>
+  </div>
+  <div class="win">
+    <div class="win-bar"><span class="win-dots"><i></i><i></i><i></i></span>
+      <span class="win-title">风控控制台 · 桌面浏览器 1180px</span>
+      <span class="win-title mono" style="margin-left:auto">/risk</span>
+    </div>
+    <div class="app">
+      <aside class="app-side">
+        <div class="side-logo"><span class="logo-mark"><svg width="14" height="14"><use href="#i-chart"/></svg></span><span><b>量化平台</b><br><i>v1 · 只读稿</i></span></div>
+        <div class="side-lab">总览</div>
+        <a class="nav-item" href="#f1"><svg aria-hidden="true"><use href="#i-cockpit"/></svg>驾驶舱<span class="cnt">F1</span></a>
+        <div class="side-lab">数据</div>
+        <a class="nav-item" href="#f2"><svg aria-hidden="true"><use href="#i-db"/></svg>数据中心<span class="cnt">F2</span></a>
+        <a class="nav-item" href="#f3"><svg aria-hidden="true"><use href="#i-pool"/></svg>股票池<span class="cnt">F3</span></a>
+        <div class="side-lab">研究</div>
+        <a class="nav-item" href="#f4"><svg aria-hidden="true"><use href="#i-lab"/></svg>回测实验室<span class="cnt">F4</span></a>
+        <a class="nav-item" href="#f5"><svg aria-hidden="true"><use href="#i-gauge"/></svg>绩效看板<span class="cnt">F5</span></a>
+        <a class="nav-item" href="#f7"><svg aria-hidden="true"><use href="#i-strategy"/></svg>策略中心<span class="cnt">F7</span></a>
+        <div class="side-lab">交易</div>
+        <a class="nav-item on" href="#f6"><svg aria-hidden="true"><use href="#i-shield"/></svg>风控控制台<span class="cnt">F6</span></a>
+        <a class="nav-item" href="#f8"><svg aria-hidden="true"><use href="#i-sched"/></svg>组合调度<span class="cnt">F8</span></a>
+        <div class="side-foot">顶栏徽标与 Kill Switch 跨区常驻</div>
+      </aside>
+      <div class="app-main">
+        <div class="app-top">
+          <div class="ttl"><b>风控控制台</b><i>哪些单子被拦下了、为什么、按哪条规则</i></div>
+          <span class="sp"></span>
+          <div class="envset"><span class="env prod"><svg width="12" height="12" aria-hidden="true"><use href="#i-cube"/></svg>生产环境</span></div>
+          <span class="killslot" title="本稿无实现：真实熔断需要风险进程持有持久开关，本稿只有一个画出来的按钮"><span class="k">KILL SWITCH</span><span>未触发</span></span>
+        </div>
+        <div class="pane">
+
+          <div class="card" style="border-color:var(--err)">
+            <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-kill"/></svg>Kill Switch</h4>
+              <span class="r"><span class="badge b-mute">当前状态：未触发</span></span></div>
+            <div class="grid g3" style="gap:10px">
+              <div class="kpi dark"><div class="k">当前状态</div><div class="v sm">正常 · 未触发</div><div class="u">最近一次触发：[时间]</div></div>
+              <div class="kpi"><div class="k">触发后影响面</div><div class="v sm">全部下单路径</div><div class="u">Agent 与策略都绕不过</div></div>
+              <div class="kpi"><div class="k">恢复方式</div><div class="v sm">只能人工</div><div class="u">不会自动解除</div></div>
+            </div>
+            <div class="flow" style="gap:8px;margin-top:12px">
+              <button class="btn btn-err-soft" type="button" disabled title="本稿无实现：Kill Switch 需要一个真实的全局熔断开关，本稿只有一个画出来的按钮"><svg aria-hidden="true"><use href="#i-kill"/></svg>触发 Kill Switch</button>
+              <span class="badge b-err"><svg aria-hidden="true"><use href="#i-alert"/></svg>需二次确认</span>
+              <span class="hint" style="border:none;padding:0">二次确认要写清「会影响哪些路径」，不是一句「确定吗」。</span>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-shield"/></svg>数值型规则与阈值（6 条 · 取仓库真值）</h4>
+              <span class="r"><span class="badge b-info">判定顺序固定</span></span></div>
+            <div class="tbl-wrap">
+              <table class="tbl">
+                <thead><tr><th>规则 id</th><th>单位</th><th>方向</th><th class="n">默认阈值</th><th>判定</th><th>严重度</th><th>含义</th></tr></thead>
+                <tbody>
+                  <tr><td class="mono">max_position_pct</td><td>RATIO</td><td>收紧 ↓</td><td class="n">0.10</td><td><span class="badge b-warn">REDUCE</span></td><td>ERROR</td><td>单票仓位上限（持仓市值 / 账户总资产）</td></tr>
+                  <tr><td class="mono">max_daily_trades</td><td>COUNT</td><td>收紧 ↓</td><td class="n">3</td><td><span class="badge b-err">REJECT</span></td><td>ERROR</td><td>单日单票交易次数上限（买卖笔数合计）</td></tr>
+                  <tr><td class="mono">strategy_drawdown_pct</td><td>RATIO</td><td>收紧 ↓</td><td class="n">0.15</td><td><span class="badge b-err">HALT</span></td><td>CRITICAL</td><td>单策略回撤熔断阈值</td></tr>
+                  <tr><td class="mono">account_drawdown_pct</td><td>RATIO</td><td>收紧 ↓</td><td class="n">0.20</td><td><span class="badge b-err">HALT</span></td><td>CRITICAL</td><td>全账户回撤熔断阈值</td></tr>
+                  <tr><td class="mono">max_order_amount_pct</td><td>RATIO</td><td>收紧 ↓</td><td class="n">0.10</td><td><span class="badge b-warn">REDUCE</span></td><td>WARNING</td><td>单笔委托成交额占比上限（委托金额 / 日均成交额）</td></tr>
+                  <tr><td class="mono">max_sector_pct</td><td>RATIO</td><td>收紧 ↓</td><td class="n">0.30</td><td><span class="badge b-warn">REDUCE</span></td><td>ERROR</td><td>单行业集中度上限（单行业持仓市值 / 账户总资产）</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="hint">
+              <b>比例类阈值必须落在 <code>(0,1]</code></b>，不接受 <code>20%</code> 这种百分数形态。
+              判定顺序是<b>固定</b>的 —— 只有固定顺序，同一笔委托的违规明细才可复现。
+              <code>strategy_drawdown_pct(0.15)</code> 必须严于生命周期退役门槛 <code>(0.20)</code>：
+              熔断是「先刹车再诊断」，退役是「确诊后清退」。
+            </p>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-lock"/></svg>名单型规则（单独一张表）</h4></div>
+            <div class="tbl-wrap">
+              <table class="tbl">
+                <thead><tr><th>规则 id</th><th>类型</th><th>判定</th><th>命中后</th></tr></thead>
+                <tbody>
+                  <tr><td class="mono">blacklist</td><td>名单型</td><td><span class="badge b-err">REJECT</span></td><td>[n] 个标的在列</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="hint">
+              <b>名单型规则不存数值型阈值</b>（<code>BLACKLIST_RULE_ID = "blacklist"</code> 不进 <code>risk_rule</code> 表），
+              但它<b>必须出现在裁决明细里</b>。所以它在这里另起一张表 —— 混进上面那张七列表里，就要为它多编两列没有意义的数。
+            </p>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-list"/></svg>决策留痕</h4>
+              <span class="r"><span class="badge b-info">时间线倒序</span></span></div>
+            <div class="tbl-wrap">
+              <table class="tbl">
+                <thead><tr><th>时间</th><th>指令</th><th>判定</th><th>原因 · 命中规则</th><th class="n">影响数量</th></tr></thead>
+                <tbody>
+                  <tr><td class="mono">[时间]</td><td class="mono">BUY 000001.SZ</td><td><span class="badge b-warn">缩减</span></td><td class="mono">max_position_pct</td><td class="n">[n]</td></tr>
+                  <tr><td class="mono">[时间]</td><td class="mono">BUY 000001.SZ</td><td><span class="badge b-err">拒绝</span></td><td class="mono">max_daily_trades</td><td class="n">[n]</td></tr>
+                  <tr><td class="mono">[时间]</td><td class="mono">SELL [代码]</td><td><span class="badge b-ok">通过</span></td><td class="muted">—</td><td class="n">[n]</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="hint">
+              <b>「缩减」既不是「通过」也不是「拒绝」</b> —— 它是第三个词。所以徽章是三种颜色 + 三个不同的词。
+              <b>拒绝原因必须带命中规则 id</b>：只写「超出风险限额」的表，事后查不出是哪一条拦的。
+            </p>
+          </div>
+
+          <div class="grid g2">
+            <div class="card">
+              <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-refresh"/></svg>阈值变更</h4></div>
+              <div class="grid g2" style="gap:10px">
+                <div class="kpi"><div class="k">规则</div><div class="v sm mono">[规则 id]</div><div class="u">变更对象</div></div>
+                <div class="kpi"><div class="k">变更</div><div class="v sm mono">[旧值] → [新值]</div><div class="u">收紧 / 放宽都要留痕</div></div>
+                <div class="kpi"><div class="k">生效时间</div><div class="v sm mono">[时间]</div><div class="u">审批通过后</div></div>
+                <div class="kpi"><div class="k">理由</div><div class="v sm">[必填]</div><div class="u">空理由不许提交</div></div>
+              </div>
+              <div class="flow" style="gap:8px;margin-top:12px">
+                <button class="btn btn-soft" type="button" disabled title="本稿无实现：阈值变更需要审批通道 + risk_rule_audit 留痕">提交审批</button>
+                <button class="btn btn-ghost" type="button" disabled title="本稿无实现">取消</button>
+              </div>
+            </div>
+            <div class="card">
+              <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-lock"/></svg>只拦开仓的规则</h4></div>
+              <div class="rulebox">
+                <b>仓位、频率、集中度、熔断这四条只拦开仓。</b>
+                拦它们的平仓，等于把仓位锁死 —— 风控本身变成了风险。
+                <br><br>
+                <b>但流动性上限不在此列</b>（<code>max_order_amount_pct</code>）：流动性冲击与方向无关，
+                减仓同样要控冲击成本。
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <ol class="notes">
+    <li><b>比例类阈值必须落在 <code>(0,1]</code></b>，不接受百分数形态。输入框那一格在 §02 里被特意画成「填错了的样子」。</li>
+    <li><b>阈值变更要留痕</b>（<code>risk_rule_audit</code>），理由必填。</li>
+    <li><b>Kill Switch 一经触发，所有下单路径都停</b>，且不自动解除 —— 所以它需要二次确认，确认文案要写影响面。</li>
+    <li><b>拒绝原因必须带命中规则 id</b>，并且判定用「通过 / 缩减 / 拒绝」三个不同的词（+ 熔断时的 HALT）。</li>
+    <li><b>数值型与名单型分表画</b>：<code>blacklist</code> 不存阈值，但它要出现在裁决明细里。</li>
+    <li><b>依赖标注：本屏数据来自决策留痕，本稿不主张它已经有产品写入者</b> —— 接线状态看仓库现状，不要看这张图。规则 id、单位、方向、默认阈值、判定与严重度都是仓库真值；时间、命中次数、黑名单条数是 <code>[占位]</code>。</li>
+  </ol>
+</article>
+<!-- ==========================================================================
+     F7 · 策略中心                                              【提案】
+     ========================================================================== -->
+<article class="frame proposal anchor" id="f7">
+  <div class="f-cap">
+    <span class="fid">F7</span><h3>策略中心 · 策略库 · 生命周期 · 适配矩阵</h3>
+    <span class="badge b-warn"><svg aria-hidden="true"><use href="#i-eye"/></svg>提案</span>
+    <span class="r"><span class="f-trace">PRD §三 模块4 / 5 / 11 · 源：docs/low fidelity/index.html F7</span></span>
+  </div>
+  <div class="win">
+    <div class="win-bar"><span class="win-dots"><i></i><i></i><i></i></span>
+      <span class="win-title">策略中心 · 桌面浏览器 1180px</span>
+      <span class="win-title mono" style="margin-left:auto">/strategy</span>
+    </div>
+    <div class="app">
+      <aside class="app-side">
+        <div class="side-logo"><span class="logo-mark"><svg width="14" height="14"><use href="#i-chart"/></svg></span><span><b>量化平台</b><br><i>v1 · 只读稿</i></span></div>
+        <div class="side-lab">总览</div>
+        <a class="nav-item" href="#f1"><svg aria-hidden="true"><use href="#i-cockpit"/></svg>驾驶舱<span class="cnt">F1</span></a>
+        <div class="side-lab">数据</div>
+        <a class="nav-item" href="#f2"><svg aria-hidden="true"><use href="#i-db"/></svg>数据中心<span class="cnt">F2</span></a>
+        <a class="nav-item" href="#f3"><svg aria-hidden="true"><use href="#i-pool"/></svg>股票池<span class="cnt">F3</span></a>
+        <div class="side-lab">研究</div>
+        <a class="nav-item" href="#f4"><svg aria-hidden="true"><use href="#i-lab"/></svg>回测实验室<span class="cnt">F4</span></a>
+        <a class="nav-item" href="#f5"><svg aria-hidden="true"><use href="#i-gauge"/></svg>绩效看板<span class="cnt">F5</span></a>
+        <a class="nav-item on" href="#f7"><svg aria-hidden="true"><use href="#i-strategy"/></svg>策略中心<span class="cnt">F7</span></a>
+        <div class="side-lab">交易</div>
+        <a class="nav-item" href="#f6"><svg aria-hidden="true"><use href="#i-shield"/></svg>风控控制台<span class="cnt">F6</span></a>
+        <a class="nav-item" href="#f8"><svg aria-hidden="true"><use href="#i-sched"/></svg>组合调度<span class="cnt">F8</span></a>
+        <div class="side-foot">顶栏徽标与 Kill Switch 跨区常驻</div>
+      </aside>
+      <div class="app-main">
+        <div class="app-top">
+          <div class="ttl"><b>策略中心</b><i>哪些策略在服役、哪些在孵化、谁该晋级谁该退</i></div>
+          <span class="sp"></span>
+          <div class="envset"><span class="env res"><svg width="12" height="12" aria-hidden="true"><use href="#i-cube"/></svg>研究环境</span></div>
+          <span class="killslot" title="本稿无实现"><span class="k">KILL SWITCH</span><span>未触发</span></span>
+        </div>
+        <div class="pane">
+
+          <div class="card">
+            <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-strategy"/></svg>策略库</h4>
+              <span class="r"><span class="chip ghost">类别筛选</span><span class="chip ghost">状态筛选</span></span></div>
+            <div class="tbl-wrap">
+              <table class="tbl">
+                <thead><tr><th>策略 ID</th><th>类别</th><th>版本</th><th>状态</th><th class="n">最近信号数</th><th class="n">适配度中位数</th><th class="n">最近跑分</th></tr></thead>
+                <tbody>
+                  <tr><td class="mono">ma-cross</td><td>趋势</td><td class="mono">ma-cross@1.0.0</td><td><span class="badge b-ok">正式服役</span></td><td class="n">[n]</td><td class="n">[值]</td><td class="n">[值]</td></tr>
+                  <tr><td class="mono">[策略ID]</td><td>价值</td><td class="mono">[vN]</td><td><span class="badge b-pri">回测验证</span></td><td class="n">[n]</td><td class="n">[值]</td><td class="n">[值]</td></tr>
+                  <tr><td class="mono">[策略ID]</td><td>机器学习</td><td class="mono">[vN]</td><td><span class="badge b-info">样本外测试</span></td><td class="n">[n]</td><td class="n">[值]</td><td class="n">[值]</td></tr>
+                  <tr><td class="mono">[策略ID]</td><td>统计套利</td><td class="mono">[vN]</td><td><span class="badge b-warn">模拟盘 / 灰度</span></td><td class="n">[n]</td><td class="n">[值]</td><td class="n">[值]</td></tr>
+                  <tr><td class="mono">[策略ID]</td><td>事件驱动</td><td class="mono">[vN]</td><td><span class="badge b-mute">观察池</span></td><td class="n muted">—</td><td class="n">[值]</td><td class="n">[值]</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="hint"><code>ma-cross@1.0.0</code> 是仓库真值（回测夹具里的策略版本）。其余行是占位 —— <b>占位行不填满</b>，填满了就变成了「这些策略真的存在」。</p>
+          </div>
+
+          <div class="grid g2">
+            <div class="card">
+              <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-file"/></svg>策略详情</h4></div>
+              <div class="grid g3" style="gap:10px">
+                <div class="kpi"><div class="k">参数</div><div class="v sm mono">[参数指纹]</div><div class="u">同参数同指纹</div></div>
+                <div class="kpi"><div class="k">版本 diff</div><div class="v sm">[+n / −n]</div><div class="u">相对上一服役版本</div></div>
+                <div class="kpi"><div class="k">目标仓位</div><div class="v sm">输出权重</div><div class="u">不是「买多少股」</div></div>
+              </div>
+              <p class="hint"><b>策略的输出是权重，不是数量。</b>数量要由组合调度层按账户与约束算 —— 让策略直接吐股数，等于把仓位管理塞进每个策略里各写一遍。</p>
+            </div>
+
+            <div class="card">
+              <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-filter"/></svg>适配矩阵</h4>
+                <span class="r"><span class="badge b-mute">占位</span></span></div>
+              <div class="ph h120">适配矩阵占位（行 = 股票 · 列 = 策略 · 格 = 适配度）<br><i style="font-style:normal;color:var(--text3);font-size:11px">本稿不画假热力图：格子颜色的阈值口径还没有定义</i></div>
+              <p class="hint">热力图是最容易被当判据用的图。<b>没有阈值口径就先不画</b>，画了就会被当成「绿的就是能上」。</p>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-flow"/></svg>生命周期看板（8 个状态 · 每格写清准入与退出条件）</h4></div>
+            <div class="grid g4" style="gap:10px">
+              <div class="kpi"><div class="k">孵化</div><div class="v sm">1 项在孵</div><div class="u">准入：想法 + 初步假设</div></div>
+              <div class="kpi"><div class="k">回测验证</div><div class="v sm">1 项</div><div class="u">夏普 &gt; 1 · 最大回撤 &lt; 20%</div></div>
+              <div class="kpi"><div class="k">样本外测试</div><div class="v sm">1 项</div><div class="u">样本外不退化为负</div></div>
+              <div class="kpi"><div class="k">模拟盘</div><div class="v sm">1 项</div><div class="u">连续 5~10 个交易日</div></div>
+              <div class="kpi"><div class="k">小资金灰度</div><div class="v sm">0 项</div><div class="u">1~2 周 · 滑点在预期内</div></div>
+              <div class="kpi"><div class="k">正式服役</div><div class="v sm">1 项</div><div class="u">退出：触发降级条件</div></div>
+              <div class="kpi"><div class="k">降级</div><div class="v sm">0 项</div><div class="u">动作：渐进式减仓</div></div>
+              <div class="kpi"><div class="k">退役</div><div class="v sm">1 项</div><div class="u">去向：观察池（可复盘）</div></div>
+            </div>
+            <div class="rulebox" style="margin-top:12px">
+              <b>「降级」的动作是渐进式减仓，不是集中清仓</b>；<b>「退役」不是删除</b>，是进观察池 —— 复盘的时候要能把它捞回来。
+              <b>退役是终态</b>：已经被退休的策略不能「再推进一下」（低保真原型里这条守卫真的会拦住）。
+            </div>
+            <p class="hint"><b>每格的准入 / 退出条件印在格子里</b>，不藏在悬浮提示里 —— 状态机的规则就是这张表的正文。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <ol class="notes">
+    <li><b>策略的输出是权重，不是数量。</b>数量由组合调度层算。</li>
+    <li><b>生命周期有八个状态</b>，每格的准入与退出条件必须是数字（夏普 &gt; 1、连续 5~10 个交易日…），不能是「表现良好」。</li>
+    <li><b>降级 = 渐进式减仓；退役 = 进观察池；退役是终态。</b></li>
+    <li><b>适配矩阵是占位。</b>缺阈值口径的热力图会被当判据用。</li>
+    <li><b>占位行不填满</b>：只 <code>ma-cross@1.0.0</code> 是仓库真值，其余保持 <code>[方括号]</code>。</li>
+  </ol>
+</article>
+
+<!-- ==========================================================================
+     F8 · 组合调度 / 研究 Agent / 执行监控                       【提案】
+     ========================================================================== -->
+<article class="frame proposal anchor" id="f8">
+  <div class="f-cap">
+    <span class="fid">F8</span><h3>组合调度 · 研究 Agent · 执行监控</h3>
+    <span class="badge b-warn"><svg aria-hidden="true"><use href="#i-eye"/></svg>提案</span>
+    <span class="r"><span class="f-trace">PRD §三 模块3 / 7 / 9 / 12 · 源：docs/low fidelity/index.html F8</span></span>
+  </div>
+  <div class="win">
+    <div class="win-bar"><span class="win-dots"><i></i><i></i><i></i></span>
+      <span class="win-title">组合调度 · 桌面浏览器 1180px</span>
+      <span class="win-title mono" style="margin-left:auto">/portfolio</span>
+    </div>
+    <div class="app">
+      <aside class="app-side">
+        <div class="side-logo"><span class="logo-mark"><svg width="14" height="14"><use href="#i-chart"/></svg></span><span><b>量化平台</b><br><i>v1 · 只读稿</i></span></div>
+        <div class="side-lab">总览</div>
+        <a class="nav-item" href="#f1"><svg aria-hidden="true"><use href="#i-cockpit"/></svg>驾驶舱<span class="cnt">F1</span></a>
+        <div class="side-lab">数据</div>
+        <a class="nav-item" href="#f2"><svg aria-hidden="true"><use href="#i-db"/></svg>数据中心<span class="cnt">F2</span></a>
+        <a class="nav-item" href="#f3"><svg aria-hidden="true"><use href="#i-pool"/></svg>股票池<span class="cnt">F3</span></a>
+        <div class="side-lab">研究</div>
+        <a class="nav-item" href="#f4"><svg aria-hidden="true"><use href="#i-lab"/></svg>回测实验室<span class="cnt">F4</span></a>
+        <a class="nav-item" href="#f5"><svg aria-hidden="true"><use href="#i-gauge"/></svg>绩效看板<span class="cnt">F5</span></a>
+        <a class="nav-item" href="#f7"><svg aria-hidden="true"><use href="#i-strategy"/></svg>策略中心<span class="cnt">F7</span></a>
+        <div class="side-lab">交易</div>
+        <a class="nav-item" href="#f6"><svg aria-hidden="true"><use href="#i-shield"/></svg>风控控制台<span class="cnt">F6</span></a>
+        <a class="nav-item on" href="#f8"><svg aria-hidden="true"><use href="#i-sched"/></svg>组合调度<span class="cnt">F8</span></a>
+        <div class="side-foot">顶栏徽标与 Kill Switch 跨区常驻</div>
+      </aside>
+      <div class="app-main">
+        <div class="app-top">
+          <div class="ttl"><b>组合调度</b><i>现在是哪种市场、各策略该拿多少、Agent 提了什么案子</i></div>
+          <span class="sp"></span>
+          <div class="envset"><span class="env res"><svg width="12" height="12" aria-hidden="true"><use href="#i-cube"/></svg>研究环境</span></div>
+          <span class="killslot" title="本稿无实现"><span class="k">KILL SWITCH</span><span>未触发</span></span>
+        </div>
+        <div class="pane">
+
+          <div class="card">
+            <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-gauge"/></svg>市场状态</h4>
+              <span class="r"><span class="badge b-info">两个概率不必互补到 100</span></span></div>
+            <div class="grid g4" style="gap:10px">
+              <div class="kpi"><div class="k">趋势市概率</div><div class="v">[n]%</div><div class="u">[口径]</div></div>
+              <div class="kpi"><div class="k">震荡市概率</div><div class="v">[n]%</div><div class="u">两项之和不必是 100 —— 还有「都不是」</div></div>
+              <div class="kpi"><div class="k">价值 · 成长风格</div><div class="v sm">[偏价值 / 偏成长 / 中性]</div><div class="u">三态，不是一条连续分数</div></div>
+              <div class="kpi"><div class="k">大小盘风格</div><div class="v sm">[偏大盘 / 偏小盘 / 中性]</div><div class="u">三态</div></div>
+              <div class="kpi"><div class="k">流动性</div><div class="v sm">[宽 / 中 / 紧]</div><div class="u">三态</div></div>
+            </div>
+            <p class="hint">把 100 强行劈成两半会逼出一个假答案 —— <b>「都不是」是一种真实的市场状态</b>，所以两个概率不互补。</p>
+          </div>
+
+          <div class="grid g2">
+            <div class="card">
+              <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-scale"/></svg>策略权重与目标仓位</h4></div>
+              <div class="tbl-wrap">
+                <table class="tbl">
+                  <thead><tr><th>策略</th><th class="n">当前权重</th><th class="n">目标权重</th><th>依据</th><th>状态</th></tr></thead>
+                  <tbody>
+                    <tr><td class="mono">ma-cross</td><td class="n">[n]%</td><td class="n">[n]%</td><td>市场状态 + 近期适配度</td><td><span class="badge b-ok">服役中</span></td></tr>
+                    <tr><td class="mono">[策略ID]</td><td class="n">[n]%</td><td class="n">[n]%</td><td class="muted">—</td><td><span class="badge b-warn">降级中</span></td></tr>
+                    <tr><td class="mono">[策略ID]</td><td class="n muted">—</td><td class="n">[n]%</td><td class="muted">—</td><td><span class="badge b-info">待批准</span></td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div class="tbl-wrap" style="margin-top:10px">
+                <table class="tbl">
+                  <thead><tr><th>目标仓位汇总</th><th class="n">权重</th><th class="n">金额</th><th>约束</th></tr></thead>
+                  <tbody>
+                    <tr><td>A 股多头</td><td class="n">[n]%</td><td class="n">[金额]</td><td class="mono">max_position_pct ≤ 0.10</td></tr>
+                    <tr><td>现金</td><td class="n">[n]%</td><td class="n">[金额]</td><td class="muted">—</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <p class="hint"><b>汇总表右侧那一列直接写出风控约束的 id 与阈值</b>，而不是写「已通过风控」四个字 —— 把判据摆在数旁边。</p>
+            </div>
+
+            <div class="card">
+              <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-alert"/></svg>冲突解决</h4></div>
+              <div class="tbl-wrap">
+                <table class="tbl">
+                  <thead><tr><th>冲突</th><th>一方</th><th>另一方</th><th>裁决</th><th>规则</th></tr></thead>
+                  <tbody>
+                    <tr><td>[类型]</td><td class="mono">[策略A] 买</td><td class="mono">[策略B] 卖</td><td><span class="badge b-pri">按权重净额</span></td><td class="muted">净额不为零时下单</td></tr>
+                    <tr><td>[类型]</td><td class="mono">[策略A]</td><td class="mono">风控缩减</td><td><span class="badge b-warn">风控优先</span></td><td class="mono">REDUCE 逐笔生效</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <p class="hint"><b>组合调度层做最终裁决</b>（不是策略之间互相协商）。并且<b>风控的缩减在调度之后仍然生效</b> —— 调度不能把风控的结论覆盖掉。</p>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-strategy"/></svg>Agent 提案</h4>
+              <span class="r"><span class="badge b-warn"><svg aria-hidden="true"><use href="#i-alert"/></svg>待人工 · 不是失败</span></span></div>
+            <div class="flow">
+              <span class="node done">失效检测</span><span class="arrow">→</span>
+              <span class="node done">失效诊断</span><span class="arrow">→</span>
+              <span class="node done">假设生成</span><span class="arrow">→</span>
+              <span class="node done">代码生成</span><span class="arrow">→</span>
+              <span class="node run">回测验证</span><span class="arrow">→</span>
+              <span class="node">样本外验证</span><span class="arrow">→</span>
+              <span class="node">压力测试</span><span class="arrow">→</span>
+              <span class="node stop">晋级推荐</span>
+            </div>
+            <div class="tbl-wrap" style="margin-top:12px">
+              <table class="tbl">
+                <thead><tr><th>步骤</th><th>产物</th><th>状态</th><th>人工动作</th></tr></thead>
+                <tbody>
+                  <tr><td>失效检测</td><td class="mono">[诊断 id]</td><td><span class="badge b-ok">完成</span></td><td class="muted">—</td></tr>
+                  <tr><td>失效诊断</td><td class="mono">[报告 id]</td><td><span class="badge b-ok">完成</span></td><td class="muted">—</td></tr>
+                  <tr><td>假设生成</td><td class="mono">[假设 id]</td><td><span class="badge b-ok">完成</span></td><td class="muted">—</td></tr>
+                  <tr><td>代码生成</td><td class="mono">diff [+n / −n]</td><td><span class="badge b-ok">完成</span></td><td class="muted">—</td></tr>
+                  <tr><td>回测验证</td><td class="mono">[报告 id]</td><td><span class="badge b-pri">进行中</span></td><td class="muted">—</td></tr>
+                  <tr><td>样本外验证</td><td class="muted">—</td><td><span class="badge b-mute">待运行</span></td><td class="muted">—</td></tr>
+                  <tr><td>压力测试</td><td class="muted">—</td><td><span class="badge b-mute">待运行</span></td><td class="muted">—</td></tr>
+                  <tr style="background:var(--brand-soft)"><td><b>晋级推荐</b></td><td class="mono">[提案 id]</td><td><span class="badge b-warn">待人工</span></td><td><b>批准 / 驳回</b></td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="hint">
+              每一步都产出一份<b>可审计的中间物</b>。界面的任务是让人在两三分钟内判断「要不要点那个晋级的按钮」。
+              <b>每一步都能停，停下来的状态是「待人工」而不是「失败」</b> —— 把等待人决策画成红色失败，会训练用户忽略红灯。
+            </p>
+          </div>
+
+          <div class="card">
+            <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-clock"/></svg>执行监控</h4></div>
+            <div class="tbl-wrap">
+              <table class="tbl">
+                <thead><tr><th>委托</th><th>标的</th><th>状态</th><th class="n">预期价</th><th class="n">实际成交价</th><th class="n">滑点</th></tr></thead>
+                <tbody>
+                  <tr><td class="mono">[委托号]</td><td class="mono">000001.SZ</td><td><span class="badge b-ok">已成交</span></td><td class="n mono">[价]</td><td class="n mono">[价]</td><td class="n mono">[bps]</td></tr>
+                  <tr><td class="mono">[委托号]</td><td class="mono">[代码]</td><td><span class="badge b-pri">部分成交</span></td><td class="n mono">[价]</td><td class="n mono">[价]</td><td class="n mono">[bps]</td></tr>
+                  <tr><td class="mono">[委托号]</td><td class="mono">[代码]</td><td><span class="badge b-mute">已撤</span></td><td class="n mono">[价]</td><td class="n muted">—</td><td class="n muted">—</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="hint"><b>滑点是一列显式的数</b>，不是「成交质量」之类的话术。滑点跑出预期就是要触发降级条件的那种信号。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <ol class="notes">
+    <li><b>两个概率不必互补到 100。</b>「都不是」是一种真实状态，强行归一化会逼出假答案。</li>
+    <li><b>组合调度层做最终裁决</b>，且风控缩减在调度之后仍然生效。</li>
+    <li><b>Agent 的每一步都产出可审计的中间物</b>，界面服务于「两三分钟内决定要不要点晋级」。</li>
+    <li><b>「待人工」不是「失败」。</b>这一步在低保真原型里被专门做成守卫。</li>
+    <li><b>滑点是一列显式的数</b>，并且是降级条件的输入之一。</li>
+  </ol>
+</article>
+<!-- ==========================================================================
+     05 · 状态矩阵
+     ========================================================================== -->
+<section class="wrap sec anchor" id="states">
+  <div class="sec-head"><span class="sec-num">05</span><h2>状态矩阵</h2></div>
+  <p class="sec-sub">
+    每屏都要有这五种状态的<b>稿</b>，而不是等实现时临场想。没有空态与错误态的稿，
+    落地时一定会出现「空白页面」和「0」。
+  </p>
+
+  <div class="card">
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>帧</th><th>默认</th><th>空</th><th>加载</th><th>错误</th><th>锁定 / 只读</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">F1</td><td>状态灯 + 巡检 + 风控摘要</td><td>今天还没开始巡检</td><td>节点灯逐项点亮</td><td>某一步阻塞 ⇒ 标出卡在哪</td><td>Kill Switch 触发 ⇒ 全屏只读</td></tr>
+          <tr><td class="mono">F2</td><td>批次表 + 质量计数</td><td>还没有任何批次 ⇒ 新建采集</td><td>采集进行中（进度 + 已落行数）</td><td>帧校验拒绝 ⇒ 展开到具体行</td><td>研究环境 ⇒ 生产数据不可见</td></tr>
+          <tr><td class="mono">F3</td><td>规则链 + 漏斗 + 成分</td><td>当日数据未采集 ⇒ 指向 F2</td><td>逐条规则执行中</td><td>规则参数缺失 ⇒ 指出缺哪一项</td><td>历史快照 ⇒ 只读</td></tr>
+          <tr><td class="mono">F4</td><td>配置 + 可重现性抬头预览</td><td>未选策略 ⇒ 引导选策略</td><td>进度条 + 可取消</td><td>区间早于可用区间 ⇒ 给后续动作</td><td>报告已定稿 ⇒ 配置只读</td></tr>
+          <tr><td class="mono">F5</td><td>抬头 + 曲线 + 分组指标</td><td>报告目录为空 ⇒ 提示先跑回测</td><td>读取中…</td><td>报告读不出来 ⇒ 显示原因原文</td><td class="muted">—（只读页）</td></tr>
+          <tr><td class="mono">F6</td><td>阈值表 + 留痕时间线</td><td>今天没有指令</td><td>留痕分页加载中</td><td>阈值非法（如 &gt; 1 的比例）⇒ 提交前拦下</td><td>生效值只读 ⇒ 改动走审批</td></tr>
+          <tr><td class="mono">F7</td><td>策略表 + 生命周期 + 矩阵</td><td>还没有策略</td><td>适配度矩阵重算中</td><td>版本 diff 取不到 ⇒ 不允许晋级</td><td>已退役 / 观察池 ⇒ 只读</td></tr>
+          <tr><td class="mono">F8</td><td>市场状态 + 权重 + 提案流</td><td>没有待决提案</td><td>压力测试进行中</td><td>某步失败 ⇒ 停在本步，保留已完成产物</td><td>Agent 提案 ⇒ 无生产写入权</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="rulebox" style="margin-top:12px">
+      <b>共同约定：</b>「没有数」和「数是 0」必须在视觉上分开 —— 前者的稿是灰掉的破折号
+      <span class="muted">—</span>，后者的稿是一个真的 <code>0</code>；
+      错误态必须给出<b>下一步动作</b>，不能只给一句原因。
+    </div>
+    <p class="hint">
+      这张表里的「锁」与「只读」不是同一件事：<b>锁定是环境造成的</b>（Kill Switch 触发、跑在研究环境），
+      <b>只读是业务状态造成的</b>（报告已定稿、策略已退役）。
+      两者在视觉上都该是「不可按」，但理由不同 —— 所以每个不可按的控件都带 <code>title</code> 说明是哪种。
+    </p>
+  </div>
+</section>
+
+<!-- ==========================================================================
+     06 · 追溯与缺口
+     ========================================================================== -->
+<section class="wrap sec anchor" id="trace">
+  <div class="sec-head"><span class="sec-num">06</span><h2>追溯与缺口</h2></div>
+  <p class="sec-sub">
+    每一帧服务的需求与它在路线图里的位置。<b>交付状态一列只反映当前仓库现状</b>，不反映「打算做」。
+  </p>
+
+  <div class="card">
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>帧</th><th>主要回答什么问题</th><th>PRD 追溯</th><th>路线图阶段</th><th>交付状态</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">F1</td><td>今天走到哪了？有没有要人点的？</td><td class="mono">§一 双循环 · §四 4.1</td><td>MVP P1 / 完善版 P0</td><td><span class="badge b-warn">提案</span></td></tr>
+          <tr><td class="mono">F2</td><td>数据从哪来、可信吗、口径是什么？</td><td class="mono">§三 模块1</td><td>MVP P0 数据接入与标准化</td><td><span class="badge b-warn">提案</span></td></tr>
+          <tr><td class="mono">F3</td><td>今天哪些票进池了？为什么？</td><td class="mono">§三 模块2</td><td>MVP P0 基础过滤 + 动态生成</td><td><span class="badge b-warn">提案</span></td></tr>
+          <tr><td class="mono">F4</td><td>这个策略在历史上行不行？可复现吗？</td><td class="mono">§三 模块6</td><td>MVP P0 日线 + 成本 + 绩效报告</td><td><span class="badge b-warn">提案</span></td></tr>
+          <tr style="background:var(--ok-soft)"><td class="mono">F5</td><td>这份报告到底什么水平？</td><td class="mono">§三 模块10</td><td>MVP P1 收益曲线 + 关键指标</td><td><span class="badge b-ok"><svg aria-hidden="true"><use href="#i-check"/></svg>已交付</span>（读取侧切片）</td></tr>
+          <tr><td class="mono">F6</td><td>今天拦了什么？为什么拦？谁能停？</td><td class="mono">§三 模块8 · §四 4.1</td><td>MVP P0 仓位上限 / 止损 / Kill Switch</td><td><span class="badge b-warn">提案</span></td></tr>
+          <tr><td class="mono">F7</td><td>这只策略在哪一步？该不该培养它？</td><td class="mono">§三 模块4 / 5 / 11</td><td>完善版 P0 适配引擎 + 生命周期</td><td><span class="badge b-warn">提案</span></td></tr>
+          <tr><td class="mono">F8</td><td>各策略合成什么仓位？Agent 想改什么？</td><td class="mono">§三 模块3 / 7 / 9 / 12</td><td>完善版 P0 / 进化版 P0</td><td><span class="badge b-warn">提案</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="hint">
+      「<b>交付状态</b>」这一列抄的是低保真 <code>§6 追溯表</code>——<b>画得漂亮不会让提案变已交付</b>。
+      本稿的 F1~F4、F6~F8 也一律画成点划线外框。
+    </p>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-alert"/></svg>没有画进来的几件事（它们的缺失是刻意的）</h4></div>
+    <div class="dlrow">
+      <span class="ic warn"><svg aria-hidden="true"><use href="#i-chart"/></svg></span>
+      <span class="info"><b>收益归因的三张表</b>（资产配置 / 风格 / 策略贡献）：
+        <i>它们应该是 F5 的一级标签页，而不是新的一屏。本稿没画，是因为 F5 已交付而现有页面没有这一层 —— 属于「已交付屏的待扩展项」。</i></span>
+    </div>
+    <div class="dlrow">
+      <span class="ic warn"><svg aria-hidden="true"><use href="#i-flow"/></svg></span>
+      <span class="info"><b>执行层的其余结构</b>：订单拆分、智能路由、持仓同步、模拟盘 / 实盘切换。
+        <i>F8 只画了「成交回报 + 滑点」这一面，因为那一面是成本分析的输入；其余几面是执行引擎自己的事。</i></span>
+    </div>
+    <div class="dlrow">
+      <span class="ic warn"><svg aria-hidden="true"><use href="#i-refresh"/></svg></span>
+      <span class="info"><b>组合调度的再平衡触发</b>：本稿只画了手动覆盖，没有画「定期 / 阈值 / 事件」这三类自动触发在界面上怎么呈现。
+        <i>少了它，「多久动一次仓」这个问题在界面上没有落点。</i></span>
+    </div>
+    <div class="dlrow">
+      <span class="ic warn"><svg aria-hidden="true"><use href="#i-cube"/></svg></span>
+      <span class="info"><b>以「模拟环境」为主语的那一屏</b>：环境徽标有三种取值，本稿用到研究（多数帧）、生产（F6）与跨环境总览（F1）。
+        <i>模拟盘只出现在 F7 的生命周期阶段里，没有单独一屏。</i></span>
+    </div>
+    <div class="dlrow">
+      <span class="ic err"><svg aria-hidden="true"><use href="#i-user"/></svg></span>
+      <span class="info"><b>多用户 / 权限 / 计费</b>：PRD 明确第一版完全自用、不做这些。
+        <i>所以本稿里没有登录页、没有角色管理。</i></span>
+    </div>
+    <div class="dlrow">
+      <span class="ic err"><svg aria-hidden="true"><use href="#i-layout"/></svg></span>
+      <span class="info"><b>视觉与品牌</b>：低保真刻意不涉及 —— <b>本稿就是来补这一格的</b>。
+        <i>但补的方式是「画出来给人看」，不是「加一条判据」。</i></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-h"><h4><svg aria-hidden="true"><use href="#i-lock"/></svg>换了这身皮肤之后，仍然存在的缺口</h4></div>
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>缺口</th><th>现状</th><th>本稿做了什么</th><th>本稿没有做什么</th></tr></thead>
+        <tbody>
+          <tr><td><b>布局 / 视觉</b>零覆盖</td><td>jsdom 没有布局引擎，几何量恒为 0 ⇒ 在 jsdom 里写「没溢出 / 没重叠」恒真是假绿</td><td>给了可量测的具体数值（见 §01）</td><td class="mono">没有加判据，没有让任何门禁读本文件</td></tr>
+          <tr><td>四条平台层门禁都不起服务</td><td>跑完就退出，没有一个活着的 JVM 在监听</td><td class="muted">—</td><td class="mono">没有新增门禁，也没有改现有门禁</td></tr>
+          <tr><td>K 线图要 OHLCV</td><td>报告的结构计数只有 <code>equity_curve / trades / orders</code>，没有 OHLCV</td><td>用斜线阴影占位块 + 文字说明「要修就修产品侧」</td><td class="mono">没有伪造一根 K 线</td></tr>
+          <tr><td>提案帧没有实现</td><td>F1~F4、F6~F8 都还没有产品代码</td><td>每帧都写清语义来源与数值来源</td><td class="mono">没有把提案画成已完成</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ==========================================================================
+     07 · 本稿不主张什么
+     ========================================================================== -->
+<section class="wrap sec anchor" id="bounds">
+  <div class="sec-head"><span class="sec-num">07</span><h2>本稿不主张什么</h2></div>
+  <p class="sec-sub">逐条写明，避免被当成证据引用。</p>
+  <div class="card">
+    <div class="rulebox" style="border-left-width:6px">
+      <ul style="margin:0;padding-left:20px">
+        <li>它<b>不是</b>界面规格、不是契约、不是门禁，<b>也不构成任何判据</b>。没有任何门禁读本文件 —— 所以它<b>没有牙</b>。</li>
+        <li>它<b>不解除</b>「<b>布局 / 视觉</b>仍然零覆盖」这一条。画了高保真等于有了一张更细的纸，不等于有人守着布局。那一格的现状见 <code>docs/智能量化交易平台.md</code> 附录C §C.14。</li>
+        <li>它<b>不主张</b>除 F5 之外的任何一帧已经有实现。F5 那一帧的<b>信息</b>来自真实实现，但它的<b>皮肤</b>是本稿换的 —— 所以也<b>不主张</b> F5 与已交付页面逐像素一致。</li>
+        <li>它<b>不主张</b>里面的 <code>[方括号]</code> 占位是待办清单，也不主张方括号外的数字全部来自产品接口 —— 每个数字的出处写在它旁边（帧抬头 <code>数值源</code> + 帧内 <code>hint</code>）。</li>
+        <li>它<b>不是</b>平台层开工的信号：平台层那一层有它自己的四条门禁与边界裁决，本稿不改动其中任何一条。</li>
+        <li>它<b>不主张</b>自己「受控于」任何东西。换肤这件事本身没有判据，这一点在本稿里是明说的，不是隐瞒的。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<div class="wrap foot">
+  <p><b>智能量化交易平台 · 高保真 UI 设计稿 v1（八帧）</b></p>
+  <p>依据：PRD（<code>docs/智能量化交易平台.md</code>）+ 低保真（<code>docs/low fidelity/</code>，静态规格板 + 可交互原型）。视觉语言参考外部设计稿。</p>
+  <p>打开方式：浏览器直接打开本文件。零依赖、无构建、<b>无网络请求</b>、无外部字体。</p>
+  <p class="noimpl">
+    <b>这是设计产物，不是规格、不是契约、不是门禁。</b>
+    八帧里只有 <b>F5</b> 有真实实现；其余七帧是提案，用点划线外框标出。
+    带 <code>[方括号]</code> 的都是占位；不可按的控件一律 <code>disabled</code> 并带 <code>title</code> 说明缺什么能力。
+  </p>
+</div>
+</main>
+
+<script>
+/* 本稿唯一的活行为：主题切换 + 目录跳转不需要脚本（锚点由浏览器处理）。
+   之所以保留这一段，是因为页头的主题按钮是真的能用的 —— 要么真的能用，要么就不该画。
+   除主题外，本页所有控件都是 disabled（见 §07）。 */
+(function () {
+  var root = document.documentElement;
+  var btn = document.getElementById('themeBtn');
+  var txt = document.getElementById('themeTxt');
+  function apply(theme) {
+    root.setAttribute('data-theme', theme);
+    if (txt) { txt.textContent = theme === 'dark' ? '浅色' : '深色'; }
+    if (btn) { btn.setAttribute('aria-pressed', theme === 'dark' ? 'true' : 'false'); }
+  }
+  var start = 'light';
+  try {
+    var saved = window.localStorage.getItem('hf-theme');
+    if (saved === 'dark' || saved === 'light') { start = saved; }
+  } catch (e) { /* file:// 下 localStorage 可能不可用 —— 静默退回浅色，不影响任何判据 */ }
+  apply(start);
+  if (btn) {
+    btn.addEventListener('click', function () {
+      var next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+      apply(next);
+      try { window.localStorage.setItem('hf-theme', next); } catch (e) {}
+    });
+  }
+})();
+</script>
+</body>
+</html>
