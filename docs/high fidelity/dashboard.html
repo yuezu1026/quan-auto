@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>回测绩效看板 · 高保真基准稿（按 platform/web 照抄）</title>
+    <style>
+/* ===== platform/web/src/styles.css -- 逐字节内联（不要在此处手改） ===== */
+:root {
+  color-scheme: light;
+  --ink: #1b1f24;
+  --muted: #6b7280;
+  --line: #e5e7eb;
+  --bad: #b42318;
+  --accent: #1f6feb;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 24px;
+  font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  color: var(--ink);
+  background: #fafbfc;
+}
+
+main {
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+header h1 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.sub {
+  margin: 4px 0 16px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.toolbar label {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+select {
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  font: inherit;
+  font-size: 13px;
+}
+
+.busy {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.error {
+  padding: 10px 12px;
+  border: 1px solid #f3c0bb;
+  border-radius: 8px;
+  background: #fff5f4;
+  color: var(--bad);
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
+.meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px 20px;
+  margin: 0 0 20px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.meta div {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.meta dt {
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+
+.meta dd {
+  margin: 0;
+  word-break: break-all;
+}
+
+.curve {
+  margin-bottom: 20px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.curve h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.curve svg {
+  display: block;
+  width: 100%;
+  height: 180px;
+}
+
+.curve polyline {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.curve-foot {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+.group {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.group h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.group table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.group th {
+  text-align: left;
+  font-weight: 400;
+  color: var(--muted);
+  padding: 4px 0;
+}
+
+.group td.value {
+  text-align: right;
+  padding: 4px 0;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.group tr + tr th,
+.group tr + tr td {
+  border-top: 1px solid var(--line);
+}
+
+footer {
+  margin-top: 24px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+footer p {
+  margin: 4px 0;
+}
+
+footer .warn {
+  color: var(--bad);
+}
+
+code {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 12px;
+  background: #f2f4f7;
+  padding: 0 4px;
+  border-radius: 4px;
+}
+
+/* ===== 上面是照抄的样式；下面是本稿自己的注释块样式 ===== */
+    /* ---- 以下为本稿自己的注释块样式（不属于被照抄的页面；颜色一律走 :root 的 token） ---- */
+    .hifi-note {
+      max-width: 1000px;
+      margin: 0 auto 20px;
+      padding: 12px 14px;
+      border: 2px dashed var(--ink);
+      border-radius: 8px;
+      background: #fff;
+      font-size: 13px;
+    }
+    .hifi-note .hifi-title {
+      margin: 12px 0 6px;
+      font-size: 14px;
+      font-weight: 700;
+    }
+    .hifi-note .hifi-title:first-child {
+      margin-top: 0;
+    }
+    .hifi-note p {
+      margin: 6px 0;
+    }
+    .hifi-note ul {
+      margin: 6px 0;
+      padding-left: 20px;
+    }
+    .hifi-note li {
+      margin-bottom: 4px;
+    }
+    .hifi-note .hifi-warn {
+      color: var(--bad);
+    }
+    .hifi-mark {
+      max-width: 1000px;
+      margin: 0 auto 10px;
+      padding: 4px 10px;
+      border-left: 4px solid var(--ink);
+      background: #f2f4f7;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    </style>
+  </head>
+  <body>
+  <div class="hifi-note">
+    <p class="hifi-title">高保真基准稿 · 回测绩效看板（低保真的 F5）</p>
+    <p>这是一份<b>静态照抄</b>：结构 / class 名 / 文案由 <code>tools/gen_high_fidelity.py</code>
+      从 <code>platform/web/src/App.jsx</code> 现折叠（含 JSX 的换行折叠规则）；
+      样式<b>逐字节内联</b>自 <code>platform/web/src/styles.css</code>；
+      数字逐字段取自 <code>platform/web/test/report-view.fixture.json</code>
+      （由真报告 <code>.rounds/i1/report-seed7-a.json</code> 投影，已与
+      <code>quanauto/dashboard.py</code> 的 <code>METRIC_SPECS</code> + <code>format_metric</code> 逐条对拍，14/14 一致）。
+      <b>手抄这一步已被取消</b>：初稿手抄时把三个空格抄错了位置，而当时没有任何东西比对文本。</p>
+    <p>真源提交 <code>f789578</code>（这四个真源文件自那以后没有改动）。怎么重新生成 / 怎么复核：见
+      <code>docs/high fidelity/README.md</code>。</p>
+    <p class="hifi-warn"><b>它没有牙</b>：不被任何门禁读取，不是规格、不解除任何缺口、<b>不等于</b>平台层开工。
+      它只是那两份<b>低保真</b>旁边的一份「照着实现画」的基准 —— 低保真正在做的事是<b>替代真页面</b>（不起 JVM 就能看）。</p>
+    <p class="hifi-warn">它能证的是「照抄这层是机械的」：本稿与一次<b>真 React 渲染</b>的 DOM 做过逐字符对拍
+      （归一化空白后差异为 0）。但那是一次<b>快照式核对</b>，不是常驻判据 —— 没有活着的 JVM 时，
+      两侧的<b>渲染结果</b>不会自动被复核。</p>
+  </div>
+
+  <div class="hifi-mark">以下整块是 <code>platform/web</code> 真页面的结构照抄（<code>body &gt; #root &gt; main</code>）。它上面与下面才是本稿自己的注释块。</div>
+  <div id="root">
+    <main>
+<header><h1>回测绩效看板</h1><p class="sub">平台层 P0 切片 · Spring Boot + React · 只读数，不算数</p></header>
+
+      <div class="toolbar">
+        <label for="report">报告</label>
+        <select id="report">
+<option value="report-seed7-a">report-seed7-a</option><option value="report-seed7-b">report-seed7-b</option><option value="report-seed8">report-seed8</option>
+        </select>
+      </div>
+
+      <dl class="meta">
+<div><dt>报告</dt><dd>report-seed7-a</dd></div><div><dt>标的</dt><dd>000001.SZ</dd></div><div><dt>窗口</dt><dd>2024-01-02T00:00:00 → 2024-03-25T00:00:00</dd></div><div><dt>状态</dt><dd>SUCCESS</dd></div><div><dt>策略</dt><dd>ma-cross / ma-cross@1.0.0</dd></div><div><dt>数据版本</dt><dd>000001.SZ:sample_prices.csv:60</dd></div><div><dt>结构</dt><dd>曲线 60 点 · 成交 3 笔 · 委托 3 条</dd></div>
+      </dl>
+
+      <section class="curve">
+        <h3>净值曲线</h3>
+        <svg viewBox="0 0 720 180" preserveAspectRatio="none" role="img" aria-label="净值曲线">
+          <polyline points="8.00,8.00 19.93,8.00 31.86,8.00 43.80,8.00 55.73,8.00 67.66,8.00 79.59,8.00 91.53,8.00 103.46,8.00 115.39,8.00 127.32,8.00 139.25,8.00 151.19,8.00 163.12,8.00 175.05,8.00 186.98,8.00 198.92,8.00 210.85,8.00 222.78,8.00 234.71,8.00 246.64,8.00 258.58,8.00 270.51,8.00 282.44,8.00 294.37,12.50 306.31,91.98 318.24,97.17 330.17,97.17 342.10,97.17 354.03,97.17 365.97,97.17 377.90,97.17 389.83,97.17 401.76,97.17 413.69,97.17 425.63,97.17 437.56,97.17 449.49,97.17 461.42,97.17 473.36,97.17 485.29,97.17 497.22,97.17 509.15,97.17 521.08,97.17 533.02,97.17 544.95,97.17 556.88,97.17 568.81,97.17 580.75,97.17 592.68,105.24 604.61,68.82 616.54,111.31 628.47,117.38 640.41,84.00 652.34,123.45 664.27,120.41 676.20,172.00 688.14,150.76 700.07,117.38 712.00,105.24"></polyline>
+        </svg>
+<p class="curve-foot">2024-01-02T00:00:00 → 2024-03-25T00:00:00 · 60 个点（逐点照抄报告， 不插值不平滑）</p>
+      </section>
+
+      <div class="groups">
+<section class="group"><h3>收益</h3><table><tbody><tr><th scope="row" title="total_return">累计收益</th><td class="value">-3.2043%</td></tr><tr><th scope="row" title="annual_return">年化收益</th><td class="value">-12.9863%</td></tr><tr><th scope="row" title="final_equity">期末净值</th><td class="value">96795.65</td></tr></tbody></table></section><section class="group"><h3>风险</h3><table><tbody><tr><th scope="row" title="max_drawdown">最大回撤</th><td class="value">5.4043%</td></tr><tr><th scope="row" title="sharpe_ratio">夏普比率</th><td class="value">-1.5102</td></tr><tr><th scope="row" title="sortino_ratio">索提诺比率</th><td class="value">-1.7471</td></tr><tr><th scope="row" title="calmar_ratio">卡玛比率</th><td class="value">-2.4029</td></tr></tbody></table></section><section class="group"><h3>成交</h3><table><tbody><tr><th scope="row" title="win_rate">胜率</th><td class="value">0.0000%</td></tr><tr><th scope="row" title="profit_factor">盈亏比（总额）</th><td class="value">0.0000</td></tr><tr><th scope="row" title="profit_loss_ratio">盈亏比（均额）</th><td class="value">0.0000</td></tr><tr><th scope="row" title="max_consecutive_losses">最大连续亏损</th><td class="value">1</td></tr><tr><th scope="row" title="avg_hold_period">平均持仓天数</th><td class="value">2.00</td></tr><tr><th scope="row" title="total_trades">成交笔数</th><td class="value">1</td></tr></tbody></table></section><section class="group"><h3>成本</h3><table><tbody><tr><th scope="row" title="total_commission">累计佣金</th><td class="value">182.75</td></tr></tbody></table></section>
+      </div>
+
+<footer><p>每个绩效数字都由服务端算好（量纲换算 + 定点小数）后随 REST 一起下发，本页原样呈现； 本页不做指标口径的加工，也不重算任何指标。</p><p>数据来源：后端直接读取回测报告文件（默认 <code>.rounds/i1</code>），与 I4 命令行看板是 同一份报告的两个读法。</p><p class="warn">本层有自建门禁了（<code>platform-spec-parity</code> 管声明层、<code>platform-runtime</code> 管运行层、<code>platform-text-parity</code> 管两侧显示规则、 <code>platform-web-parity</code> 管这一页读了哪些字段、谁在格式化数字， 四条都在 CI 里跑）—— 它们自己都<b>不起服务、不开浏览器</b>；而页面<b>渲染</b>已由运行层那条门禁的第二步（<code>npm test</code>：vitest + jsdom 里真的把这几个组件挂起来，输入是一份由真实回测报告投影出来的夹具） 覆盖 ⇒ 仍然是零覆盖的只剩 <b>布局 / 视觉</b>（jsdom 没有布局引擎， 几何量恒为 0 ⇒ 那条测试里<b>故意不写</b>几何断言，写了也只是恒真的假绿）。 ⚠️ 订正（2026-10-01）：<b>两侧展示文本是否一致</b>已不是零覆盖项（那是 <code>platform-text-parity</code> 的活）；<b>页面读的字段名、以及页脚这份自报清单 本身</b>也不再是零覆盖项（那是 <code>platform-web-parity</code> 的活，它只读源码、 不起服务、不开浏览器）；仍然只有手动脚本 <code>platform/check_text_parity.py</code>（需要活着的 JVM ⇒ 不能当门禁）的是<b>活着的服务端到底下发了什么</b>。 见 <code>docs/智能量化交易平台.md</code> 附录C §C.8 / §C.9 / §C.11 / §C.12。</p></footer>
+    </main>
+  </div>
+  <div class="hifi-mark">照抄结束。以下为本稿的说明块，<b>不属于</b>被照抄的页面。</div>
+
+  <div class="hifi-note">
+    <p class="hifi-title">照抄出来的两处「不该修」的现象</p>
+    <ul>
+      <li>抬头写「成交 <b>3</b> 笔」、指标表里「成交笔数」是 <b>1</b> —— 两个数都来自同一份报告
+        （<code>counts.trades</code> = 3 = 流水条数；<code>performance.total_trades</code> = 1 = 指标口径）。
+        <b>页面照抄、不解释</b>。设计稿若把它改成一致，那不是修 bug，是发明一个上游没有的事实。</li>
+      <li>文案里的<b>单个空格</b>（如 <code>； 本页</code>、<code>是 同一份</code>、
+        <code>、 platform-web-parity</code>）：来自 JSX 里显式的 <code>{" "}</code> 与换行折叠。
+        真页面就是这样；改掉它，这一稿就不再是照抄。这些空格现在由生成器现折叠，
+        <b>不再手抄</b>（手抄版曾在 <code>输入是一份</code> / <code>夹具）覆盖</code> 两处错了位置）。</li>
+    </ul>
+    <p class="hifi-title">同一页还有两个真实态（本稿<b>没有</b>画，见 README 的说明）</p>
+    <ul>
+      <li><b>读取中</b>：<code>&lt;span class="busy"&gt;读取中…&lt;/span&gt;</code>，选择框在报告列表为空时
+        <code>disabled</code>；此时抬头 / 曲线 / 指标<b>都不渲染</b>（不会被旧数字垫着）。</li>
+      <li><b>出错</b>：<code>&lt;p class="error"&gt;…&lt;/p&gt;</code>，且渲染被
+        <code>view &amp;&amp; !error</code> 挡着 ⇒ <b>出错时不显示旧数据</b>。</li>
+    </ul>
+    <p class="hifi-warn">还有一件事要说清楚：本稿 <b>0 个 <code>&lt;script&gt;</code></b> ⇒
+      上面那个「报告」选择框<b>是死的</b>（切了不会换报告，也不会去请求 REST）。
+      它被照抄下来是为了核对样式与文案，<b>不是摆一个假开关</b>；
+      要看真能切的那种，用 <code>docs/low fidelity/prototype.html</code>。</p>
+  </div>
+
+  </body>
+</html>

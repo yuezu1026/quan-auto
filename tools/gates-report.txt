@@ -1,7 +1,7 @@
 SCOPE: FULL -- all 22 registered gate(s) ran.
 VERDICT: PASS -- 22 of 22 gate(s) ok.
 NOTE: core-contract-refs=RATCHET 2/2 report a body verdict other than PASS and still count as ok. A tier-B ratchet prints DRIFT+/DRIFT-/DRIFT~ in its GATE header when the debt moved, and RATCHET at baseline; the line under it says verdict: DIRTY in every one of those cases (DIRTY is that script's own word for found N findings; it prints CLEAN when the count is zero). Read the GATE header, not that word.
-SIDE-EFFECT: gates wrote nothing (2831 file(s) watched)
+SIDE-EFFECT: gates wrote nothing (2834 file(s) watched)
 
 ==============================================================================
 GATE md-fidelity (tier A) selftest=PASS verdict=PASS 0 finding(s)
@@ -59,7 +59,7 @@ GATE iteration-plan (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 迭代计划里每个标「已交付」的迭代都引用了一条真实存在的证据路径
 argv: tools/verify_iteration_plan.py
 ------------------------------------------------------------------------------
-CRLF-normalised: plan=172386 bytes (迭代计划.md)
+CRLF-normalised: plan=177702 bytes (迭代计划.md)
 extracted: iterations=5 delivered=4 dod_sections=5
 verdict: PASS (0 issue(s))
 NOTE: this gate checks the plan is internally well-formed and that no completion claim dangles. It cannot judge whether an iteration was actually delivered -- someone still has to open the cited evidence file.
@@ -160,10 +160,10 @@ GATE appendix-refs (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 契约文档里被引用的附录标签（含条目号、点名归属）都真实存在
 argv: tools/verify_appendix_refs.py
 ------------------------------------------------------------------------------
-scan scope: git ls-files=146 file(s), read as text=143, skipped=3
+scan scope: git ls-files=149 file(s), read as text=146, skipped=3
   skipped (binary/undecodable): docs/智能量化交易平台-数据中心数据源选型与接入规范.docx, docs/智能量化交易平台-核心模块接口契约文档.docx, docs/智能量化交易平台.docx
 appendix index: core=7L/24I dc=6L/81I prd=3L/0I risk=0L/0I
-citations: 614 total, 350 with an item label, 163 naming an owner, in 62 file(s)
+citations: 618 total, 350 with an item label, 163 naming an owner, in 64 file(s)
 verdict: PASS (0 issue(s))
 
 ==============================================================================
@@ -266,11 +266,11 @@ what: npm ci/test/build 与 mvn test 真跑一遍（第二步在 jsdom 里真的
 argv: tools/verify_platform_build.py
 ------------------------------------------------------------------------------
 TOOLCHAIN mvn=3.9.16 java=21 (openjdk version "21.0.12" 2026-07-21 LTS, from JAVA_HOME=C:\Program Files\Zulu\zulu-21) node=v25.2.1 npm=11.16.0
-SANDBOX C:\Users\39002\AppData\Local\Temp\quanauto-platform-build-1k4d51sx (33 file(s) copied)
-STEP npm-ci           rc=0 (4.5s) OK
-STEP npm-test         rc=0 (2.4s) OK
+SANDBOX C:\Users\39002\AppData\Local\Temp\quanauto-platform-build-3282h7x5 (33 file(s) copied)
+STEP npm-ci           rc=0 (3.9s) OK
+STEP npm-test         rc=0 (2.5s) OK
 STEP npm-build        rc=0 (1.0s) OK
-STEP mvn-test         rc=0 (5.5s) OK
+STEP mvn-test         rc=0 (5.4s) OK
 STATS sandbox_files=33 mvn_tests_run=17 mvn_declared=17 mvn_failures=0 mvn_errors=0 js_tests_total=13 js_tests_declared=13 static_files=3 static_bytes=228628 served_files=3
 verdict: PASS (0 issue(s))
 
@@ -309,8 +309,8 @@ GATE line-anchors (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 文档与源码里的行号引用都被绑住（同一行有日期/提交号/版本号/「会漂」措辞，或在 tools/line-anchors.json 登记，其中 kind=numbered/row 会被按内容核对）
 argv: tools/verify_line_anchors.py
 ------------------------------------------------------------------------------
-scope: 93 file(s) scanned (docs/**/*.md, quanauto|tools|tests/*.py, CONTEXT.md, platform, .github/**/*.md)
-anchors: hits=86 distinct=68 auto-bound=38 registered=18 numbered-verified=14 row-verified=12
+scope: 94 file(s) scanned (docs/**/*.md, quanauto|tools|tests/*.py, CONTEXT.md, platform, .github/**/*.md)
+anchors: hits=90 distinct=70 auto-bound=41 registered=18 numbered-verified=14 row-verified=12
 registry: entries=39 numbered=14 quoted=5 row=12 structural=8
 verdict: PASS (0 issue(s))
 NOTE: 本门禁判的是「这个行号被绑住了」，不是「这个行号是对的」。B1-B4 的绑定只是要求同一行自己声明了它是快照 / 外部版本 / 会漂；kind=numbered / row 才真的按内容核对那一条。
