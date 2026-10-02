@@ -34,6 +34,10 @@ Checks (each independent; no check returns early and shadows a later one)
       "NOT YET DONE: cross-check the cited image" note that used to live here is done.
   C7  GATE  db/data_center.smoke.sql was supplied and is non-empty, and every ck_ the
       DDL declares is asserted BY NAME against a rejected sample there
+  C8  GATE  the quantisation constants in quanauto/pgstore.py and the `numeric(p,s)`
+      scales of the columns they write agree in BOTH directions; every constant the
+      writer defines is registered, every numeric column in the DDL is either
+      quantised or named as having no writer yet, and neither list has gone stale
 
 Exit codes: 0 = PASS, 1 = FAIL.
 """
@@ -119,6 +123,58 @@ SMOKE_ASSERT_TMPL = r"=\s*'%s'"
 # C7's second guard: the smoke test must actually read WHICH constraint fired, else its
 # name comparisons are decorative and one catch-all clause could satisfy them all.
 DIAGNOSTICS_RE = re.compile(r'GET\s+STACKED\s+DIAGNOSTICS\s+\w+\s*=\s*CONSTRAINT_NAME', re.I)
+
+# C8: the writer's quantisation constants against the DDL's column scales.
+#
+# Every other check in this file compares two documents that BOTH claim to describe the
+# database. This one reads the writer, because `numeric(p,s)` in the DDL and the quantum
+# the code rounds to are one decision written twice, in two files that never meet -- and
+# when they disagree nothing throws. A value carrying more decimals than the column keeps
+# loses its tail on the way in, so the value read back is never equal to the value sent,
+# and a re-ingest of unchanged data reports a divergence on row 1 forever. The contract
+# recorded exactly this state as appendant item J-14: the constants existed, were covered
+# by unit tests, and **no gate read them**. A unit test proves it for the columns someone
+# thought of; a gate has to cover the columns nobody thought of, which is why the two
+# "did every column get considered" lists below are compared against the DDL in both
+# directions.
+#
+# The registry is deliberately explicit rather than "one constant per table": what binds
+# a constant to a column is the column's own scale, and a table may hold columns the
+# writer never touches (see UNQUANTISED).
+SRC_PATH = os.path.join(ROOT, 'quanauto', 'pgstore.py')
+SCALE_CONST_RE = re.compile(r'^(_[A-Z0-9_]+_SCALE)[ \t]*=[ \t]*(\d+)[ \t]*$', re.M)
+# The pair is captured as two prefixes on purpose: a greedy `(_[A-Z0-9_]+)_QUANTUM` would
+# backtrack to the shorter split and hand back '_VALUE' for '_VALUE_QUANTUM', so the two
+# halves could not be compared to each other at all.
+QUANTUM_CONST_RE = re.compile(
+    r'^(_[A-Z0-9_]+)_QUANTUM[ \t]*=[ \t]*Decimal\(1\)\.scaleb\(-(_[A-Z0-9_]+)_SCALE\)'
+    r'[ \t]*$', re.M)
+# A scale only counts when it is the scale OF a column, so the column name is part of the
+# match. NUMERIC_ANYWHERE_RE is the same match without the line anchor: comparing the two
+# is what keeps a column written mid-line ("open numeric(18,4), high numeric(18,4)") from
+# silently leaving the inventory, which would shrink the coverage claim without any check
+# going red -- the family this repository keeps getting bitten by.
+NUMERIC_COLUMN_RE = re.compile(r'^[ \t]*(\w+)[ \t]+numeric\((\d+)[ \t]*,[ \t]*(\d+)\)', re.M | re.I)
+NUMERIC_ANYWHERE_RE = re.compile(r'(\w+)[ \t]+numeric\((\d+)[ \t]*,[ \t]*(\d+)\)', re.I)
+
+#: (constant in quanauto/pgstore.py, table, columns it quantises). Kept as a list so the
+#: per-row loop below can fail on the row that drifted instead of on the whole registry.
+QUANTA = (
+    ('_VALUE_SCALE', 'dc_daily_bar',
+     ('open', 'high', 'low', 'close', 'volume', 'amount')),
+    ('_FACTOR_SCALE', 'dc_adjust_factor', ('adjust_factor',)),
+    ('_DIVIDEND_SCALE', 'dc_dividend', ('cash_per_share',)),
+)
+
+#: numeric columns with no writer yet, so no constant exists for them. This is a boundary
+#: rather than a hole: `dc_financial_report` and `dc_index_member` have no ingestor, and
+#: the contract says the four-decimal quantisation cannot simply be reused when one is
+#: written. Naming them here makes the day that changes a one-line edit to a LIST THAT IS
+#: CHECKED, instead of an invisible drop in coverage.
+UNQUANTISED = {
+    'dc_financial_report': ('revenue', 'net_profit', 'total_assets', 'total_equity', 'roe'),
+    'dc_index_member': ('weight',),
+}
 
 
 def smoke_assert_re(name):
@@ -299,12 +355,26 @@ def ddl_bodies(text):
     return {t: b for t, b in CREATE_TABLE_BODY_RE.findall(text)}
 
 
-def run_checks(ddl_text, contract_text, smoke_text):
-    """smoke_text is REQUIRED, never defaulted.
+def source_scales(text):
+    """{'_VALUE_SCALE': 4, ...} -- the writer's module-level scale constants."""
+    return {name: int(digits) for name, digits in SCALE_CONST_RE.findall(text)}
 
-    A defaulted argument would silently turn C7 into a check that runs only in main()
-    and never in --selftest -- i.e. exactly the kind of detector that can never be seen
-    to be broken, which is the failure this whole file is written to avoid.
+
+def source_quanta(text):
+    """{'prefix': 'prefix'} for every `_X_QUANTUM = Decimal(1).scaleb(-_X_SCALE)`.
+
+    The value is the prefix the quantum actually reads, so a renamed or crossed pair
+    ('_FACTOR_QUANTUM' built from -_VALUE_SCALE) is a mismatch rather than a hit.
+    """
+    return {q: s for q, s in QUANTUM_CONST_RE.findall(text)}
+
+
+def run_checks(ddl_text, contract_text, smoke_text, source_text):
+    """smoke_text and source_text are REQUIRED, never defaulted.
+
+    A defaulted argument would silently turn the check that reads it into one that runs
+    only in main() and never in --selftest -- i.e. exactly the kind of detector that can
+    never be seen to be broken, which is the failure this whole file is written to avoid.
     """
     issues = []
     stats = {}
@@ -471,6 +541,110 @@ def run_checks(ddl_text, contract_text, smoke_text):
                        'them all while the real guard rots')
         stats['smoke_asserted'] = len(declared) - len(untested)
 
+    # --- C8: the writer's quantisation constants vs the DDL's column scales ---------
+    # The registry, the exemption list and both extractors are all checked for going
+    # stale. A one-directional C8 ("every registered constant matches the DDL") would
+    # call a DDL with a brand-new numeric column clean, and a DDL whose column lost its
+    # scale clean, so the "did anyone consider this column" question runs against the
+    # DDL as well.
+    scales = source_scales(source_text)
+    quanta = source_quanta(source_text)
+    numeric_cols = []
+    for tname, body in bodies.items():
+        near = NUMERIC_COLUMN_RE.findall(body)
+        wide = NUMERIC_ANYWHERE_RE.findall(body)
+        for col, prec, sc in near:
+            numeric_cols.append((tname, col, int(sc)))
+        if set(near) != set(wide):
+            fail('GATE', 'the `numeric(p,s)` extractor sees a different column set in the '
+                         'body of %s than a mid-line-tolerant search does (%s vs %s) -- '
+                         'columns written underneath each other are the only shape this '
+                         'check can inventory, so a reformat would shrink C8 silently'
+                         % (tname, sorted(c[0] for c in near), sorted(c[0] for c in wide)))
+    numeric_map = {(t, c): s for t, c, s in numeric_cols}
+    stats['writer_scales'] = len(scales)
+    stats['ddl_numeric_columns'] = len(numeric_cols)
+
+    if not scales:
+        fail('GATE', 'no `_*_SCALE = <int>` constant extracted from quanauto/pgstore.py -- '
+                     'every comparison below would run over an empty registry and report '
+                     'a clean result while checking nothing')
+    if not quanta:
+        fail('GATE', 'no `_*_QUANTUM = Decimal(1).scaleb(-_*_SCALE)` line extracted from '
+                     'quanauto/pgstore.py -- the quantum/scale pairing cannot be checked, '
+                     'so a call site rounding with the wrong quantum would pass')
+
+    registered = set()
+    for const, table, columns in QUANTA:
+        registered.add(const)
+        if const not in scales:
+            fail('C8', 'quanauto/pgstore.py no longer defines %s, but it is what quantises '
+                       '%s.%s -- with the constant gone the writer rounds to whatever it '
+                       'happens to have' % (const, table, ', '.join(columns)))
+            continue
+        scale = scales[const]
+        prefix = const[:-len('_SCALE')]
+        quantum = prefix + '_QUANTUM'
+        if prefix not in quanta:
+            fail('C8', '%s is defined but its companion %s is missing (or no longer reads '
+                       '`Decimal(1).scaleb(-%s)`) -- the two are one decision split into '
+                       'two names, so a quantum that stopped tracking its scale is a '
+                       'silent change to what gets rounded off'
+                       % (const, quantum, const))
+        elif quanta[prefix] != prefix:
+            fail('C8', '%s is built from -%s_SCALE instead of -%s_SCALE -- the same value '
+                       'now rounds differently at this call site than at the others'
+                       % (quantum, quanta[prefix].lstrip('_'), prefix.lstrip('_')))
+        # The pair has to reach the quantising function TOGETHER. A call site that
+        # passes the scale but not the quantum still "uses" both names elsewhere in the
+        # file, and it is the quantum that decides how many decimals survive.
+        paired = re.compile(r'_to_decimal\([^)]*\b%s\b[^)]*\b%s\b'
+                            % (re.escape(quantum), re.escape(const)))
+        if not paired.search(source_text):
+            fail('C8', 'no `_to_decimal(...)` call passes %s and %s together, so nothing '
+                       'proves the quantum travelling with this scale is the one the '
+                       'writer rounds with' % (quantum, const))
+        if table not in bodies:
+            fail('C8', 'C8 registers a writer for table %s, but the DDL has no such '
+                       'CREATE TABLE -- the registry is describing another database'
+                       % table)
+            continue
+        for col in columns:
+            got = numeric_map.get((table, col))
+            if got is None:
+                fail('C8', '%s.%s is not a `numeric(p,s)` column in db/data_center.sql -- '
+                           'the writer quantises it and the DDL no longer declares it'
+                           % (table, col))
+            elif got != scale:
+                fail('C8', '%s.%s is `numeric(_,%d)` in the DDL but quanauto/pgstore.py '
+                           'quantises it to %d (%s) -- the value the writer rounds to is '
+                           'not the value the column can store, and the only symptom is '
+                           'a re-ingest that keeps reporting a difference for data that '
+                           'did not change' % (table, col, got, scale, const))
+
+    stale = sorted(set(scales) - registered)
+    if stale:
+        fail('C8', 'quanauto/pgstore.py defines scale constant(s) %s that C8 does not know '
+                   'about -- a new quantum the registry never learned is a column whose '
+                   'scale nothing cross-checks' % stale)
+
+    covered = set((t, c) for _k, t, cols in QUANTA for c in cols)
+    exempt = set((t, c) for t, cols in UNQUANTISED.items() for c in cols)
+    stray = sorted(k for k in numeric_map if k not in covered and k not in exempt)
+    if stray:
+        fail('C8', 'numeric column(s) in db/data_center.sql that are neither quantised by '
+                   'the writer nor listed as having no writer yet: %s -- put it in QUANTA '
+                   'with its constant, or in UNQUANTISED with the reason it has none'
+                   % ['%s.%s' % k for k in stray])
+    ghosts = sorted(k for k in exempt if k not in numeric_map)
+    if ghosts:
+        fail('C8', 'UNQUANTISED names column(s) that the DDL no longer has as numeric '
+                   'columns: %s -- an exemption that outlived its column is exactly where '
+                   'the next unquantised column hides' % ['%s.%s' % k for k in ghosts])
+    stats['quanta_registered'] = len(covered)
+    stats['quanta_exempt'] = len(exempt)
+    stats['quanta_stray'] = len(stray)
+
     return issues, stats
 
 
@@ -490,12 +664,18 @@ def selftest():
     dpath = os.path.join(root, 'db', 'data_center.sql')
     spath = os.path.join(root, 'db', 'data_center.smoke.sql')
     contract, ddl, smoke = read_text(cpath), read_text(dpath), read_text(spath)
+    pgstore = read_text(SRC_PATH)
 
     ok = True
+    # Counted, never hard-coded: the docs point at this number instead of copying it,
+    # so a sample added tomorrow cannot make a sentence in the contract stale.
+    n_samples = [0]
 
-    def scenario(tag, d, c, code, want_clean=False, s=None):
+    def scenario(tag, d, c, code, want_clean=False, s=None, src=None):
         nonlocal ok
-        issues, _ = run_checks(d, c, smoke if s is None else s)
+        n_samples[0] += 1
+        issues, _ = run_checks(d, c, smoke if s is None else s,
+                               pgstore if src is None else src)
         codes = set(k for k, _ in issues)
         hit = (not issues) if want_clean else (code in codes)
         print('  [%s] issues=%d codes=%s %s'
@@ -504,13 +684,15 @@ def selftest():
 
     # CONTROL: the real artifacts. Reported but not asserted clean -- the gate is
     # expected to be able to fail on them, which is the whole point of running it.
-    issues, stats = run_checks(ddl, contract, smoke)
+    issues, stats = run_checks(ddl, contract, smoke, pgstore)
     print('  [control-real-artifacts] issues=%d codes=%s tables=%d documented=%d '
-          'declared=%d smoke_asserted=%d verified_on=%s evidence=%s falsified_on=%s'
+          'declared=%d smoke_asserted=%d verified_on=%s evidence=%s falsified_on=%s '
+          'writer_scales=%d quanta=%d exempt=%d'
           % (len(issues), sorted(set(k for k, _ in issues)), stats['tables'],
              stats['documented'], stats['declared'], stats.get('smoke_asserted', -1),
              stats.get('verified_on', '(none)'), stats.get('evidence_images', '(none)'),
-             stats.get('falsified_on', '(none)')))
+             stats.get('falsified_on', '(none)'), stats.get('writer_scales', -1),
+             stats.get('quanta_registered', -1), stats.get('quanta_exempt', -1)))
 
     # C2: a constraint in the contract that the DDL does not declare.
     bad = _mutate(contract, '| `ck_dc_version_format` |', '| `ck_dc_ghost_format` |', 'NEG1')
@@ -720,6 +902,92 @@ def selftest():
         scenario('NEG9-smoke-rejections-deleted', ddl, contract, 'C7',
                  s=smoke[:i] + smoke[j:])
 
+    # --- C8: the writer's scales vs the DDL's column scales -------------------------
+    # C8 is the only check here that reads quanauto/pgstore.py, so these samples are the
+    # only place a drift in that file can be seen. One sample per guard, and the ones
+    # that mutate the DDL are scale/inventory changes: the constraint inventory is left
+    # intact, so C2-C7 stay green and the input looks healthy without C8.
+
+    # C8a: the DDL's scale for a quantised column drifts (narrowed, so the check on the
+    # constant side is untouched).
+    bad = _mutate(ddl, 'numeric(18,8)', 'numeric(18,6)', 'NEG11')
+    if bad is None:
+        ok = False
+    else:
+        scenario('NEG11-ddl-scale-drift', bad, contract, 'C8')
+
+    # C8b: a brand-new numeric column nobody registered, added to a table that already
+    # has numeric columns so the only thing that changed is the column set. This is the
+    # half a one-directional C8 ("every registered constant matches") cannot see.
+    #
+    # Anchored on a whole COLUMN LINE inside a table body rather than on the bare
+    # `numeric(10,6)` text: the bare text also occurs in the DDL's comments, and inserting
+    # there produces a column the extractor cannot see -- the sample then looks like a
+    # missing detector instead of a missed mutation. (It did, the first time.)
+    bad = re.sub(r'\n([ \t]+)roe([ \t]+)numeric\(10,6\)',
+                 r'\n\1roe\2numeric(10,6),\n\1eps\2numeric(10,6)', ddl, count=1)
+    if bad == ddl:
+        print('    sample NEG12: ANCHOR NOT FOUND (the dc_financial_report.roe column)')
+        ok = False
+    else:
+        scenario('NEG12-numeric-column-unregistered', bad, contract, 'C8')
+
+    # C8c: a fourth quantum appears in the writer with no registry entry. The DDL is not
+    # touched at all, so nothing but C8's completeness half can notice.
+    bad = _mutate(pgstore, '_DIVIDEND_SCALE = 4',
+                  '_DIVIDEND_SCALE = 4\n_LATE_SCALE = 2', 'NEG13')
+    if bad is None:
+        ok = False
+    else:
+        scenario('NEG13-writer-const-unregistered', ddl, contract, 'C8', src=bad)
+
+    # C8d: the quantum that travels with a scale is swapped at the call site. Both names
+    # are still defined and still used, so "the constant exists and is referenced" stays
+    # green -- only the pairing check can see this one.
+    bad = _mutate(pgstore, '_FACTOR_QUANTUM, _FACTOR_SCALE',
+                  '_VALUE_QUANTUM, _FACTOR_SCALE', 'NEG14')
+    if bad is None:
+        ok = False
+    else:
+        scenario('NEG14-quantum-not-paired', ddl, contract, 'C8', src=bad)
+
+    # C8e: an exemption that outlived its column. Asserted on the message, not only on
+    # the code: this mutation turns one column into a ghost AND into a stray, so a
+    # code-only assertion would stay green with the staleness half deleted.
+    bad = re.sub(r'weight([ \t]+)numeric\(10,6\)', r'weight_\1numeric(10,6)', ddl, count=1)
+    if bad == ddl:
+        print('    sample NEG15: ANCHOR NOT FOUND (the dc_index_member.weight column)')
+        ok = False
+    else:
+        n_samples[0] += 1
+        issues, _ = run_checks(bad, contract, smoke, pgstore)
+        hit = any(k == 'C8' and 'no longer has as numeric columns' in m for k, m in issues)
+        print('  [NEG15-exemption-stale] issues=%d codes=%s %s'
+              % (len(issues), sorted(set(k for k, _ in issues)), 'OK' if hit else 'MISSED'))
+        ok = ok and hit
+
+    # GATE: a column written on the same line as another one leaves the line-anchored
+    # inventory while an any-position search still finds it. Without the guard the
+    # coverage claim shrinks and every remaining check stays green.
+    bad = re.sub(r'\n([ \t]+)high([ \t]+)numeric\(18,4\)', r' high\2numeric(18,4)', ddl,
+                 count=1)
+    if bad == ddl:
+        print('    sample GATE-midline-column: ANCHOR NOT FOUND (dc_daily_bar.high)')
+        ok = False
+    else:
+        scenario('GATE-midline-column', bad, contract, 'GATE')
+
+    # GATE: every scale constant stripped out of the writer. The registry then matches
+    # nothing, and without the vacuity guard C8 would compare the DDL against no constants
+    # at all and report a clean result. Stripped by the extractor's own pattern rather
+    # than by a literal, so the sample cannot drift away from what is being tested.
+    stripped = SCALE_CONST_RE.sub('', pgstore)
+    if stripped == pgstore:
+        print('    sample GATE-no-writer-scales: ANCHOR NOT FOUND (no scale constant)')
+        ok = False
+    else:
+        scenario('GATE-no-writer-scales', ddl, contract, 'GATE', src=stripped)
+
     # GATE: an input with no constraints at all must FAIL, not report a clean 0.
     scenario('GATE-empty-ddl', '# no constraints here\n', contract, 'GATE')
     scenario('GATE-empty-contract', ddl, '# no table here\n', 'GATE')
@@ -745,6 +1013,35 @@ def selftest():
                  '    a int NOT NULL,\n'
                  '    CONSTRAINT ck_dc_demo CHECK (a > 0)\n'
                  ');\n'
+                 # C8 reads the writer's constants against the DDL, so a control with no
+                 # numeric column at all would pass C8 for the wrong reason -- by not
+                 # exercising it. These five tables carry exactly the columns the real
+                 # registry and the real exemption list name, one per line because that
+                 # is the only column shape C8 can inventory.
+                 'CREATE TABLE IF NOT EXISTS dc_daily_bar (\n'
+                 '    open numeric(18,4),\n'
+                 '    high numeric(18,4),\n'
+                 '    low numeric(18,4),\n'
+                 '    close numeric(18,4),\n'
+                 '    volume numeric(20,4),\n'
+                 '    amount numeric(20,4)\n'
+                 ');\n'
+                 'CREATE TABLE IF NOT EXISTS dc_adjust_factor (\n'
+                 '    adjust_factor numeric(18,8)\n'
+                 ');\n'
+                 'CREATE TABLE IF NOT EXISTS dc_dividend (\n'
+                 '    cash_per_share numeric(18,4)\n'
+                 ');\n'
+                 'CREATE TABLE IF NOT EXISTS dc_financial_report (\n'
+                 '    revenue numeric(20,4),\n'
+                 '    net_profit numeric(20,4),\n'
+                 '    total_assets numeric(20,4),\n'
+                 '    total_equity numeric(20,4),\n'
+                 '    roe numeric(10,6)\n'
+                 ');\n'
+                 'CREATE TABLE IF NOT EXISTS dc_index_member (\n'
+                 '    weight numeric(10,6)\n'
+                 ');\n'
                  '-- PG-VERIFIED-ON: %s\n' % ' '.join(sorted(evidence_now)))
     synth_contract = ('#### 3.6.1 数据库级不变量（最后防线）\n\n'
                       '| 约束名 | 表 | 强制内容 | 依据 |\n'
@@ -766,6 +1063,7 @@ def selftest():
 
     print('SELFTEST %s' % ('OK: all detectors fire, consistent sample stays clean'
                            if ok else 'FAIL'))
+    print('samples=%d' % n_samples[0])
     return 0 if ok else 1
 
 
@@ -777,21 +1075,24 @@ def main():
     cpath = os.path.join(root, 'docs', '智能量化交易平台-数据中心接口契约文档.md')
     dpath = os.path.join(root, 'db', 'data_center.sql')
     spath = os.path.join(root, 'db', 'data_center.smoke.sql')
-    for p in (cpath, dpath, spath):
+    for p in (cpath, dpath, spath, SRC_PATH):
         if not os.path.exists(p):
             print('GATE FAIL: missing input %s' % p)
             return 1
 
     contract, ddl, smoke = read_text(cpath), read_text(dpath), read_text(spath)
-    print('CRLF-normalised: contract=%d bytes, ddl=%d bytes, smoke=%d bytes'
+    source = read_text(SRC_PATH)
+    print('CRLF-normalised: contract=%d bytes, ddl=%d bytes, smoke=%d bytes, writer=%d bytes'
           % (len(contract.encode('utf-8')), len(ddl.encode('utf-8')),
-             len(smoke.encode('utf-8'))))
+             len(smoke.encode('utf-8')), len(source.encode('utf-8'))))
 
-    issues, stats = run_checks(ddl, contract, smoke)
+    issues, stats = run_checks(ddl, contract, smoke, source)
     print('extracted: tables=%d documented=%d declared=%d in_body=%d mysqlisms=%d '
-          'smoke_asserted=%d'
+          'smoke_asserted=%d writer_scales=%d ddl_numeric=%d quanta=%d exempt=%d'
           % (stats['tables'], stats['documented'], stats['declared'],
-             stats['in_body'], stats['mysqlisms'], stats.get('smoke_asserted', -1)))
+             stats['in_body'], stats['mysqlisms'], stats.get('smoke_asserted', -1),
+             stats.get('writer_scales', -1), stats.get('ddl_numeric_columns', -1),
+             stats.get('quanta_registered', -1), stats.get('quanta_exempt', -1)))
     for code, msg in issues:
         print('ISSUE [%s] %s' % (code, msg))
     print('verdict: %s (%d issue(s))'
@@ -801,7 +1102,10 @@ def main():
           'that is what db/data_center.smoke.sql has to print SMOKE PASS for. That run '
           'has happened (see tools/sql-smoke-report*.txt), and so has the per-constraint '
           'falsification (tools/falsify-report*.txt); both sets are SNAPSHOTS and are '
-          'void the moment any db/*.sql or *.smoke.sql file changes.')
+          'void the moment any db/*.sql or *.smoke.sql file changes. C8 reads the '
+          'writer but only compares DECLARED scales: it cannot show that the values that '
+          'arrive are within them, and it does not cross-check precision (the DDL uses '
+          'numeric(18,4) and numeric(20,4) for the same constant).')
     return 0 if not issues else 1
 
 

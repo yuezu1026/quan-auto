@@ -187,7 +187,7 @@ GATES = [
     {
         'name': 'data-center-ddl',
         'tier': 'A',
-        'what': '数据中心契约 §3.6.1 与 db/data_center.sql 约束清单双向一致',
+        'what': '数据中心契约 §3.6.1 与 db/data_center.sql 约束清单双向一致；写侧量子常量与 DDL 列标度也双向对拍',
         'runner': ['tools/verify_data_center.py'],
         'selftest': ['tools/verify_data_center.py', '--selftest'],
     },
