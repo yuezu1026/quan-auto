@@ -18,7 +18,7 @@ GATE risk-config (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 风控契约 §3.6 与 db/risk_control.sql 与 smoke.sql 三方一致
 argv: tools/verify_risk_config.py
 ------------------------------------------------------------------------------
-CRLF-normalised: contract=101940 bytes, sql=15185 bytes, smoke=22801 bytes, specs=124892 bytes
+CRLF-normalised: contract=102260 bytes, sql=15185 bytes, smoke=25803 bytes, specs=124892 bytes
 extracted: seed_rows=6 ddl_tables=9 spec_rows=6 rule_specs=6 contract_table_refs=13 required_constraints=14 covered_by_smoke=14 verified_on=postgres:14 postgres:15 postgres:16 postgres:17 evidence_images=postgres:14 postgres:15 postgres:16 postgres:17 falsified_on=postgres:14 postgres:15 postgres:16 postgres:17
 smoke evidence files: D:\project-quan\quan-auto\tools\sql-smoke-report-pg14.txt D:\project-quan\quan-auto\tools\sql-smoke-report-pg15.txt D:\project-quan\quan-auto\tools\sql-smoke-report-pg16.txt D:\project-quan\quan-auto\tools\sql-smoke-report.txt
 falsification ladder files: D:\project-quan\quan-auto\tools\falsify-report-pg14.txt D:\project-quan\quan-auto\tools\falsify-report-pg15.txt D:\project-quan\quan-auto\tools\falsify-report-pg16.txt D:\project-quan\quan-auto\tools\falsify-report.txt
@@ -29,8 +29,8 @@ GATE data-center-ddl (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 数据中心契约 §3.6.1 与 db/data_center.sql 约束清单双向一致；写侧量子常量与 DDL 列标度也双向对拍
 argv: tools/verify_data_center.py
 ------------------------------------------------------------------------------
-CRLF-normalised: contract=286115 bytes, ddl=22498 bytes, smoke=45078 bytes, writer=50780 bytes
-extracted: tables=10 documented=18 declared=18 in_body=18 mysqlisms=0 smoke_asserted=18 writer_scales=3 ddl_numeric=14 quanta=8 exempt=6
+CRLF-normalised: contract=300266 bytes, ddl=23200 bytes, smoke=45269 bytes, writer=50780 bytes
+extracted: tables=10 documented=18 declared=18 in_body=18 mysqlisms=0 smoke_asserted=18 writer_scales=3 ddl_numeric=14 quanta=8 exempt=6 ladder_guards=194 exercised=37 registered=3 uncovered=0
 verdict: PASS (0 issue(s))
 NOTE: this gate never executes the DDL and never inspects a CHECK expression. Passing it does NOT mean the constraints reject bad values -- that is what db/data_center.smoke.sql has to print SMOKE PASS for. That run has happened (see tools/sql-smoke-report*.txt), and so has the per-constraint falsification (tools/falsify-report*.txt); both sets are SNAPSHOTS and are void the moment any db/*.sql or *.smoke.sql file changes. C8 reads the writer but only compares DECLARED scales: it cannot show that the values that arrive are within them, and it does not cross-check precision (the DDL uses numeric(18,4) and numeric(20,4) for the same constant).
 
@@ -49,7 +49,7 @@ GATE data-center-adapter (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 适配器把源列名/取值翻成标准 schema、采集层不含数据库驱动、上游 SDK 只在函数内惰性 import、且行对象不暴露源字段名
 argv: tools/verify_data_center_adapter.py
 ------------------------------------------------------------------------------
-CRLF-normalised: quanauto\datasources.py=147350 bytes, quanauto\datacenter.py=50036 bytes, quanauto\errors.py=17585 bytes, docs\智能量化交易平台-数据中心接口契约文档.md=286115 bytes
+CRLF-normalised: quanauto\datasources.py=147350 bytes, quanauto\datacenter.py=50036 bytes, quanauto\errors.py=17585 bytes, docs\智能量化交易平台-数据中心接口契约文档.md=300266 bytes
 extracted: scanned_modules=3 str_maps=9 column_maps=8 value_maps=1 schema_bindings=6 module_imports=15 lazy_source_imports=2 row_classes=5 denylist_names=37 contract_schemas=5 taxonomy_declared=8 taxonomy_producers=8 taxonomy_wiring=1
 verdict: PASS (0 issue(s))
 NOTE: 这个门禁只解析源码、从不执行、不导入 pandas、不跑 pytest。它证明的是「结构上没被绕过」，**不是**「映射表的内容是对的」—— 源列名是从各源文档抄来的，从未联网核对（akshare/baostock 都没装），那条欠账登记在数据中心契约附录 B。东财两张财务表是照实测重排的（附录 B12），但那是**人工冒烟**的结论，不是这里出来的。运行时行为由 tests/test_data_center_adapter.py 负责。
@@ -59,7 +59,7 @@ GATE iteration-plan (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 迭代计划里每个标「已交付」的迭代都引用了一条真实存在的证据路径
 argv: tools/verify_iteration_plan.py
 ------------------------------------------------------------------------------
-CRLF-normalised: plan=257567 bytes (迭代计划.md)
+CRLF-normalised: plan=266616 bytes (迭代计划.md)
 extracted: iterations=5 delivered=4 dod_sections=5
 verdict: PASS (0 issue(s))
 NOTE: this gate checks the plan is internally well-formed and that no completion claim dangles. It cannot judge whether an iteration was actually delivered -- someone still has to open the cited evidence file.
@@ -163,7 +163,7 @@ argv: tools/verify_appendix_refs.py
 scan scope: git ls-files=157 file(s), read as text=154, skipped=3
   skipped (binary/undecodable): docs/智能量化交易平台-数据中心数据源选型与接入规范.docx, docs/智能量化交易平台-核心模块接口契约文档.docx, docs/智能量化交易平台.docx
 appendix index: core=7L/24I dc=7L/81I prd=3L/0I risk=0L/0I
-citations: 753 total, 353 with an item label, 192 naming an owner, in 71 file(s)
+citations: 774 total, 353 with an item label, 197 naming an owner, in 71 file(s)
 verdict: PASS (0 issue(s))
 
 ==============================================================================
@@ -202,8 +202,8 @@ argv: tools/verify_class_coverage.py
 ------------------------------------------------------------------------------
 root:            D:\project-quan\quan-auto
 contract[core]   docs\智能量化交易平台-核心模块接口契约文档.md  classes=80 prose=21437 chars
-contract[dc  ]   docs\智能量化交易平台-数据中心接口契约文档.md  classes=29 prose=148424 chars
-contract[risk]   docs\智能量化交易平台-风控层接口契约文档.md  classes=24 prose=45439 chars
+contract[dc  ]   docs\智能量化交易平台-数据中心接口契约文档.md  classes=29 prose=156443 chars
+contract[risk]   docs\智能量化交易平台-风控层接口契约文档.md  classes=24 prose=45645 chars
 python blocks:   71 (unparsable=2, of which class-like=2, NewType aliases=1)
 NOTE: 契约 core 文档 1167 行的块解析不了（第 1168 行语法错：invalid syntax）—— 类名提示=Account 首行=@dataclass class Account: account_id: str # 账户ID total_capital: float 
 NOTE: 契约 core 文档 1989 行的块解析不了（第 2005 行语法错：unterminated triple-quoted string literal (detected at line 23)）—— 类名提示=ResultSerializer 首行=class ResultSerializer: """ 回测结果序列化器。 """
@@ -239,7 +239,7 @@ GATE risk-table-wiring (tier A) selftest=PASS verdict=PASS 0 finding(s)
 what: 风控契约 §3.6.1 每张表都有产品写入方（或按 §八 登记豁免）、写入方归属契约点名的组件、关键能力未被改掉，且 D1 的 check() 内零 IO 仍成立
 argv: tools/verify_risk_table_wiring.py
 ------------------------------------------------------------------------------
-CRLF-normalised: contract=101940 bytes, product sources=17 file(s)
+CRLF-normalised: contract=102260 bytes, product sources=17 file(s)
 extracted: contract_tables=9 sources=17 sources_with_write_keyword=6 tables_with_writer=7 writer_sites=7 exempt=1
 NOTE 'risk_intercept_log' 契约写入方写作「风控引擎（异步批量）」（未点名类），实测写入作用域是 ['quanauto/risk.py::RiskInterceptLogWriter']
 NOTE 'risk_breaker_state' 契约写入方写作「风控引擎」（未点名类），实测写入作用域是 ['quanauto/risk.py::DbRiskRuleStore']
@@ -266,11 +266,11 @@ what: npm ci/test/build 与 mvn test 真跑一遍（第二步在 jsdom 里真的
 argv: tools/verify_platform_build.py
 ------------------------------------------------------------------------------
 TOOLCHAIN mvn=3.9.16 java=21 (openjdk version "21.0.12" 2026-07-21 LTS, from JAVA_HOME=C:\Program Files\Zulu\zulu-21) node=v25.2.1 npm=11.16.0
-SANDBOX C:\Users\39002\AppData\Local\Temp\quanauto-platform-build-je82q2bi (33 file(s) copied)
-STEP npm-ci           rc=0 (3.5s) OK
-STEP npm-test         rc=0 (2.2s) OK
-STEP npm-build        rc=0 (0.9s) OK
-STEP mvn-test         rc=0 (4.6s) OK
+SANDBOX C:\Users\39002\AppData\Local\Temp\quanauto-platform-build-4iyinx3d (33 file(s) copied)
+STEP npm-ci           rc=0 (3.8s) OK
+STEP npm-test         rc=0 (2.4s) OK
+STEP npm-build        rc=0 (1.0s) OK
+STEP mvn-test         rc=0 (5.1s) OK
 STATS sandbox_files=33 mvn_tests_run=17 mvn_declared=17 mvn_failures=0 mvn_errors=0 js_tests_total=13 js_tests_declared=13 static_files=3 static_bytes=228628 served_files=3
 verdict: PASS (0 issue(s))
 

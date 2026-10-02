@@ -54,8 +54,10 @@
 --     non-zero   + "SMOKE FAIL: ..."   -> at least one guard is a paper guard
 --
 -- STATUS: written 2026-09-23, EXECUTED 2026-09-23, re-run on a version ladder
---   2026-09-24, and re-run on the same ladder 2026-10-01 after the 10th table
---   (dc_dividend, +2 CHECKs) was added -- SMOKE PASS, 46 passed / 0 failed, on FOUR
+--   2026-09-24, re-run on the same ladder 2026-10-01 after the 10th table
+--   (dc_dividend, +2 CHECKs) was added, and re-run again 2026-10-02 (header only, but
+--   the snapshots are re-recorded after ANY byte change here) -- SMOKE PASS,
+--   46 passed / 0 failed, on FOUR
 --   images, each run writing its own snapshot (a later run never overwrites an earlier
 --   one -- that is what run_sql_smoke.py's --report= is for):
 --     postgres:14  PostgreSQL 14.24  tools/sql-smoke-report-pg14.txt
@@ -73,30 +75,30 @@
 --     * the denominator is not self-asserted: a section that silently stopped
 --       executing would shrink n_pass without turning anything red. What keeps the
 --       B half present is C7 in tools/verify_data_center.py (18/18 asserted by name).
---     * falsification is per-CONSTRAINT, one case at a time: each case must turn
---       EXACTLY one sample red (n_fail == 1). That signature is what indirectly
---       covers "every sample value really falls inside the reject region"; it is not
---       a per-value proof. The 3 guards that are not named CHECKs (the two NOT NULLs
---       and the partial unique index) are covered by C7, not by the falsifier.
+--     * falsification is per-GUARD, one case at a time: each case must turn EXACTLY one
+--       sample red (n_fail == 1). That signature is what indirectly covers "every
+--       sample value really falls inside the reject region"; it is not a per-value
+--       proof. The guards that are not named CHECKs are covered unevenly, and as of
+--       2026-10-02 the tool says so itself: the partial unique index
+--       uq_dc_data_version_active (A6) and dc_trading_calendar's primary key (C8b)
+--       ARE falsified, while uq_dc_quality_issue and every NOT NULL column are
+--       registered in tools/falsify_smoke.py's NOT_FALSIFIED table with a per-entry
+--       reason. C9 in tools/verify_data_center.py checks that registration against the
+--       guards this DDL actually declares. Registration is not coverage.
 --
 --   A6 is RESOLVED: GET STACKED DIAGNOSTICS ... = CONSTRAINT_NAME DOES return
 --   uq_dc_data_version_active for a partial unique INDEX violation, so the fallback
 --   documented below (relax A6 to the SQLSTATE only) is NOT needed -- A6 stays strict.
 --
 --   Proof that the B half has teeth (a green that is never falsified is not evidence):
---   tools/falsify_smoke.py relaxes ONE named CHECK at a time in the DDL (expression
---   only -- the constraint is never dropped), re-runs this file, and requires exactly
---   one sample to go red. Coverage is now every constraint, not a sample: 33 cases /
---   33 CAUGHT / 32 named CHECKs (this file's 18 + risk control's 14). Per-case
---   evidence: tools/falsify-report.txt. Example: widening ck_dc_fin_roe_range's upper
---   bound from 5 to 1000 makes this file report 45 passed / 1 failed
+--   tools/falsify_smoke.py relaxes ONE guard at a time in the DDL, re-runs this file
+--   and the risk-control one, and requires exactly one sample to go red. Coverage is
+--   now every named CHECK plus the non-CHECK guards a sample can actually reach:
+--   38 cases / 38 CAUGHT / 32 named CHECKs (this file's 18 + risk control's 14) +
+--   5 non-CHECK guards. Per-case evidence: tools/falsify-report*.txt -- one snapshot
+--   per image, all four since 2026-10-02. Example: widening ck_dc_fin_roe_range's
+--   upper bound from 5 to 1000 makes this file report 45 passed / 1 failed
 --   (B10 FAIL  roe = 600 was accepted) instead of 46 / 0.
---
---   A6 asked whether PostgreSQL populates CONSTRAINT_NAME for a violation raised by a
---   unique INDEX. Measured answer on 17.11: yes, it does -- A6 PASSED, so the planned
---   fallback (relax that one assertion to the SQLSTATE only) was NOT needed. That
---   question is the perfect example of what no static check can answer: this file
---   could only state it as a hypothesis until the day it finally ran.
 -- ============================================================================
 
 BEGIN;

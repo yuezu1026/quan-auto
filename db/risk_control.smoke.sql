@@ -32,9 +32,10 @@
 --     exit code 0 + "SMOKE PASS: all N ..." -> every guard is effective
 --     exit code 3 + "SMOKE FAIL: ..."       -> at least one guard is a paper guard
 --
--- STATUS: written 2026-09-23, EXECUTED 2026-09-23 and re-run on a version ladder
---   2026-09-24 -- SMOKE PASS, 23 passed / 0 failed, on FOUR images, each run writing
---   its own snapshot (a later run never overwrites an earlier one -- that is what
+-- STATUS: written 2026-09-23, EXECUTED 2026-09-23, re-run on a version ladder
+--   2026-09-24, and re-run on the same ladder 2026-10-02 (B20a/B20b/B21 added) --
+--   SMOKE PASS, 26 passed / 0 failed, on FOUR images, each run writing its own
+--   snapshot (a later run never overwrites an earlier one -- that is what
 --   run_sql_smoke.py's --report= is for):
 --     postgres:14  PostgreSQL 14.24  tools/sql-smoke-report-pg14.txt
 --     postgres:15  PostgreSQL 15.18  tools/sql-smoke-report-pg15.txt
@@ -48,27 +49,33 @@
 --
 --   What that green does NOT cover:
 --     * no image outside those four has ever been run;
---     * B2..B10 and B12..B19 assert the SQLSTATE only. (B3, B5 and B9 are the
---       must-be-ACCEPTED boundary samples and carry no exception branch at all; B11
---       asserts not_null_violation, not a named CHECK.) For each refusing sample
---       exactly one constraint CAN fire -- hand-verified and enforced by
---       tools/verify_risk_config.py -- but those samples do not prove WHICH
---       constraint refused the row. Only B1 asserts the constraint name. This
---       asymmetry is deliberate and is not coverage.
---     * the 3 non-CHECK guards (1 primary key that the singleton samples ride on, and
---       the not-null on risk_rule.threshold) are NOT falsified by tools/falsify_smoke.py;
---       that tool covers the 14 named CHECK constraints only.
+--     * most refusing samples assert the SQLSTATE only (B2..B10, B12..B19; B3, B5 and
+--       B9 are the must-be-ACCEPTED boundary samples and carry no exception branch at
+--       all, and B11 asserts not_null_violation, not a named CHECK). For each refusing
+--       sample exactly one constraint CAN fire -- hand-verified and enforced by
+--       tools/verify_risk_config.py -- but those samples do not prove WHICH constraint
+--       refused the row. B1, B20b and B21 do read CONSTRAINT_NAME; the rest do not.
+--       This asymmetry is deliberate and is not coverage.
+--     * the remaining non-CHECK guards are NOT falsified. tools/falsify_smoke.py covers
+--       all 14 named CHECK constraints here, plus the not-null on risk_rule.threshold
+--       (this file's B11) and the primary keys of the two singleton tables (B20b/B21).
+--       What it still cannot falsify -- the other seven tables' primary keys, and the
+--       not-null on every other column -- is registered, with a per-entry reason, in
+--       that tool's NOT_FALSIFIED table, which tools/verify_data_center.py's C9 checks
+--       against the guards this DDL actually declares. Registration is not coverage.
 --
 --   Proof that the B half has teeth (a green that is never falsified is not evidence):
---   tools/falsify_smoke.py widens one constraint at a time and re-runs this file. It
---   currently runs 31 cases over both DDLs, covering all 30 named CHECK constraints
---   (ck_risk_rule_ratio_range appears twice, once per bound). Each case must turn
---   EXACTLY one sample red, which is the signature that the mutation was narrow.
---   Widening ck_risk_rule_ratio_range's upper bound, for instance, makes this file
---   report 22 passed / 1 failed (B1 FAIL  RATIO=10 was accepted) instead of 23/0.
---   NOTE: that falsification run has only ever been done on postgres:17. The other
---   three images' constraints are backed by the smoke suites, not by per-constraint
---   falsification -- a distinction that matters if you are about to claim more.  
+--   tools/falsify_smoke.py relaxes one guard at a time and re-runs both smoke files. It
+--   currently runs 38 cases over both DDLs, covering all 32 named CHECK constraints
+--   (ck_risk_rule_ratio_range appears twice, once per bound) plus 5 non-CHECK guards.
+--   Each case must turn EXACTLY one sample red, which is the signature that the
+--   mutation was narrow. Widening ck_risk_rule_ratio_range's upper bound, for instance,
+--   makes this file report 25 passed / 1 failed (B1 FAIL  RATIO=10 was accepted) instead
+--   of 26/0.
+--   That ladder has been run on all four images (2026-10-02): each tag writes its own
+--   tools/falsify-report*.txt. The constraints of other tags/distributions are still
+--   backed by the smoke suites alone -- a distinction that matters if you are about to
+--   claim more.  
 -- ============================================================================
 
 BEGIN;
@@ -484,6 +491,58 @@ BEGIN
   EXCEPTION WHEN check_violation THEN
     n_pass := n_pass + 1;
     RAISE NOTICE 'B19 PASS  unknown change_direction rejected';
+  END;
+
+  -- B20a: the CONTROL sample for B20b. risk_switch_state has no seed row, so inserting
+  -- id=1 is an ordinary write and must be ACCEPTED -- otherwise a table that refused
+  -- everything would look exactly like a table that refuses the duplicate.
+  BEGIN
+    INSERT INTO risk_switch_state (id, active, activated_by)
+    VALUES (1, TRUE, 'smoke');
+    n_pass := n_pass + 1;
+    RAISE NOTICE 'B20a PASS  first id=1 kill-switch row accepted';
+  EXCEPTION WHEN unique_violation OR check_violation THEN
+    n_fail := n_fail + 1;
+    RAISE NOTICE 'B20a FAIL  the FIRST id=1 kill-switch row was rejected';
+  END;
+
+  -- B20b: the kill switch's PRIMARY KEY. B16/B17 only ever hit the *singleton CHECK*
+  -- (id = 1); nothing proved the primary key refuses a second row carrying the SAME id.
+  -- It rides on B20a: with the primary key dropped, this row is accepted instead.
+  BEGIN
+    INSERT INTO risk_switch_state (id, active, activated_by)
+    VALUES (1, TRUE, 'smoke');
+    n_fail := n_fail + 1;
+    RAISE NOTICE 'B20b FAIL  a second id=1 kill-switch row was accepted (primary key not enforcing)';
+  EXCEPTION WHEN unique_violation THEN
+    GET STACKED DIAGNOSTICS v_cname = CONSTRAINT_NAME;
+    IF v_cname = 'risk_switch_state_pkey' THEN
+      n_pass := n_pass + 1;
+      RAISE NOTICE 'B20b PASS  second id=1 kill-switch row rejected by %', v_cname;
+    ELSE
+      n_fail := n_fail + 1;
+      RAISE NOTICE 'B20b FAIL  rejected by % instead of risk_switch_state_pkey', v_cname;
+    END IF;
+  END;
+
+  -- B21: same for the config-version row's PRIMARY KEY. This one needs no control
+  -- sample (unlike B20a): the DDL seeds exactly one risk_config_version row, so if that
+  -- seed ever stopped landing the insert below would be ACCEPTED and this sample would
+  -- say so -- it doubles as the seed-row existence check.
+  BEGIN
+    INSERT INTO risk_config_version (id, version, updated_at)
+    VALUES (1, 1, CURRENT_TIMESTAMP(3));
+    n_fail := n_fail + 1;
+    RAISE NOTICE 'B21 FAIL  a second id=1 config-version row was accepted (primary key not enforcing)';
+  EXCEPTION WHEN unique_violation THEN
+    GET STACKED DIAGNOSTICS v_cname = CONSTRAINT_NAME;
+    IF v_cname = 'risk_config_version_pkey' THEN
+      n_pass := n_pass + 1;
+      RAISE NOTICE 'B21 PASS  second id=1 config-version row rejected by %', v_cname;
+    ELSE
+      n_fail := n_fail + 1;
+      RAISE NOTICE 'B21 FAIL  rejected by % instead of risk_config_version_pkey', v_cname;
+    END IF;
   END;
 
   -- =========================================================================

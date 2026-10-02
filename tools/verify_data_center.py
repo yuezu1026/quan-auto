@@ -38,9 +38,19 @@ Checks (each independent; no check returns early and shadows a later one)
       scales of the columns they write agree in BOTH directions; every constant the
       writer defines is registered, every numeric column in the DDL is either
       quantised or named as having no writer yet, and neither list has gone stale
+  C9  GATE  the falsification ladder's coverage claim against the guards the two DDLs
+      really declare: every PRIMARY KEY / UNIQUE / named CHECK / NOT NULL column that
+      db/data_center.sql and db/risk_control.sql build is either relaxed by a CASES
+      entry of the matching kind or registered in NOT_FALSIFIED with a reason, and every
+      CASES entry names a guard that actually exists in the DDL it names. The ladder's
+      own "覆盖" line is checked against its own case list by C6; that is a self-
+      agreement and cannot see a constraint that no case touches, because a freshly
+      added constraint is absent from both sides of the comparison (appendant item J-9,
+      closed 2026-10-02 -- see J.8 of appendix J)
 
 Exit codes: 0 = PASS, 1 = FAIL.
 """
+import ast
 import glob
 import os
 import re
@@ -175,6 +185,48 @@ UNQUANTISED = {
     'dc_financial_report': ('revenue', 'net_profit', 'total_assets', 'total_equity', 'roe'),
     'dc_index_member': ('weight',),
 }
+
+# C9: the falsification ladder's COVERAGE CLAIM against the guards the two DDLs really
+# declare. J-9 in the data-center contract's appendant J recorded this gap (closed
+# 2026-10-02 -- see J.8 of appendix J): the ladder relaxed named CHECKs only, while the
+# DDLs also hold PRIMARY KEYs, a unique index and NOT NULL columns that the sentence
+# "覆盖全部 32 条命名 CHECK" implicitly left out.
+#
+# Two measured facts about the inputs decide the whole design, and both were wrong on the
+# first guess:
+#   * the constraint keyword is often on the NEXT line ("CONSTRAINT ck_x\n  CHECK (...)"),
+#     so classifying by "the word after the name on the same line" mis-reads most named
+#     CHECKs -- and the greedy skip backtracks into calling them 't', 'D', ...;
+#   * `CREATE UNIQUE INDEX` lives outside every CREATE TABLE body, and an unnamed
+#     `PRIMARY KEY (...)` clause means the TABLE (not a constraint) is the thing a sample
+#     can relax.
+#
+# The registries are read with ast.parse() and NEVER by importing the tool: importing it
+# would run it, and running it shells out to docker and rewrites a report file. The lesson
+# is the same one written down in tools/verify_design_artifacts.py.
+FALSIFY_SRC = None
+RISK_DDL_PATH = os.path.join(ROOT, 'db', 'risk_control.sql')
+# Set by --selftest to inject a source and a second DDL without touching the disk. Like
+# FALSIFY_DOCS for C6: the detectors are the object under test, so the inputs they read
+# have to be injectable, or every C9 sample would have to edit a real file.
+RISK_DDL_TEXT = None
+# Same shape as the tool's own gate, deliberately re-derived here instead of shared: a
+# check that borrowed the tool's parser could not see the tool's parser break.
+CLASS_ENTRY_RE = re.compile(r'^(?P<cls>[A-Z][A-Z ]*?)（除[ \t]*(?P<excs>.+)）$')
+CONSTRAINT_LINE_RE = re.compile(r'^[ \t]*CONSTRAINT[ \t]+(\w+)', re.M)
+PRIMARY_KEY_RE = re.compile(r'\bPRIMARY[ \t]+KEY\b', re.I)
+UNIQUE_INDEX_RE = re.compile(
+    r'^[ \t]*CREATE[ \t]+UNIQUE[ \t]+INDEX[ \t]+(?:IF[ \t]+NOT[ \t]+EXISTS[ \t]+)?(\w+)',
+    re.M | re.I)
+NOT_NULL_RE = re.compile(r'^[ \t]*(\w+)[ \t]+\S.*?[ \t]NOT[ \t]+NULL\b', re.M | re.I)
+# Words that can start a line inside a CHECK expression. Without this the NOT NULL
+# inventory picks up phantoms like `AND.available_date`, and the "every guard is either
+# relaxed or registered" count would then be inflated by entries no reader can look up in
+# the DDL -- an inflated denominator is the quiet direction of a false green.
+NOT_NULL_NON_COLUMN = frozenset((
+    'CONSTRAINT', 'PRIMARY', 'UNIQUE', 'FOREIGN', 'CHECK', 'REFERENCES',
+    'AND', 'OR', 'NOT', 'IS', 'WITH', 'CASE', 'WHEN', 'THEN', 'ELSE', 'END'))
+REGISTRY_NAMES = ('CASES', 'KINDS', 'LANDINGS', 'NOT_FALSIFIED', 'CLASS_KIND')
 
 
 def smoke_assert_re(name):
@@ -367,6 +419,137 @@ def source_quanta(text):
     ('_FACTOR_QUANTUM' built from -_VALUE_SCALE) is a mismatch rather than a hit.
     """
     return {q: s for q, s in QUANTUM_CONST_RE.findall(text)}
+
+
+def read_or_problem(path):
+    """(text, None) or ('', reason). Used by C9, which reads two more files than C1-C8.
+
+    Returning the reason instead of raising keeps the failure inside the issue list: a
+    missing input has to be reported as an issue of the check that needed it, not as a
+    traceback that hides which claim went unverified.
+    """
+    try:
+        return read_text(path), None
+    except (OSError, UnicodeDecodeError) as exc:
+        return '', str(exc)
+
+
+def _ast_literal(node, consts):
+    """Reads a registry back as data without executing anything.
+
+    Only the shapes those registries use are supported, and an unexpected shape RAISES
+    rather than returning nothing: a registry this cannot read would otherwise look like
+    an EMPTY registry, and an empty registry agrees with any claim whatsoever.
+    """
+    if isinstance(node, ast.Constant):
+        return node.value
+    if isinstance(node, ast.Name):
+        if node.id not in consts:
+            raise ValueError('%s is not a module-level string constant' % node.id)
+        return consts[node.id]
+    if isinstance(node, (ast.Tuple, ast.List)):
+        return [_ast_literal(elt, consts) for elt in node.elts]
+    if isinstance(node, ast.Dict):
+        out = {}
+        for key, value in zip(node.keys, node.values):
+            if key is None:
+                raise ValueError('a {**...} spread cannot be read as data')
+            out[_ast_literal(key, consts)] = _ast_literal(value, consts)
+        return out
+    raise ValueError('unexpected syntax: %s' % type(node).__name__)
+
+
+def parse_ladder_registry(text):
+    """(registry, problems) for tools/falsify_smoke.py's case registry.
+
+    AST only. See the constants block above for why importing the tool is not an option.
+    """
+    problems = []
+    try:
+        tree = ast.parse(text)
+    except SyntaxError as exc:
+        return {}, ['cannot parse %s (%s) -- every registry read from it would be empty'
+                    % (os.path.basename(FALSIFY_TOOL), exc)]
+    consts, nodes = {}, {}
+    for node in tree.body:
+        if not (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)):
+            continue
+        name = node.targets[0].id
+        if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+            consts[name] = node.value.value
+        elif name in REGISTRY_NAMES:
+            nodes[name] = node.value
+    registry = {'consts': consts}
+    for name in REGISTRY_NAMES:
+        node = nodes.get(name)
+        if node is None:
+            problems.append('%s defines no module-level %s -- the comparison that reads '
+                            'it would run over an empty set'
+                            % (os.path.basename(FALSIFY_TOOL), name))
+            continue
+        try:
+            registry[name.lower()] = _ast_literal(node, consts)
+        except ValueError as exc:
+            problems.append('%s: cannot read %s as data (%s)'
+                            % (os.path.basename(FALSIFY_TOOL), name, exc))
+    for name in ('DC_DDL', 'RISK_DDL'):
+        if name not in consts:
+            problems.append('%s no longer binds %s to a DDL path, so a case cannot be '
+                            'tied to a file' % (os.path.basename(FALSIFY_TOOL), name))
+    return registry, problems
+
+
+def _constraint_keyword(after):
+    """The keyword that follows `CONSTRAINT <name>`, or None.
+
+    `after` is everything from that name up to the next CONSTRAINT, whitespace-collapsed,
+    which is what makes this independent of where the DDL wrapped the line.
+    """
+    for keyword, kind in (('PRIMARY KEY', 'pk'), ('UNIQUE', 'unique'), ('CHECK', 'check')):
+        if after.startswith(keyword):
+            return kind
+    return None
+
+
+def declared_guards(ddl_text):
+    """(every guard this DDL declares -> its kind, problems).
+
+    The universe is measured from the DDL rather than declared next to the claim: a list
+    copied into a checker would agree with itself while the DDL grew a guard that no
+    sample relaxes, which is precisely the failure J-9 records (closed 2026-10-02 --
+    see J.8 of appendix J).
+    """
+    guards, problems = {}, []
+    for table, body in ddl_bodies(ddl_text).items():
+        if PRIMARY_KEY_RE.search(body):
+            # What a sample can remove is the table's primary key; an unnamed
+            # `PRIMARY KEY (...)` clause has no constraint name to point at, and the
+            # name PostgreSQL generates for it is an implementation detail.
+            guards[table] = 'pk'
+        starts = [(m.start(), m.group(1)) for m in CONSTRAINT_LINE_RE.finditer(body)]
+        for i, (pos, name) in enumerate(starts):
+            end = starts[i + 1][0] if i + 1 < len(starts) else len(body)
+            chunk = body[pos:end]
+            after = re.sub(r'\s+', ' ', chunk[chunk.index(name) + len(name):]).strip()
+            kind = _constraint_keyword(after)
+            if kind is None:
+                problems.append('constraint %s in %s is not a PRIMARY KEY / UNIQUE / CHECK '
+                                '-- an unclassified guard can be claimed neither way, so '
+                                'the coverage arithmetic below would be incomplete'
+                                % (name, table))
+                continue
+            if kind == 'pk':
+                guards[table] = 'pk'      # the table is the guard; see above
+            else:
+                guards[name] = kind
+        for col in NOT_NULL_RE.findall(body):
+            if col.upper() in NOT_NULL_NON_COLUMN:
+                continue
+            guards['%s.%s' % (table, col)] = 'notnull'
+    for name in UNIQUE_INDEX_RE.findall(ddl_text):
+        guards[name] = 'unique'
+    return guards, problems
 
 
 def run_checks(ddl_text, contract_text, smoke_text, source_text):
@@ -645,6 +828,190 @@ def run_checks(ddl_text, contract_text, smoke_text, source_text):
     stats['quanta_exempt'] = len(exempt)
     stats['quanta_stray'] = len(stray)
 
+    # --- C9: the ladder's coverage claim vs the guards the DDLs declare ------------
+    # The ladder makes a sentence about the DDLs ("relaxing each of these guards makes my
+    # samples bite"). C6 checks that the sentence has evidence behind it for every image;
+    # nothing checked the sentence itself, because the report's case count is compared to
+    # the tool's own CASES list -- an agreement between a claim and the document it was
+    # copied from. A constraint added to the DDL and not to the ladder is absent from both
+    # sides of that comparison and enters no count anywhere (appendant item J-9, closed
+    # 2026-10-02 -- see J.8 of appendix J).
+    tool_text, tool_problem = ((FALSIFY_SRC, None) if FALSIFY_SRC is not None
+                               else read_or_problem(FALSIFY_TOOL))
+    if tool_problem:
+        fail('C9', 'cannot read %s (%s) -- the coverage claim check below would compare '
+                   'against nothing' % (os.path.basename(FALSIFY_TOOL), tool_problem))
+    risk_text, risk_problem = ((RISK_DDL_TEXT, None) if RISK_DDL_TEXT is not None
+                               else read_or_problem(RISK_DDL_PATH))
+    if risk_problem:
+        fail('C9', 'cannot read db/risk_control.sql (%s) -- the risk half of the ladder\'s '
+                   'coverage claim would be compared against nothing' % risk_problem)
+    if not tool_text.strip():
+        fail('C9', 'the ladder tool source came back EMPTY -- every registry below would '
+                   'be read out of nothing and agree with any claim whatsoever')
+    if not risk_text.strip():
+        fail('C9', 'db/risk_control.sql came back EMPTY -- half the coverage claim would '
+                   'be checked against nothing')
+
+    if tool_text.strip() and risk_text.strip():
+        registry, registry_gate_problems = parse_ladder_registry(tool_text)
+        for problem in registry_gate_problems:
+            fail('C9', problem)
+        # Vacuum guard, deliberately窄: only CASES has to be non-empty. An empty CASES makes
+        # every comparison below arithmetic over an empty set, AND the guard that would
+        # otherwise fire ("N guards are neither relaxed nor registered") would point the
+        # reader at the DDLs when the ladder is what is empty. The other registries may be
+        # legitimately empty -- KINDS when every case relaxes a named CHECK, NOT_FALSIFIED
+        # when nothing is out of reach -- and a name that is MISSING rather than empty
+        # already fired inside parse_ladder_registry.
+        dumb = [n for n in ('cases',) if not registry.get(n)]
+        if dumb:
+            fail('C9', 'the ladder tool yielded an EMPTY %s -- every comparison below '
+                       'would run over an empty set and report a clean result'
+                 % ' / '.join(dumb))
+        else:
+            cases = registry['cases']
+            kinds, landings = registry['kinds'], registry['landings']
+            not_falsified, class_kind = registry['not_falsified'], registry['class_kind']
+            class_kind = {k: v for k, v in class_kind.items() if isinstance(v, str)}
+            exercised, case_kind = {}, {}
+            for case in cases:
+                if not isinstance(case, (list, tuple)) or len(case) < 4:
+                    fail('C9', 'a CASES entry is not (tag, ddl, smoke, guard, ...): %r -- '
+                               'the guard it relaxes cannot be read' % (case,))
+                    continue
+                tag, rel_ddl, guard = case[0], case[1], case[3]
+                kind = kinds.get(tag, 'check')
+                case_kind[tag] = kind
+                if kind not in landings:
+                    fail('C9', 'case %s registers kind=%s, for which LANDINGS defines no '
+                               'landing query -- the claim "relax this and my sample goes '
+                               'red" would rest on a query that does not exist' % (tag, kind))
+                if rel_ddl not in (registry['consts'].get('DC_DDL'),
+                                   registry['consts'].get('RISK_DDL')):
+                    fail('C9', 'case %s names %r as its DDL, which is neither the RISK_DDL '
+                               'nor the DC_DDL constant -- it cannot be paired with the '
+                               'guards of a file it does not relax' % (tag, rel_ddl))
+                if kind == 'notnull':
+                    if not isinstance(guard, (list, tuple)) or len(guard) != 2:
+                        fail('C9', 'case %s is kind=notnull but its guard is %r -- the '
+                                   'landing query for that kind reads a (table, column) '
+                                   'pair, so the claim cannot be checked' % (tag, guard))
+                        continue
+                    label = '.'.join(str(g) for g in guard)
+                else:
+                    if not isinstance(guard, str):
+                        fail('C9', 'case %s is kind=%s but its guard is %r -- the landing '
+                                   'query for that kind reads a name'
+                             % (tag, kind, guard))
+                        continue
+                    label = guard
+                exercised.setdefault(kind, set()).add(label)
+
+            universe, kinds_by_guard = {}, {}
+            for rel_ddl, text in ((registry['consts'].get('RISK_DDL'), risk_text),
+                                  (registry['consts'].get('DC_DDL'), ddl_text)):
+                guards, guard_problems = declared_guards(strip_sql_line_comments(text))
+                for problem in guard_problems:
+                    fail('C9', '%s: %s' % (rel_ddl, problem))
+                for label, kind in guards.items():
+                    if label in universe and universe[label] != kind:
+                        fail('C9', '%s is declared as %s in one DDL and as %s in the other '
+                                   '-- two different guards share one label and a case '
+                                   'can only relax one of them'
+                             % (label, universe[label], kind))
+                    universe[label] = kind
+            if not universe:
+                fail('C9', 'the two DDLs yielded NO guards at all -- the coverage claim '
+                           'below would be compared against an empty universe, and an '
+                           'empty universe agrees with every claim')
+            stats['ladder_guards'] = len(universe)
+
+            for tag, kind in sorted(case_kind.items()):
+                for case in cases:
+                    if case[0] != tag:
+                        continue
+                    guard = case[3]
+                    label = ('.'.join(str(g) for g in guard) if kind == 'notnull'
+                             else guard)
+                    if not isinstance(label, str):
+                        continue
+                    if label not in universe:
+                        fail('C9', 'case %s claims to relax %r (kind=%s), but the DDL it '
+                                   'names declares no guard with that label -- the sample '
+                                   'would have to relax something else while the CASES '
+                                   'line went on reading as coverage' % (tag, label, kind))
+                    elif universe[label] != kind:
+                        fail('C9', 'case %s registers kind=%s for %r, but the DDL declares '
+                                   'that guard as %s -- the landing query would ask the '
+                                   'database about a different kind of object than the '
+                                   'one the sample relaxes' % (tag, kind, label,
+                                                               universe[label]))
+                    break
+
+            blanket, named = {}, {}
+            for i, entry in enumerate(not_falsified, 1):
+                if not isinstance(entry, (list, tuple)) or len(entry) != 2:
+                    fail('C9', 'NOT_FALSIFIED[%d] is not a (name, reason) pair: %r -- a '
+                               'registration without a reason cannot be judged'
+                         % (i, entry))
+                    continue
+                name, reason = entry[0], entry[1]
+                if not isinstance(name, str):
+                    fail('C9', 'NOT_FALSIFIED[%d] names nothing readable: %r' % (i, name))
+                    continue
+                if not isinstance(reason, str) or len(reason.strip()) < 20:
+                    fail('C9', 'NOT_FALSIFIED[%d] (%s) carries no usable reason (%r) -- a '
+                               'registration that does not say WHY the guard is out of '
+                               'reach is indistinguishable from an oversight'
+                         % (i, name, reason))
+                class_entry = CLASS_ENTRY_RE.match(name)
+                if class_entry:
+                    cls = class_entry.group('cls')
+                    kind = class_kind.get(cls)
+                    if kind is None:
+                        fail('C9', 'NOT_FALSIFIED[%d] (%s) uses class prefix %r, which is '
+                                   'not a key of CLASS_KIND (%s) -- the blanket claim '
+                                   'would not be recognised as covering anything'
+                             % (i, name, cls, ', '.join(sorted(class_kind))))
+                        continue
+                    for exc in [x.strip() for x in class_entry.group('excs').split('、')
+                                if x.strip()]:
+                        if exc not in exercised.get(kind, set()):
+                            fail('C9', 'NOT_FALSIFIED[%d] (%s) lists %r as a member of '
+                                       'class %s that IS covered by a case, but no case of '
+                                       'that kind exercises it'
+                                 % (i, name, exc, cls))
+                    blanket[kind] = name
+                elif name in class_kind:
+                    blanket[class_kind[name]] = name
+                elif name in universe:
+                    named[name] = universe[name]
+                else:
+                    fail('C9', 'NOT_FALSIFIED[%d] (%s) names a guard that neither DDL '
+                               'declares -- a registration can outlive the thing it '
+                               'protects and then read as coverage' % (i, name))
+
+            silent = []
+            for label in sorted(universe):
+                kind = universe[label]
+                if label in exercised.get(kind, set()) or kind in blanket or label in named:
+                    continue
+                silent.append((kind, label))
+            by_kind = {}
+            for kind, label in silent:
+                by_kind.setdefault(kind, []).append(label)
+            for kind in sorted(by_kind):
+                labels = by_kind[kind]
+                fail('C9', '%d %s guard(s) are neither relaxed by a case nor registered in '
+                           'NOT_FALSIFIED: %s -- these are exactly the guards the ladder\'s '
+                           'coverage sentence omits, and its own report cannot see it '
+                           'because it only counts the cases it already has'
+                     % (len(labels), kind, ', '.join(labels[:8])))
+            stats['ladder_exercised'] = sum(len(v) for v in exercised.values())
+            stats['ladder_registered'] = len(blanket) + len(named)
+            stats['ladder_uncovered'] = len(silent)
+
     return issues, stats
 
 
@@ -687,12 +1054,15 @@ def selftest():
     issues, stats = run_checks(ddl, contract, smoke, pgstore)
     print('  [control-real-artifacts] issues=%d codes=%s tables=%d documented=%d '
           'declared=%d smoke_asserted=%d verified_on=%s evidence=%s falsified_on=%s '
-          'writer_scales=%d quanta=%d exempt=%d'
+          'writer_scales=%d quanta=%d exempt=%d ladder_guards=%d exercised=%d '
+          'registered=%d uncovered=%d'
           % (len(issues), sorted(set(k for k, _ in issues)), stats['tables'],
              stats['documented'], stats['declared'], stats.get('smoke_asserted', -1),
              stats.get('verified_on', '(none)'), stats.get('evidence_images', '(none)'),
              stats.get('falsified_on', '(none)'), stats.get('writer_scales', -1),
-             stats.get('quanta_registered', -1), stats.get('quanta_exempt', -1)))
+             stats.get('quanta_registered', -1), stats.get('quanta_exempt', -1),
+             stats.get('ladder_guards', -1), stats.get('ladder_exercised', -1),
+             stats.get('ladder_registered', -1), stats.get('ladder_uncovered', -1)))
 
     # C2: a constraint in the contract that the DDL does not declare.
     bad = _mutate(contract, '| `ck_dc_version_format` |', '| `ck_dc_ghost_format` |', 'NEG1')
@@ -784,7 +1154,7 @@ def selftest():
     # The image list is read off the real stamp, not written down here, so these samples
     # do not pin down "these four strings are the right ones" -- what they pin is how each
     # way of losing a piece of the ladder gets reported.
-    def fake_report(image, n_cases=33, n_checks=32, verdict='OK', image_line=True,
+    def fake_report(image, n_cases=38, n_checks=32, verdict='OK', image_line=True,
                     verdict_line=True, cover_line=True):
         lines = ['--- 实测环境 ---']
         if image_line:
@@ -995,6 +1365,110 @@ def selftest():
     # nothing. This is the vacuity guard for the newest check, so it gets its own sample.
     scenario('GATE-empty-smoke', ddl, contract, 'GATE', s='')
 
+    # --- C9: the ladder's coverage claim vs the guards the DDLs really declare ------
+    # C9 reads three inputs the other checks do not (the second DDL and the ladder's own
+    # registries), so the injected text travels through module globals -- the same device
+    # FALSIFY_DOCS uses for C6. Mutating the real files instead would make each sample
+    # edit a file that the other thirty read, and a sample that fails because of a
+    # neighbour is a sample that teaches nothing.
+    ladder_src = read_text(FALSIFY_TOOL)
+    risk_ddl = read_text(RISK_DDL_PATH)
+
+    def c9case(tag, want=None, clean=False, src=None, risk=None):
+        nonlocal ok
+        n_samples[0] += 1
+        globals()['FALSIFY_SRC'] = ladder_src if src is None else src
+        globals()['RISK_DDL_TEXT'] = risk_ddl if risk is None else risk
+        try:
+            issues, _ = run_checks(ddl, contract, smoke, pgstore)
+        finally:
+            globals()['FALSIFY_SRC'] = None
+            globals()['RISK_DDL_TEXT'] = None
+        hits = [m for k, m in issues if k == 'C9']
+        hit = (not hits) if clean else any(want in m for m in hits)
+        print('  [%s] issues=%d %s' % (tag, len(issues), 'OK' if hit else 'MISSED'))
+        if not hit:
+            print('      C9: %s' % (' || '.join(hits)[:260] or '(nothing)'))
+        ok = ok and hit
+
+    # CONTROL: the real registries against the real DDLs must be clean, otherwise C9 is
+    # flagging everything and its FAIL carries no information.
+    c9case('C9-POS-real-registries', clean=True)
+
+    # GATE + NEG: the two inputs read from disk and a shape change that empties CASES.
+    c9case('C9-GATE-tool-unparseable', 'cannot parse', src='def (:\n  pass\n')
+    c9case('C9-GATE-empty-tool-source', 'came back EMPTY', src='   \n')
+    c9case('C9-GATE-empty-risk-ddl', 'db/risk_control.sql came back EMPTY', risk='\n')
+    bad = _mutate(ladder_src, '\nCASES = [\n',
+                  '\nCASES = []\n__selftest_unused = [\n', 'C9-empty-cases')
+    if bad is None:
+        ok = False
+    else:
+        c9case('C9-GATE-empty-cases', 'yielded an EMPTY cases', src=bad)
+    # NEG: a guard relaxed by no case AND registered nowhere. The two directions are
+    # deliberately not the same message: this one is the guard the coverage sentence
+    # omits, and the report cannot see it because it only counts the cases it has.
+    bad = _mutate(ladder_src, "\n     'ck_dc_bar_ohlc_order',",
+                  "\n     'ck_dc_bar_volume_nonneg',", 'C9-silent-guard')
+    if bad is None:
+        ok = False
+    else:
+        c9case('C9-NEG-guard-neither-relaxed-nor-registered', 'ck_dc_bar_ohlc_order',
+               src=bad)
+    # NEG: the other direction -- a case that names a guard the DDL does not declare.
+    bad = _mutate(ladder_src, "\n     'uq_dc_data_version_active',",
+                  "\n     'uq_dc_data_version_activeX',", 'C9-ghost-case')
+    if bad is None:
+        ok = False
+    else:
+        c9case('C9-NEG-case-names-a-guard-the-ddl-lacks',
+               'declares no guard with that label', src=bad)
+    # NEG: a registration that outlived its guard -- exactly where the next uncovered
+    # constraint would hide. Asserted on the message, not only on the code: the sample
+    # also makes the guard silent, so a code-only assertion would stay green with the
+    # "no such guard" half deleted.
+    bad = _mutate(ladder_src, "('uq_dc_quality_issue',", "('uq_dc_quality_issueX',",
+                  'C9-ghost-registration')
+    if bad is None:
+        ok = False
+    else:
+        c9case('C9-NEG-registration-names-a-guard-the-ddl-lacks',
+               'names a guard that neither DDL declares', src=bad)
+    # NEG: the blanket "（除 A、B）" form. Its exceptions are the guards it must NOT cover,
+    # so an exception with no case turns the blanket into a claim nobody can check.
+    bad = _mutate(ladder_src, 'risk_config_version、risk_switch_state）',
+                  'risk_config_version、risk_switch_stateZ）', 'C9-blanket-exception')
+    if bad is None:
+        ok = False
+    else:
+        c9case('C9-NEG-blanket-exception-without-a-case',
+               'but no case of that kind exercises it', src=bad)
+    # NEG: a class prefix that CLASS_KIND does not know. The prefix is what turns a name
+    # into "the whole category", so an unknown one makes the blanket claim unreadable.
+    bad = _mutate(ladder_src, 'PRIMARY KEY（除 dc_trading_calendar',
+                  'PRIMARY KEYS（除 dc_trading_calendar', 'C9-unknown-class')
+    if bad is None:
+        ok = False
+    else:
+        c9case('C9-NEG-class-prefix-unknown', 'not a key of CLASS_KIND', src=bad)
+    # NEG: a registration with no reason. A name alone reads as coverage.
+    bad = _mutate(ladder_src, '\nNOT_FALSIFIED = [\n',
+                  "\nNOT_FALSIFIED = [\n    ('__selftest_nf', ''),\n", 'C9-no-reason')
+    if bad is None:
+        ok = False
+    else:
+        c9case('C9-NEG-registration-without-a-reason', 'carries no usable reason', src=bad)
+    # NEG: a case whose registered kind disagrees with what the DDL declares. The landing
+    # query follows the kind, so this is the sample that proves C9 checks the pair and
+    # not just the name.
+    bad = _mutate(ladder_src, 'KINDS = {\n',
+                  "KINDS = {\n    'dc-bar-ohlc-order': 'pk',\n", 'C9-kind-mismatch')
+    if bad is None:
+        ok = False
+    else:
+        c9case('C9-NEG-case-kind-disagrees-with-the-ddl',
+               'the DDL declares that guard as check', src=bad)
+
     # POSITIVE: a self-consistent synthetic triple must be clean, otherwise the gate is
     # flagging everything and its "DIRTY" verdict carries no information. The synthetic
     # smoke must carry the real assertion shapes (equality + diagnostics), otherwise this
@@ -1058,8 +1532,26 @@ def selftest():
                    '  END;\n'
                    'END $s$;\n'
                    'ROLLBACK;\n')
-    scenario('POSITIVE-consistent', synth_ddl, synth_contract, None, want_clean=True,
-             s=synth_smoke)
+    # C9 reads the ladder's registries too, so it cannot be clean on this control: the real
+    # ladder does not cover a DDL invented here, and C9 saying so is correct behaviour, not
+    # a defect. Lending C9 a synthetic ladder instead would mean overriding FALSIFY_SRC --
+    # the same global C6 reads the ladder's case count from -- and the control would then
+    # be asserting a clean C6 over a ladder that no report was produced with. So the
+    # assertion is "C9 and nothing else": strictly stronger than the old "no issues at
+    # all", because it also says every other detector is silent on a consistent triple.
+    globals()['RISK_DDL_TEXT'] = synth_ddl
+    try:
+        issues, _ = run_checks(synth_ddl, synth_contract, synth_smoke, pgstore)
+    finally:
+        globals()['RISK_DDL_TEXT'] = None
+    codes = sorted(set(k for k, _ in issues))
+    other = [c for c in codes if c not in ('C6', 'C9')]
+    n_samples[0] += 1
+    hit = not other and 'C9' in codes
+    print('  [POSITIVE-consistent] issues=%d codes=%s (C6 excluded: repo-wide evidence, not '
+          'a check of this triple -- printed above and asserted nowhere) %s'
+          % (len(issues), codes, 'OK' if hit else 'MISSED'))
+    ok = ok and hit
 
     print('SELFTEST %s' % ('OK: all detectors fire, consistent sample stays clean'
                            if ok else 'FAIL'))
@@ -1088,11 +1580,14 @@ def main():
 
     issues, stats = run_checks(ddl, contract, smoke, source)
     print('extracted: tables=%d documented=%d declared=%d in_body=%d mysqlisms=%d '
-          'smoke_asserted=%d writer_scales=%d ddl_numeric=%d quanta=%d exempt=%d'
+          'smoke_asserted=%d writer_scales=%d ddl_numeric=%d quanta=%d exempt=%d '
+          'ladder_guards=%d exercised=%d registered=%d uncovered=%d'
           % (stats['tables'], stats['documented'], stats['declared'],
              stats['in_body'], stats['mysqlisms'], stats.get('smoke_asserted', -1),
              stats.get('writer_scales', -1), stats.get('ddl_numeric_columns', -1),
-             stats.get('quanta_registered', -1), stats.get('quanta_exempt', -1)))
+             stats.get('quanta_registered', -1), stats.get('quanta_exempt', -1),
+             stats.get('ladder_guards', -1), stats.get('ladder_exercised', -1),
+             stats.get('ladder_registered', -1), stats.get('ladder_uncovered', -1)))
     for code, msg in issues:
         print('ISSUE [%s] %s' % (code, msg))
     print('verdict: %s (%d issue(s))'

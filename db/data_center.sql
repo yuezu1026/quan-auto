@@ -354,12 +354,19 @@ COMMIT;
 --    **但**「在四个 tag 上通过」仍不等于 DDL 标题里那句「PostgreSQL 14+」——
 --    四条大版本之间还有别的 tag 与发行版，从未跑过。本段不得被读成后者。
 --
--- 2. 触发测试的**效力**已逐条证伪（2026-09-23 首跑，2026-09-24 / 2026-10-01 随 DDL 变动重跑）：
+-- 2. 触发测试的**效力**已逐条证伪（2026-09-23 首跑，2026-09-24 / 2026-10-01 / 2026-10-02 随 DDL 变动重跑）：
 --    `python tools/falsify_smoke.py`
---    把两份 DDL 里的每一条命名 CHECK **单独**放宽（只放松表达式，不删约束）后重跑对应
---    触发测试，要求**正好 1 条样本变红**（`n_fail == 1`）。当前 **33 个案例 / 33 CAUGHT**，
---    覆盖全部 32 条命名 CHECK（本文件的 18 条 + 风控 14 条；ck_risk_rule_ratio_range 上下界各一个案例）。
---    逐案例证据：tools/falsify-report.txt。举例：把本文件的 ck_dc_fin_roe_range 上界 5 放宽成 1000，
+--    把两份 DDL 里的守门**逐个**放宽（命名 CHECK 只放松表达式、不删约束；非 CHECK 的
+--    三种形态分别是：主键换成同名 CHECK、唯一索引去掉 UNIQUE、NOT NULL 真的拿掉）后重跑对应
+--    触发测试，要求**正好 1 条样本变红**（`n_fail == 1`）。当前 **38 个案例 / 38 CAUGHT** =
+--    全部 32 条命名 CHECK（本文件的 18 条 + 风控 14 条；ck_risk_rule_ratio_range 上下界各一个案例）
+--    + 5 条非 CHECK 守门（风控 4：risk_rule.threshold 的 NOT NULL、两张单例表的主键、
+--    risk_config_version 的主键；本文件 1：uq_dc_data_version_active），四个镜像各自 38/38。
+--    逐案例证据：tools/falsify-report*.txt（四份，各自记录镜像与 digest）。
+--    够不着的（其余各表的主键、除 risk_rule.threshold 外的每一列 NOT NULL、uq_dc_quality_issue）
+--    **登记**在工具的 NOT_FALSIFIED 里并逐条写明理由，由 tools/verify_data_center.py 的 C9
+--    与两份 DDL 现数出来的守门清单核对 —— 登记不是覆盖。
+--    举例：把本文件的 ck_dc_fin_roe_range 上界 5 放宽成 1000，
 --    触发测试立刻由 46/46 变成 45 passed / 1 failed（B10 FAIL  roe = 600 was accepted），说明 B 段不是摆设。
 --    但要说清它证明的**是**什么：它证明「B 段会红」，**不是**「每条样本值都真的落在拒绝区间内」——
 --    那是靠 `n_fail == 1`（每次只该红一条）这个签名间接兜住的，不是逐值证明。

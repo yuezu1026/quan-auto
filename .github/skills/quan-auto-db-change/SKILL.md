@@ -58,4 +58,8 @@ description: "quan-auto 仓库改动 db/*.sql 或 db/*.smoke.sql 时要做的事
   在里面重跑 DDL 会静默空转（库非空），改了约束却看不到变化时先 `down -v` 重置。
 - `run_sql_smoke.py` **不在** `run_all_gates.py` 里：没 docker 的机器上注册进去要么报环境性 FAIL、
   要么被静默 SKIP 后仍打印绿色。要接进来必须先做到「无 docker ⇒ 明确 SKIPPED 且计入跳过数」。
-- 非 `CHECK` 的守门（`NOT NULL`、部分唯一索引）不在证伪范围内，靠 `C7` 核对触发测试覆盖。
+- 非 `CHECK` 的守门（`NOT NULL`、主键、部分唯一索引）**2026-10-02 起也进了证伪阶梯**
+  （现值 38 案例 = 32 条命名 `CHECK` + 5 条非 `CHECK` 守门，四个 tag 各自 38/38）；
+  真正够不着的那些**登记**在 `tools/falsify_smoke.py` 的 `NOT_FALSIFIED` 里，
+  由 `tools/verify_data_center.py` 的 `C9` 现数两份 DDL 的守门清单核对 —— **登记不是覆盖**。
+  ⚠️ **改「案例集」本身（不是改 DDL）也会让证伪那一半作废**。

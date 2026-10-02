@@ -12,7 +12,8 @@ tools/verify_risk_config.py 与 tools/verify_data_center.py 都是**纯静态**�
 （2026-10-01 起各自四个 tag 各一份：`tools/sql-smoke-report-pg1{4,5,6}.txt` 与
 `tools/falsify-report-pg1{4,5,6}.txt`，**不带 `--report=` 的默认路径那两份 = `postgres:17`**），
 改过任何 db/*.sql 或 *.smoke.sql 后**八份一起**作废（不是只作废对应那一侧）。
-条数现值按内容搜快照里 `覆盖:` 那一行现取（2026-10-01 现取 **32 条命名 CHECK**：风控 14 + 数据中心 18）。
+条数现值按内容搜快照里 `覆盖:` 那一行现取（2026-10-02 现取 **38 个案例 / 32 条命名 CHECK + 5 条非 `CHECK` 守门**：
+风控 14 + 数据中心 18；冒烟侧条数另算：风控 26 / 数据中心 46）。
 
 用法
 ----

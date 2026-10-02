@@ -12,7 +12,7 @@
 --
 -- PG-VERIFIED-ON: postgres:14 postgres:15 postgres:16 postgres:17
 --
---   每个镜像一次独立运行（23/23 PASS），各写一份快照，互不覆盖：
+--   每个镜像一次独立运行（26/26 PASS），各写一份快照，互不覆盖：
 --     tools/sql-smoke-report-pg14.txt  PostgreSQL 14.24
 --     tools/sql-smoke-report-pg15.txt  PostgreSQL 15.18
 --     tools/sql-smoke-report-pg16.txt  PostgreSQL 16.15

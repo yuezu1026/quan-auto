@@ -67,14 +67,19 @@ DC 契约**附录 H** ⇒ 收口条件 ① 的三个子项**全关**（分红那
 
 - **没有本地 PostgreSQL 实例**（`psql` 不在 PATH、无服务、无安装目录），但**容器通道可用**：
   `python tools/run_sql_smoke.py` 会起一次性容器 PostgreSQL 跑 `db/*.sql` + 触发测试。
-  2026-09-23 实测风控 **23/0**、数据中心 **42/0** PASS（证据 `tools/sql-smoke-report.txt`，含镜像 digest）；
+  2026-09-23 实测风控 **23/0**、数据中心 **42/0** PASS（当时的读数；证据 `tools/sql-smoke-report.txt`，含镜像 digest）；
   2026-09-24 用 `--pg-image=` + `--report=` 在 `postgres:14`(14.24) / `15`(15.18) / `16`(16.15) 上各跑一遍，
   同样是 **23/0 与 42/0**（另存为 `tools/sql-smoke-report-pg14.txt` / `tools/sql-smoke-report-pg15.txt` /
   `tools/sql-smoke-report-pg16.txt`，pg17 那份未被覆盖）；
-  ⚠️ 2026-10-01：**分红那一批改了 `db/*.sql` ⇒ 四份快照全部重跑**，数据中心侧变成 **46/0**（风控侧仍 23/0）。
-  这两份绿的**效力**已被 `python tools/falsify_smoke.py` 逐条证伪 —— **33/33 CAUGHT**，
-  覆盖全部 32 条命名 CHECK（**2026-10-01 起也铺满四个镜像**：证据 `tools/falsify-report-pg14.txt` /
-  `-pg15.txt` / `-pg16.txt` / 默认那份 `tools/falsify-report.txt`(pg17)，四份都是 33/33）。
+  ⚠️ 2026-10-01：**分红那一批改了 `db/*.sql` ⇒ 四份快照全部重跑**，数据中心侧变成 **46/0**（风控侧仍 23/0）；
+  ⚠️ **2026-10-02（R28）⇒ 八份快照（四冒烟 + 四证伪）再次全部重跑**，现值
+  **冒烟 26/0（风控）+ 46/0（数据中心）**、**证伪 38 案例 / 38 CAUGHT = 32 条命名 CHECK + 5 条非 `CHECK` 守门**，
+  四个 tag 各自如此。**别在这里抄计数**：现值按内容搜 `tools/sql-smoke-report.txt` 与 `tools/falsify-report.txt`。
+  这两份绿的**效力**已被 `python tools/falsify_smoke.py` 逐条证伪 —— **38/38 CAUGHT**（2026-10-02 现值），
+  覆盖全部 32 条命名 CHECK **外加 5 条非 `CHECK` 守门**（**2026-10-01 起也铺满四个镜像**：证据
+  `tools/falsify-report-pg14.txt` / `-pg15.txt` / `-pg16.txt` / 默认那份 `tools/falsify-report.txt`(pg17)）。
+  ⚠️ 另记一条：**改「案例集」本身（不是改 DDL）也会让证伪那一半作废**；够不着的守门**登记**在
+  工具的 `NOT_FALSIFIED` 里、由 `tools/verify_data_center.py` 的 `C9` 核对（**登记不是覆盖**）。
   两条阶梯（冒烟与证伪）现在被门禁**各自**与每个 DDL 头部的 `-- PG-VERIFIED-ON:` **双向**核对 ——
   戳记点名而阶梯缺一个镜像即 FAIL。
   两句话都不能说：① 「从未执行」（已不成立）；② 「约束已验证」（只跑过这四个 tag，

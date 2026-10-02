@@ -61,8 +61,8 @@ PostgreSQL via docker-compose.smoke.yml, applies both DDLs and runs both smoke t
 a genuinely empty database, then writes tools/sql-smoke-report.txt. That file is a
 SNAPSHOT: its verdict is only valid for the image digest recorded inside it, and it must
 be re-run after every db/*.sql edit. Whether that green has TEETH is a third channel:
-tools/falsify_smoke.py relaxes one named CHECK at a time and requires exactly one sample
-to go red (currently 33 cases / 32 named CHECKs / 33 CAUGHT), writing
+tools/falsify_smoke.py relaxes one guard at a time and requires exactly one sample to go
+red (currently 38 cases = 32 named CHECKs + 5 non-CHECK guards, 38 CAUGHT), writing
 tools/falsify-report.txt by default and one report per image via `--report=` (since
 2026-10-01 the ladder is four files: tools/falsify-report-pg1{4,5,6}.txt + that default
 one, which is postgres:17). It is deliberately NOT registered as a gate here --
@@ -153,7 +153,7 @@ FALSIFY_TOOL = os.path.join(ROOT, 'tools', 'falsify_smoke.py')
 FALSIFY_REPORT_PATH = os.path.join(ROOT, 'tools', 'falsify-report.txt')
 # 证伪阶梯自 2026-10-01 起也是**逐镜像**记录的（与 sql-smoke 同形），所以尾部 NOTE
 # 引用的是 glob 而不是那一份默认快照 —— 否则它会说「只在 postgres:17 上做过」，
-# 而四个 tag 上早已各自 33/33 CAUGHT。
+# 而四个 tag 上早已各自 38/38 CAUGHT。
 FALSIFY_REPORT_GLOB = os.path.join(ROOT, 'tools', 'falsify-report*.txt')
 
 # 门禁自己的退出码约定（见 evaluate 的 SKIPPED 分支与它的样本）：
@@ -1810,8 +1810,8 @@ def execute(picked, report_path=REPORT_PATH):
           're-run SQL.')
     print('NOTE: proof that the runtime green has teeth lives in %s (produced by %s),'
           % (os.path.relpath(FALSIFY_REPORT_PATH, ROOT), os.path.relpath(FALSIFY_TOOL, ROOT)))
-    print('      one case per named CHECK, every case must turn exactly one sample red. That'
-          ' is the')
+    print('      one case per named CHECK (plus the non-CHECK guards the landings can reach),')
+    print('      every case must turn exactly one sample red. That is the')
     print('      DEFAULT snapshot; the per-image ladder is %s'
           % os.path.relpath(FALSIFY_REPORT_GLOB, ROOT))
     print('      (postgres:14/15/16, same `--report=` convention as the smoke ladder) -- and'
