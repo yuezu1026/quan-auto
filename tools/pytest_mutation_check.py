@@ -1,13 +1,15 @@
 """变异检查：把 quanauto 的实现逐处改坏，确认对应套件真的会红。
 
-基线跑九个套件（即下面那些常量）：
+基线跑十个套件（即下面那些常量）：
   * `tests/test_backtest_slice.py`（I1 回测切片）
-  * `tests/test_data_center_adapter.py`（I2 S2 适配器，含复权帧的 `validate_frame` 判据）
+  * `tests/test_data_center_adapter.py`（I2 S2 适配器，含复权帧的 `validate_frame` 判据与覆盖率判据）
   * `tests/test_data_center_store.py`（I2 S3 落库侧，含 A6 的因子读写）
   * `tests/test_backtest_db_feed.py`（I2 库喂数据的回测侧）
   * `tests/test_data_center_pit.py`（I2 A6：复权因子的读数侧与 PIT 守卫）
   * `tests/test_backtest_risk_gate.py`（I3 风控闸门）
   * `tests/test_risk_store.py`（I3b 规则存储 + 拦截留痕）
+  * `tests/test_risk_engine.py`（I3 风控引擎的纯函数用例；⚠️ 它一度**不在**基线里，
+    而当「变异期望落在哪个套件，那个套件就必须在基线里」这条纪律的反例 —— 现已补进来）
   * `tests/test_dashboard.py`（I4 绩效看板：只读数不算数 + CLI 接线）
   * `tests/test_ingest.py`（I2 收口 ①ⓑ：采集 → 落库编排层与批次留痕）
 （本仓库对门禁的同一条纪律：每个自建检查器都要做触发测试；测试套件就是检查器。）
@@ -30,6 +32,31 @@
 （基线 `passed=249`）；同一日的 A6 收口那轮是 59 条 = 54 + 5 + 0
 （基线 `passed=241`），I4 是 54 条 = 49 + 5 + 0（基线六套件 `passed=181`），I3 那轮是 43 条 = 39 + 4 + 0
 （基线五套件 `passed=145`），再往前 B20 后是 32 条 = 29 + 3 + 0），慢，且它验证的对象是测试而不是产物契约。
+
+⚠️ **2026-10-02 R27 覆盖率判据（DC 契约附录 J 的 J-12 收口）：新增 3 条，全部落在
+  `tests/test_data_center_adapter.py` 那一套件**：
+  `A21-coverage-execution-point-goes-dead`（`if ratio > limit:` → `if False:` ⇒ 判据**表**还在、
+  四条形状守卫还在，只有**行为**没了；实测 3 条红）、
+  `A22-coverage-limit-loosened-for-a-not-null-column`（把 `daily.trade_date` 那一格的上限
+  `0.0` → `1.0`；实测 **1** 条红）、
+  `A23-coverage-checks-unwired-from-validate-frame`（把两条循环从 `validate_frame` 里抽掉、
+  函数本身还在；实测 4 条红）。
+  本条基线现在是 **十个**套件、`passed=560`（⚠️ 这个数与上一条的 `461` 之间还夹着
+  J-6/J-8、J-16、J-14 三轮的新用例，**不是本轮一次涨的**）。本轮报告末行是
+  `mutations=95 caught=95 control=7 env_limited=0` ⇒ 样本总数 **102**（= 95 + 7；
+  `mutations` 那一栏**不数** CONTROL，别把两处加混）。
+  🔴 **`A22` 的教训（第一版 `expect` 是错的，必须记住）**：它第一版指着
+  `test_validate_rejects_a_null_in_a_not_null_column` —— 而那条用例的样本集
+  （`_COVERAGE_COLUMNS`）是**从被测的那张表派生**的 ⇒ 上限一放宽，那一格样本**当场从列表里消失**，
+  用例连跑都不会跑、直接通过，报告里写 `CAUGHT=no`，与「**判据没牙**」长得**一模一样**。
+  修法：`expect` 指向**独立真值**那条 `test_coverage_specs_match_the_ddl_nullability`
+  （它现读 `db/data_center.sql` 算 `NOT NULL`，与被测表无关）⇒ 现在恰好 1 条红。
+  ⇒ 通用问句：**「我这条变异是靠哪条用例抓的？那条用例的样本集是从哪来的？」**
+  同批还有一条与变异无关但同样会让人误读的形状：**harness 被中断会留下已应用的变异**
+  （实测：`A15` 的 `value <= -1e9` 留在 `quanauto/datasources.py` 里，下一次跑先报一个
+  `FINDING [BASELINE]` —— 第一眼像真 bug）。⚠️ `A15` 的针**没有** `# MUT` 标记 ⇒
+  检查残留要 grep **变异字面值**，不要只 grep `MUT`；而长跑一律重定向到临时文件，
+  **绝不接选择器管道**（EPIPE 会把进程弄死在中途）。
 
 ⚠️ **2026-10-01 阈值精度收口（风控契约 §7.6 缺口 ②）：新增 3 条，全部落在 `tests/test_risk_store.py` 那套件**：
   `S16-threshold-scale-check-dropped`（比 `numeric(18,8)` 更细的阈值不再被拒 ⇒ 库**静默四舍五入**成
@@ -918,6 +945,59 @@ MUTATIONS = [
                 "                           ('dividend', DIVIDEND_COLUMNS)):\n"),
         "new": "                           ('factor', ADJUST_FACTOR_COLUMNS)):\n",
         "expect": ["test_dividend_channel_writes_the_dividend_table"],
+    },
+    {
+        # 覆盖率判据的**执行点**空转：表还在、形状守卫还在（所以「判据表有没有被漏掉」
+        # 那类静态检查全绿），但没有任何一帧会因为空值被拒 —— 正是 J-12 关掉的那个缝
+        # **回潮**的样子，而且是最隐蔽的一种。
+        "tag": "A21-coverage-execution-point-goes-dead",
+        "tests": TESTS_ADAPTER,
+        "path": "quanauto/datasources.py",
+        "old": "        if ratio > limit:\n",
+        "new": "        if False:  # MUT：覆盖率判据的执行点整个空转\n",
+        "expect": ["test_coverage_judges_the_null_of_a_column_no_other_judge_touches"],
+    },
+    {
+        # 判据表里把**上限**从 0.0 放宽到 1.0（只动一个值，不删任何一列）：`trade_date`
+        # 是 DDL 的 `NOT NULL` 日期列，上限一放宽 ⇒ 整列 NaN 的日线帧重新变成「通过」。
+        # 故意「放宽」而不是删掉这一项：删掉会让 `_coverage_spec_errors` 的列集合守卫
+        # 一起变红，就分不清是「上限有牙」还是「表被改坏了」。
+        # 针必须连上下一列（`open`），因为 `('trade_date', 0.0, …)` 在 daily 与 factor
+        # 里各出现一次 —— 只写一行会命中 2 次，被工具的自 assert 拦成 HARNESS。
+        #
+        # ⚠️ `expect` **故意不写** `test_validate_rejects_a_null_in_a_not_null_column`：
+        # 那条用例的样本集（`_COVERAGE_COLUMNS`）是从**被测的那张表**里派生的（挑
+        # `limit == 0.0` 的项）⇒ 上限一放宽，`daily.trade_date` 这个样本**当场从参数化
+        # 列表里消失**，那条用例连跑都不会跑。（2026-10-02 实测：本变异的第一次运行就
+        # 是 `CAUGHT=no`，实际变红只有下面那一条。）⇒ **样本集从被测物派生时，「样本消失」
+        # 与「判据有牙」在报告里长得一样**，能抓这条的必须是**不依赖那张表**的判据 ——
+        # 也就是拿 DDL 现算 `NOT NULL` 的那条用例。
+        "tag": "A22-coverage-limit-loosened-for-a-not-null-column",
+        "tests": TESTS_ADAPTER,
+        "path": "quanauto/datasources.py",
+        "old": ("        ('trade_date', 0.0, None, 'DDL NOT NULL 的日期列，没有别的判据判它的空值'),\n"
+                "        ('open', 1.0, 'daily-price-positive', '空值已由 daily-price-positive 判成硬错误'),\n"),
+        "new": ("        ('trade_date', 1.0, None, 'DDL NOT NULL 的日期列，没有别的判据判它的空值'),\n"
+                "        ('open', 1.0, 'daily-price-positive', '空值已由 daily-price-positive 判成硬错误'),\n"),
+        "expect": ["test_coverage_specs_match_the_ddl_nullability"],
+    },
+    {
+        # 覆盖率判据从 `validate_frame` 里**脱线**：两条循环被抽掉，函数本身还在、用例
+        # 直接调它时也还是好的（所以只看纯函数的那类断言全绿）。
+        # 三条期望各自盯一半：形状守卫的接线（malformed ⇒ 不得写入）、执行点的接线
+        # （0.0 的列一格为空即失败）、以及与 DDL 的双向一致（J-12 的原始命题）。
+        "tag": "A23-coverage-checks-unwired-from-validate-frame",
+        "tests": TESTS_ADAPTER,
+        "path": "quanauto/datasources.py",
+        "old": ("    for message in _coverage_spec_errors(kind):\n"
+                "        errors.append(message)\n"
+                "    for message in _coverage_violations(frame, kind):\n"
+                "        errors.append(message)\n"
+                "    _check_dates(frame, kind, errors)\n"),
+        "new": "    _check_dates(frame, kind, errors)\n",
+        "expect": ["test_a_malformed_coverage_table_blocks_the_frame",
+                   "test_validate_rejects_a_null_in_a_not_null_column",
+                   "test_coverage_specs_match_the_ddl_nullability"],
     },
     {
         # 对照组：只改注释，适配器套件必须**不**红 —— 证明上面四条抓到的是行为，

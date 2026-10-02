@@ -1,5 +1,5 @@
 baseline: 先跑一次干净的全绿（tests/test_backtest_slice.py + tests/test_data_center_adapter.py + tests/test_data_center_store.py + tests/test_backtest_db_feed.py + tests/test_data_center_pit.py + tests/test_backtest_risk_gate.py + tests/test_risk_store.py + tests/test_risk_engine.py + tests/test_dashboard.py + tests/test_ingest.py）
-baseline: 全绿 OK (passed=537)
+baseline: 全绿 OK (passed=560)
 APPLIED M1-account-double-frozen @ quanauto/broker.py (newline='\r\n', tests=tests/test_backtest_slice.py)
   CAUGHT=yes exit=1 failed=2 (test_max_drawdown_is_plausible, test_pending_buy_does_not_change_total_capital)
 APPLIED M2-fill-at-close-not-open @ quanauto/broker.py (newline='\r\n', tests=tests/test_backtest_slice.py)
@@ -103,15 +103,21 @@ APPLIED A14-csv-feed-only-close-is-scaled @ quanauto/datafeed.py (newline='\r\n'
 APPLIED A15-factor-positivity-loosened @ quanauto/datasources.py (newline='\r\n', tests=tests/test_data_center_adapter.py)
   CAUGHT=yes exit=1 failed=2 (test_the_adapter_validate_delegates_to_validate_frame_for_this_schema, test_validate_rejects_a_non_positive_adjust_factor)
 APPLIED A16-factor-schema-no-longer-recognised @ quanauto/datasources.py (newline='\r\n', tests=tests/test_data_center_adapter.py)
-  CAUGHT=yes exit=1 failed=4 (test_the_adapter_validate_delegates_to_validate_frame_for_this_schema, test_validate_frame_judges_the_adjust_factor_schema, test_validate_rejects_a_non_positive_adjust_factor, test_validate_rejects_duplicate_adjust_factor_primary_key)
+  CAUGHT=yes exit=1 failed=6 (test_every_zero_limit_coverage_column_is_a_required_column, test_the_adapter_validate_delegates_to_validate_frame_for_this_schema, test_validate_frame_judges_the_adjust_factor_schema, test_validate_rejects_a_non_positive_adjust_factor, test_validate_rejects_a_null_in_a_not_null_column, test_validate_rejects_duplicate_adjust_factor_primary_key)
 APPLIED A17-factor-primary-key-duplicates-not-reported @ quanauto/datasources.py (newline='\r\n', tests=tests/test_data_center_adapter.py)
   CAUGHT=yes exit=1 failed=1 (test_validate_rejects_duplicate_adjust_factor_primary_key)
 APPLIED A18-factor-column-listed-as-leaked @ quanauto/datasources.py (newline='\r\n', tests=tests/test_data_center_adapter.py)
-  CAUGHT=yes exit=1 failed=1 (test_validate_frame_judges_the_adjust_factor_schema)
+  CAUGHT=yes exit=1 failed=2 (test_validate_frame_judges_the_adjust_factor_schema, test_validate_rejects_a_null_in_a_not_null_column)
 APPLIED A19-dividend-cash-negativity-loosened @ quanauto/datasources.py (newline='\r\n', tests=tests/test_ingest.py)
   CAUGHT=yes exit=1 failed=1 (test_a_bad_dividend_value_writes_nothing_and_marks_the_run_failed)
 APPLIED A20-dividend-schema-no-longer-recognised @ quanauto/datasources.py (newline='\r\n', tests=tests/test_ingest.py)
   CAUGHT=yes exit=1 failed=6 (test_a_bad_dividend_value_writes_nothing_and_marks_the_run_failed, test_a_changed_announce_date_on_the_same_key_is_a_conflict_too, test_a_changed_cash_per_share_on_the_same_key_is_a_conflict, test_dividend_channel_writes_the_dividend_table, test_dividend_rows_are_the_dividend_dataclass, test_the_same_dividend_batch_twice_is_idempotent)
+APPLIED A21-coverage-execution-point-goes-dead @ quanauto/datasources.py (newline='\r\n', tests=tests/test_data_center_adapter.py)
+  CAUGHT=yes exit=1 failed=3 (test_coverage_judges_the_null_of_a_column_no_other_judge_touches, test_coverage_specs_match_the_ddl_nullability, test_validate_rejects_a_null_in_a_not_null_column)
+APPLIED A22-coverage-limit-loosened-for-a-not-null-column @ quanauto/datasources.py (newline='\r\n', tests=tests/test_data_center_adapter.py)
+  CAUGHT=yes exit=1 failed=1 (test_coverage_specs_match_the_ddl_nullability)
+APPLIED A23-coverage-checks-unwired-from-validate-frame @ quanauto/datasources.py (newline='\r\n', tests=tests/test_data_center_adapter.py)
+  CAUGHT=yes exit=1 failed=4 (test_a_malformed_coverage_table_blocks_the_frame, test_coverage_judges_the_null_of_a_column_no_other_judge_touches, test_coverage_specs_match_the_ddl_nullability, test_validate_rejects_a_null_in_a_not_null_column)
 APPLIED CONTROL-comment-only-datasources @ quanauto/datasources.py (newline='\r\n', tests=tests/test_data_center_adapter.py)
   control OK: 没抓到（本检查器确实会报 caught=NO）
 APPLIED CONTROL-comment-only-db-feed @ quanauto/datacenter.py (newline='\r\n', tests=tests/test_backtest_db_feed.py)
@@ -198,6 +204,6 @@ APPLIED S17-old-value-mismatch-is-accepted @ quanauto/risk.py (newline='\r\n', t
   CAUGHT=yes exit=1 failed=1 (test_save_change_refuses_when_the_supplied_value_contradicts_the_row)
 APPLIED S17-old-threshold-read-ignores-enabled @ quanauto/risk.py (newline='\r\n', tests=tests/test_risk_store.py)
   CAUGHT=yes exit=1 failed=1 (test_the_old_threshold_read_looks_only_at_enabled_rows)
-mutations=92 caught=92 control=7 env_limited=0
+mutations=95 caught=95 control=7 env_limited=0
 report=D:\project-quan\quan-auto\tools\pytest-mutation-report.txt
 verdict: PASS

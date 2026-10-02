@@ -810,8 +810,28 @@ def validate_frame(frame: Any) -> ValidationReport:
     契约 §2.4 总原则写明「所有『找不到数据』的分支都必须显式失败，不允许返回空集」，
     而「提取为空却打印 PASS」正是本项目反复踩过的那类假绿。
 
-    本函数**不抛异常**：它产出报告。`is_valid=False` 的含义是「`DataCenter` 不得写入」，
-    调用方按此决定是重试、降级备源，还是把这批数据标成 `PARTIAL`。
+    **覆盖率也是判据**（2026-10-02 收口 DC 契约附录 J 的 J-12）：每一列都必须在
+    `_COVERAGE_SPECS` 里有一份**显式的空值决定**，而且「`NOT NULL` 且没有别的判据判它」
+    的那些列（各 schema 的键列与日期列）**一格为空就 `is_valid=False`**。
+    在这之前只有一条「缺失率 > 5%」的 warning，于是**判据说「通过」而库的 `NOT NULL`
+    说「不」** —— 同一条规则在适配器与数据库两个执行点上口径不同，而漏判的代价是白跑
+    一趟落库。⚠️ 那条 5% 的 warning **保留**：契约 §3.9 把「缺失率偏高」定义为
+    「**不阻断入库**的告警」，覆盖率成为判据**不是**把这条告警升级成 error，两者判的
+    是两件事（一条说「这一列有一点空」，一条说「这一列根本不许空」）。
+
+    本函数**不因缺失值抛异常**：它产出报告。`is_valid=False` 的含义是「`DataCenter`
+    不得写入」，调用方按此决定是重试、降级备源，还是把这批数据标成 `PARTIAL`。
+    「缺失值」是**明写的**范围而不是随口一说：`_COVERAGE_SPECS` 整套设计都以
+    「一格为空」为一等输入，所以**每一条**判据都必须对 NaN / `None` 有明确答复
+    （「算违规」或「跳过」），不许在比较处崩掉。
+    （2026-10-02 补：`daily-ohlc-order` 原本四列直接比大小，一个 `None` 会让
+    `TypeError` 逃出本函数 —— 是覆盖率那批用例逐列置空时咬出来的。
+    ⚠️ 值的**类型**不对（例如整列是字符串）仍会在比较处抛 `TypeError`：那是另一件事
+    ——「这帧根本没归一化」应该由上游的 `normalize_*` 负责，本轮不动，也**不假装**
+    本函数兜住了它。）
+    判据表与 schema 脱节（覆盖率表漏了一列、登记了一个不存在的标签）时也**不崩**，
+    而是把「判据缺失」当成一条硬错误 —— 唯一的例外是 `_violation` 遇到未知标签时抛的
+    `AssertionError`，那是「判据表与实现脱节」的另一种形态（实现的 if 链少了一支）。
     """
     if not isinstance(frame, pd.DataFrame):
         return ValidationReport(is_valid=False, row_count=0,
@@ -849,6 +869,10 @@ def validate_frame(frame: Any) -> ValidationReport:
     for column in required:
         if column not in frame.columns:
             errors.append('%s schema 缺少必需列 %s' % (kind, column))
+    for message in _coverage_spec_errors(kind):
+        errors.append(message)
+    for message in _coverage_violations(frame, kind):
+        errors.append(message)
     _check_dates(frame, kind, errors)
     for tag, message in checks:
         detail = _violation(frame, tag)
@@ -928,6 +952,95 @@ _CHECK_SPECS = {
     ),
 }
 
+#: 每个 schema 的**完整列集合**（= 该类帧归一化之后的列形状）。它与 `_COVERAGE_SPECS`
+#: **双向**核对，所以「覆盖率判据漏了一列」会当场炸出来。
+#:
+#: ⚠️ 它**不是** `_match_schema` 那张识别表的副本，两者的差是**故意**的：识别表用的是
+#: 「认出这类帧所需的最少列」，对 financial 只列 4 个必需列；这里是 9 列。契约 §3.2 对
+#: 「各财务科目」只给了子集判据（源多给一个科目是好事，不该判红）。
+_SCHEMA_COLUMNS = {
+    'daily': DAILY_BAR_COLUMNS,
+    'financial': FINANCIAL_COLUMNS,
+    'index': INDEX_MEMBER_COLUMNS,
+    'factor': ADJUST_FACTOR_COLUMNS,
+    'dividend': DIVIDEND_COLUMNS,
+}
+
+#: **覆盖率判据**（2026-10-02 收口 DC 契约附录 J 的 **J-12**：「覆盖率还不是判据」）。
+#:
+#: 表项 = `(列, 允许缺失率上限, 判据标签或 None, 空为什么合法 / 谁判它的空)`。
+#: 上限**只有两个取值**，所以这张表里没有一处手写的自由裁量：
+#:
+#: * `0.0` —— 这一列在 DDL 里是 `NOT NULL`，而 `_CHECK_SPECS` 里**没有任何一条**能判它的
+#:   空值（日期列与键列的空值会被每条判据 `continue` 掉，见 `_violation` 里那两处
+#:   「NULL 不在这里冒充区间违规」）⇒ **一格为空即 `is_valid=False`**。
+#:   这就是「覆盖率成为判据」：在此之前，一个 `trade_date` 整列是 NaN 的帧会带着
+#:   `is_valid=True` 走向 `INSERT`，再被库的 `NOT NULL` 拒掉 —— 判据说「通过」而库说
+#:   「不」，两个执行点口径不同，而契约 §3.9 把 `is_valid=False` 定义为「`DataCenter`
+#:   不得写入」⇒ 判据漏判的代价是白跑一趟落库。
+#: * `1.0` —— 空不是缺失，且有**两种**，理由那栏必须写清是哪一种：
+#:   ① 判据标签非 None：空值已经由那条判据判成硬错误（`daily-price-positive` 等把 NaN
+#:      算违规，注释见 `_violation`），覆盖率只登记「谁判这一列」，**不重复判** ——
+#:      两条并列判据判同一件事只会让同一处缺陷报两次。
+#:   ② 标签为 None：空是**语义**（DDL 注释：`effective_to IS NULL` = 至今仍在成分内）
+#:      或契约明写允许稀疏（契约 §2.3：源缺科目留 NaN）。
+#:
+#: 四条形状由 `_coverage_spec_errors()` 自动核对（列集合双向相等 / 上限只能是 0.0 或 1.0 /
+#: 标签非 None ⇒ 上限必须是 1.0 且必须是该 schema 真判过的标签 / 上限 1.0 且无标签 ⇒
+#: 理由不得为空）。**第 ⑤ 条**——这张表的 NULL 性与 `db/data_center.sql` 的 `NOT NULL`
+#: 必须**双向一致**——由用例盯着（`tests/test_data_center_adapter.py` 的
+#: `test_coverage_specs_match_the_ddl_nullability`）：谁往 DDL 加一列 NOT NULL 而没在这里
+#: 决定它的空值，那条用例就红。这张表的**取值**由用例与变异盯着（与 `_PRIMARY_KEYS` /
+#: `_CHECK_SPECS` 同一约定，见 DC 契约 B21.6 末段）。
+_COVERAGE_SPECS = {
+    'daily': (
+        ('symbol', 0.0, None, 'DDL NOT NULL 的键列，没有别的判据判它的空值'),
+        ('trade_date', 0.0, None, 'DDL NOT NULL 的日期列，没有别的判据判它的空值'),
+        ('open', 1.0, 'daily-price-positive', '空值已由 daily-price-positive 判成硬错误'),
+        ('high', 1.0, 'daily-price-positive', '空值已由 daily-price-positive 判成硬错误'),
+        ('low', 1.0, 'daily-price-positive', '空值已由 daily-price-positive 判成硬错误'),
+        ('close', 1.0, 'daily-price-positive', '空值已由 daily-price-positive 判成硬错误'),
+        ('volume', 1.0, 'daily-nonneg', '空值已由 daily-nonneg 判成硬错误'),
+        ('amount', 1.0, 'daily-nonneg', '空值已由 daily-nonneg 判成硬错误'),
+    ),
+    'financial': (
+        ('symbol', 0.0, None, 'DDL NOT NULL 的键列，没有别的判据判它的空值'),
+        ('report_type', 1.0, 'financial-report-type',
+         '空值不是 REPORT_TYPES 的成员 ⇒ 已由 financial-report-type 判成硬错误'),
+        ('period_end', 0.0, None, 'DDL NOT NULL 的日期列，没有别的判据判它的空值'),
+        ('announce_date', 0.0, None,
+         'DDL NOT NULL 的可见性依据列（D4），financial-announce-after-period 会 continue 掉它'),
+        ('revenue', 1.0, None, 'DDL 允许 NULL；契约 §2.3：源缺科目留 NaN，空是允许的'),
+        ('net_profit', 1.0, None, 'DDL 允许 NULL；契约 §2.3：源缺科目留 NaN，空是允许的'),
+        ('total_assets', 1.0, None, 'DDL 允许 NULL；契约 §2.3：源缺科目留 NaN，空是允许的'),
+        ('total_equity', 1.0, None, 'DDL 允许 NULL；契约 §2.3：源缺科目留 NaN，空是允许的'),
+        ('roe', 1.0, None,
+         'DDL 允许 NULL；financial-roe-range 明写 NaN 就 continue（与 factor 那一列的写法相反，'
+         '差别是契约的差别）'),
+    ),
+    'index': (
+        ('index_code', 0.0, None, 'DDL NOT NULL 的键列，没有别的判据判它的空值'),
+        ('symbol', 0.0, None, 'DDL NOT NULL 的键列，没有别的判据判它的空值'),
+        ('effective_from', 0.0, None,
+         'DDL NOT NULL；index-effective-range 只判区间方向，不判起点是否为空'),
+        ('effective_to', 1.0, None, 'DDL 允许 NULL 且 NULL 有语义：effective_to IS NULL = 至今仍在成分内'),
+        ('weight', 1.0, None, 'DDL 允许 NULL；index-weight-range 明写 NaN 就 continue'),
+    ),
+    'factor': (
+        ('symbol', 0.0, None, 'DDL NOT NULL 的键列，没有别的判据判它的空值'),
+        ('trade_date', 0.0, None, 'DDL NOT NULL 的日期列，没有别的判据判它的空值'),
+        ('adjust_factor', 1.0, 'factor-positive', '空值已由 factor-positive 判成硬错误'),
+    ),
+    'dividend': (
+        ('symbol', 0.0, None, 'DDL NOT NULL 的键列，没有别的判据判它的空值'),
+        ('ex_date', 0.0, None,
+         'DDL NOT NULL 的事件日列，没有别的判据判它的空值（自然键去重对 NULL 也不生效）'),
+        ('announce_date', 0.0, None,
+         'DDL NOT NULL 的可见性依据列（D4），dividend-announce-not-after-ex 会 continue 掉它'),
+        ('cash_per_share', 1.0, 'dividend-cash-nonneg', '空值已由 dividend-cash-nonneg 判成硬错误'),
+    ),
+}
+
 
 def _match_schema(columns: Any):
     """按列集合认出这是哪一类帧。返回 (kind, 必需列, 判据表)。
@@ -948,6 +1061,82 @@ def _match_schema(columns: Any):
         if set(required) <= have:
             return kind, required, _CHECK_SPECS[kind]
     return None, (), ()
+
+
+def _coverage_spec_errors(kind: str) -> List[str]:
+    """核对 `_COVERAGE_SPECS[kind]` 的**形状**（不是数据），返回硬错误清单。
+
+    这是「覆盖率判据自己有没有被漏掉」的那一层：`_SCHEMA_COLUMNS[kind]` 与表里的列集合
+    **双向**比，谁往 schema 加一列而没在这里决定它，那张帧一律 `is_valid=False`，
+    理由写明是「覆盖率判据缺失」而不是「数据脏」——**这正是复权因子在 B21.6 里挂了两天
+    的形态**（一张 schema 以「无判据」的样子通过）。
+
+    形状不对时**不崩**：`validate_frame` 的契约是「产出报告」，一个不肯出报告的校验器
+    在下游看起来和崩掉一样，而当下正确的动作是「不得写入」。
+    """
+    specs = _COVERAGE_SPECS.get(kind, ())
+    declared = [column for column, _, _, _ in specs]
+    expected = list(_SCHEMA_COLUMNS[kind])
+    errors: List[str] = []
+    missing = [name for name in expected if name not in declared]
+    extra = [name for name in declared if name not in expected]
+    duplicated = sorted(set(name for name in declared if declared.count(name) > 1))
+    if missing or extra or duplicated:
+        errors.append(
+            '覆盖率判据表与 %s schema 的列集合不一致（漏了 %s / 多了 %s / 重复 %s）：'
+            '没被决定过的列不许以「看起来通过」的样子过检（DC 契约附录 J 的 J-12）'
+            % (kind, missing, extra, duplicated))
+    tags = set(tag for tag, _ in _CHECK_SPECS[kind])
+    for column, limit, tag, why in specs:
+        if limit not in (0.0, 1.0):
+            errors.append('覆盖率上限 %r 不在 {0.0, 1.0} 里（%s.%s）：中间值没有出处，'
+                          '写一个「看起来合理」的阈值就是又一处手写自由裁量'
+                          % (limit, kind, column))
+            continue
+        if tag is not None:
+            if limit != 1.0:
+                errors.append('%s.%s 登记了判据 %r 却把上限压到 %r：两条判据的深度不一致，'
+                              '深的那条会让浅的那条形同虚设' % (kind, column, tag, limit))
+            if tag not in tags:
+                errors.append('%s.%s 登记了判据 %r，但 %s schema 的 `_CHECK_SPECS` 里没有这个'
+                              '标签：登记了一条不存在的判据，与「没有判据」在报告里长得一样'
+                              % (kind, column, tag, kind))
+        elif limit == 1.0 and not str(why).strip():
+            errors.append('%s.%s 的上限是 1.0（空合法）却没写理由：'
+                          '「空是语义」和「我放弃了」必须能被区分'
+                          % (kind, column))
+    return errors
+
+
+def _coverage_violations(frame: pd.DataFrame, kind: str) -> List[str]:
+    """覆盖率判据的执行点：按 `_COVERAGE_SPECS[kind]` 逐列核对实际缺失率。
+
+    缺失率的分母是**帧的行数**。
+
+    两条 `continue` 各自有理由，而且都**不会**把一处真缺陷静默掉：
+
+    * `tag is not None`：这一列的空值已经由那条判据判成硬错误，这里再判一次只会让同一处
+      缺陷报两次 —— 两条并列判据判同一件事，读报告的人会去找一处不存在的第二问题。
+    * `column not in frame.columns`：列不在帧里 = 归一化没造出这一列（契约 §2.3 允许源缺
+      科目）。这类列的上限**一律是 1.0**（`financial` 的五个科目），所以「跳过」与「按
+      缺失率 1.0 算」**等价**；而 `0.0` 的那些列按定义是**必需列**（用例
+      `test_every_zero_limit_coverage_column_is_a_required_column` 拿 `_match_schema`
+      的返回值钉着这一点）⇒ 它们一定在帧里，「整列缺失」到不了这里。既然跳过与计算等价，
+      就不写一个「算得出 1.0 却永远不触发」的分支 —— 那种分支在下一次读代码时会被当成
+      有牙的守卫。
+    """
+    violations: List[str] = []
+    for column, limit, tag, _ in _COVERAGE_SPECS.get(kind, ()):
+        if tag is not None or column not in frame.columns:
+            continue
+        ratio = float(frame[column].isna().mean())
+        if ratio > limit:
+            violations.append(
+                '列 %s 缺失率 %.1f%% 超过该列的覆盖率上限 %.1f%%：这一列在 DDL 里是 `NOT NULL`，'
+                '而 `_CHECK_SPECS` 里没有一条判它的空值 ⇒ 空值落库会被库拒掉，'
+                '必须在写库前就判失败（DC 契约附录 J 的 J-12）'
+                % (column, ratio * 100.0, limit * 100.0))
+    return violations
 
 
 def _check_dates(frame: pd.DataFrame, kind: str, errors: List[str]) -> None:
@@ -989,6 +1178,14 @@ def _violation(frame: pd.DataFrame, tag: str) -> Optional[str]:
     if tag == 'daily-ohlc-order':
         for position in range(frame.shape[0]):
             row = frame.iloc[position]
+            # 四列里任一为空 ⇒ 这一行答不了「顺序对不对」：空值归 `daily-price-positive`
+            #（那四列 DDL 全是 NOT NULL，那条判据把 NaN 也算违规）。一条判据只答一个问题。
+            # （2026-10-02 补：在此之前这里直接比大小，「一格空」在没有守卫的写法下
+            # 会以两种方式坏掉 —— 浮点 NaN 时 `nan >= nan` 为假 ⇒ 报一条**假的**
+            # 「顺序违规」；`object` 列里的 `None` 时直接 `TypeError` 逃出
+            # `validate_frame`。两种都是「空值被当成了值」。）
+            if any(pd.isna(row[name]) for name in ('open', 'high', 'low', 'close')):
+                continue
             if (row['high'] >= row['low'] and row['high'] >= row['open']
                     and row['high'] >= row['close']
                     and row['low'] <= row['open'] and row['low'] <= row['close']):
@@ -1011,12 +1208,21 @@ def _violation(frame: pd.DataFrame, tag: str) -> Optional[str]:
         for position, (announce, period) in enumerate(
                 zip(frame['announce_date'], frame['period_end'])):
             if announce is None or period is None:
-                continue    # NULL 由 DDL 的 NOT NULL 管，不在这里冒充「区间违规」
+                continue    # 空值不在这里冒充「区间违规」：它归覆盖率判据（`_COVERAGE_SPECS`
+                            # 里这两列的上限是 0.0）—— 一条判据只答一个问题
             if announce < period:
                 return ('第 %d 行 announce_date=%s < period_end=%s'
                         % (position, announce, period))
         return None
     if tag == 'financial-roe-range':
+        # ⚠️ 这一列**可能整列不在帧里**：帧级 schema 只要求 4 个必需列（`_match_schema` 的
+        # financial 那一项 = `FINANCIAL_REQUIRED_COLUMNS`），而契约 §2.3 允许源缺科目
+        # ⇒「整列不在」与「整列 NaN」同义，两者都归 `continue`。
+        # （2026-10-02 补：在此之前这里直接取 `frame['roe']`，一个只给必需列的 financial 帧
+        # 会让 `KeyError` 逃出 `validate_frame`，与本函数「不因缺失值抛异常」的契约相悖。
+        # 五张 schema 里只有这一列会缺：别处的列都是各自 schema 的必需列。）
+        if 'roe' not in frame.columns:
+            return None
         for position, value in enumerate(frame['roe']):
             if pd.isna(value) or -1 <= value <= 5:
                 continue
@@ -1059,7 +1265,8 @@ def _violation(frame: pd.DataFrame, tag: str) -> Optional[str]:
         for position, (announce, ex_date) in enumerate(
                 zip(frame['announce_date'], frame['ex_date'])):
             if announce is None or ex_date is None:
-                continue    # NULL 由 DDL 的 NOT NULL 与 normalize_* 的显式失败管
+                continue    # 空值归覆盖率判据（`_COVERAGE_SPECS` 里这两列的上限是 0.0）：
+                            # 这里只答「顺序对不对」
             if announce > ex_date:
                 return ('第 %d 行 announce_date=%s > ex_date=%s'
                         % (position, announce, ex_date))

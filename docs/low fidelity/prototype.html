@@ -1177,8 +1177,9 @@
                 <code>warnings</code>，不改变 <code>is_valid</code>。
               </li>
               <li>
-                <b>帧层面不判覆盖率</b>：只给缺失率 warning —— 这一条别读成
-                「覆盖率已经有人管」。
+                <b>覆盖率也是判据</b>：<code>NOT NULL</code> 且没有别的判据判它空值的列，
+                缺一格就 <code>is_valid=false</code>。⚠️ 它与上一条是<b>两件事</b>：
+                「缺失率 &gt; 5%」仍然只是 warning。
               </li>
             </ul>
           </div>
@@ -3389,7 +3390,11 @@
             el("li", null, "缺失率只是 warning（> 5%），不改变 is_valid。"),
           );
           ul.appendChild(
-            el("li", null, "帧层面不判覆盖率 —— 别读成「覆盖率已经有人管」。"),
+            el(
+              "li",
+              null,
+              "覆盖率是判据：NOT NULL 且没有别的判据判它空值的列缺一格就连 is_valid=false。",
+            ),
           );
         }
 

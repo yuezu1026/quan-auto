@@ -76,8 +76,13 @@ bug），没有越界时返回**最后一次访问**的报告；全部越界点�
   —— 日线 / 财务 / 指数成分 / 复权因子；**2026-10-01 分红落地后是五张**，多一张 `dividend`，
   `_match_schema` 里接在 `factor` 之后），
   对复权帧判值域（`adjust_factor > 0`，对齐 `ck_dc_factor_positive`，**NaN 也算违规**）、
-  帧级自然键 `('symbol','trade_date')` 不重复、以及列集合与类型。**仍未判的是覆盖率**
-  （只给「缺失率 > 5%」的 warning，不判失败）—— DC 契约附录 B21.5 的 Ⅳ 块与 B21.6 表里那一行。
+  帧级自然键 `('symbol','trade_date')` 不重复、以及列集合与类型。
+  ⚠️ **订正（2026-10-02）**：本句一度以「**仍未判的是覆盖率**（只给「缺失率 > 5%」的 warning，
+  不判失败）」结尾 —— 那半句**已作废**：覆盖率现在**也是判据**（在 `db/data_center.sql` 里是
+  `NOT NULL`、且没有任何别的判据判它空值的列，缺一格即 `is_valid=False`，逐列清单见
+  `quanauto/datasources.py` 的 `_COVERAGE_SPECS`，关账记录见 DC 契约**附录 J 的 J.7**）。
+  ⚠️ 「缺失率 > 5%」那条 **warning 一个字没改**，两条判据各判各的 ——
+  历史登记见 DC 契约附录 B21.5 的 Ⅳ 块与 B21.6 表里那一行。
 * `live()` / `trading_calendar()` 未实现（`NotImplementedError`）。
 * 财务 / 指数成分股 / 数据质量 / 采集幂等不在本切片。
 """

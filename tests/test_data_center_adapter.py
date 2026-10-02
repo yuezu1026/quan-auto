@@ -14,7 +14,10 @@ from __future__ import annotations
 import dataclasses
 from datetime import date
 import http.server
+import io
 import json
+import os
+import re
 import socket
 import threading
 import urllib.error
@@ -1990,3 +1993,348 @@ def test_validate_frame_still_wins_the_empty_check_over_the_schema_branch() -> N
 
     assert report.is_valid is False
     assert any('帧为空' in error for error in report.errors), report.errors
+
+
+# ── 覆盖率判据（2026-10-02 收口 DC 契约附录 J 的 J-12）─────────────────────────
+# 背景：`_COVERAGE_SPECS` 之前只有一条「缺失率 > 5%」的 warning ⇒ **判据说「通过」
+# 而库的 NOT NULL 说「不」**。这一组要钉三件事：① 那个缝真的关上了（一格为空即失败）；
+# ② 判据表与 `db/data_center.sql` 的 NULL 性**双向**一致（不是单方向）；
+# ③ 判据表自己的形状（列集合、上限取值、登记的标签真的存在）有人盯。
+#
+# ⚠️ 断言必须是**具名判据**（含「覆盖率上限」字样），不能只写 `is_valid is False`：
+# 日期列同时命中 `_check_dates`，用「整体是红的」当判据 ⇒ 把覆盖率判据整个删掉这条
+# 用例**照样绿**（2026-09-25 那条「变异没打到分支」的翻版）。
+def _clean_frame(kind: str) -> pd.DataFrame:
+    """每类 schema 一帧**合法**的帧（覆盖率用例的控制样本用）。
+
+    `financial` 故意只给 4 个必需列：契约 §2.3 允许源缺科目，缺科目**不是**违规。
+    """
+    if kind == "daily":
+        return _daily()
+    if kind == "financial":
+        return pd.DataFrame({
+            "symbol": ["600000.SH"],
+            "report_type": ["INCOME"],
+            "period_end": [date(2026, 6, 30)],
+            "announce_date": [date(2026, 8, 28)],
+        })
+    if kind == "index":
+        return pd.DataFrame({
+            "index_code": ["000300.SH"],
+            "symbol": ["600000.SH"],
+            "effective_from": [date(2026, 1, 1)],
+            "effective_to": [None],
+            "weight": [0.1],
+        })
+    if kind == "factor":
+        return pd.DataFrame({
+            "symbol": ["600000.SH"],
+            "trade_date": [date(2026, 9, 22)],
+            "adjust_factor": [1.0],
+        })
+    if kind == "dividend":
+        return pd.DataFrame({
+            "symbol": ["600000.SH"],
+            "ex_date": [date(2026, 9, 22)],
+            "announce_date": [date(2026, 9, 20)],
+            "cash_per_share": [0.5],
+        })
+    raise AssertionError("覆盖率用例没给 %r 这类 schema 造干净帧：新 schema 落地时"
+                         "要连着补一条控制样本，否则那一类变成零覆盖" % kind)
+
+
+_COVERAGE_COLUMNS = [
+    (kind, column)
+    for kind, specs in ds._COVERAGE_SPECS.items()
+    for column, limit, _tag, _why in specs
+    if limit == 0.0
+]
+
+
+@pytest.mark.parametrize("kind,column", _COVERAGE_COLUMNS)
+def test_validate_rejects_a_null_in_a_not_null_column(kind, column) -> None:
+    """`NOT NULL` 且没有别的判据判它空值的那些列：**一格为空就是 `is_valid=False`**。
+
+    这正是 J-12 里那句「覆盖率还不是判据」的收口点。样本对每一列**自动生成**
+    （参数化取自判据表本身）⇒ 谁往表里加一列 `0.0` 而没配样本，这里立刻多一个样本。
+
+    ⚠️ 但**反过来不成立**，而这一点是实测出来的（2026-10-02，`A22` 变异）：
+    样本集是**从被测的那张表派生**的，所以把某一列的上限放宽到 `1.0` 时，
+    **这一格样本当场从列表里消失** —— 用例连跑都不会跑，报告里 `CAUGHT=no`，
+    与「判据没牙」长得一模一样（本次第一次运行就是这么红的）。
+    ⇒ 盯「上限有没有被放宽」的判据**不能**依赖这张表，那是
+    `test_coverage_specs_match_the_ddl_nullability` 的活：它拿 `db/data_center.sql`
+    现算 `NOT NULL`，与表里的取值无关。
+    """
+    frame = _clean_frame(kind)
+    assert validate_frame(frame).is_valid is True, "控制样本必须干净通过（防误报）"
+
+    report = validate_frame(frame.assign(**{column: [None]}))
+
+    assert report.is_valid is False, report.errors
+    assert any("覆盖率上限" in message and column in message
+               for message in report.errors), report.errors
+
+
+def test_coverage_judges_the_null_of_a_column_no_other_judge_touches() -> None:
+    """隔离样本：`dc_dividend.announce_date` 的空值**只**能被覆盖率判据抓到。
+
+    这一列不在 `_PRIMARY_KEYS['dividend']` 里 ⇒ `_check_dates` 够不着它；
+    `dividend-announce-not-after-ex` 遇到空值 `continue`（只答「顺序对不对」）。
+    ⇒ 在同一条用例里断言「别的判据抓不到」，才能说清覆盖率判据是**必须**的，
+    而不只是与别的判据重叠的一层。
+    """
+    frame = _clean_frame("dividend")
+    broken = frame.assign(announce_date=[None])
+
+    assert frame["announce_date"].iloc[0] is not None
+    report = validate_frame(broken)
+
+    assert report.is_valid is False
+    assert len(report.errors) == 1, (
+        "这条样本的价值在于它是**孤证**：多出别的错误就说明它不再隔离，"
+        "需要换一条只被覆盖率判据盯着的列：%r" % report.errors)
+    assert "覆盖率上限" in report.errors[0] and "announce_date" in report.errors[0], report.errors
+
+
+def test_a_frame_missing_the_invisible_subject_columns_is_still_valid() -> None:
+    """`financial` 允许源缺科目（契约 §2.3）：缺列 / 全 NaN 都**不**判失败。
+
+    这与上一条是同一张表的两个方向 —— 一张表只会有牙、或者只会有豁免，
+    都会被读成「覆盖率判据就是不许有空值」。
+    """
+    only_required = _clean_frame("financial")
+    all_nan_subjects = only_required.assign(
+        revenue=[None], net_profit=[None], total_assets=[None],
+        total_equity=[None], roe=[None])
+
+    assert validate_frame(only_required).is_valid is True
+    assert validate_frame(all_nan_subjects).is_valid is True
+
+
+def test_every_zero_limit_coverage_column_is_a_required_column() -> None:
+    """上限 `0.0` 的列必须**一律是必需列** ⇒ 它们一定在帧里。
+
+    这条是实现里那句「跳过缺失列 = 按 1.0 算」等价性的**证明**：
+    如果某天有人给一张 schema 加了一个 `0.0` 的**非必需**列，那一列「整列不在帧里」
+    时覆盖率判据会被 `continue` 掉（而别处都不会报）⇒ 判据静默失效。
+    用 `_match_schema` 的返回值（不是判据表的副本）当参照物，是为了让这条断言
+    跟「哪些列能认出这类帧」这个**行为**绑定，而不是跟另一张表。
+    """
+    for kind, columns in ds._SCHEMA_COLUMNS.items():
+        matched, required, _checks = ds._match_schema(list(columns))
+        zero_limit = [column for column, limit, _tag, _why in ds._COVERAGE_SPECS[kind]
+                      if limit == 0.0]
+        assert matched == kind, (matched, kind)
+        assert zero_limit, "每一类 schema 都至少要有键列走在覆盖率判据上"
+        assert set(zero_limit) <= set(required), (
+            "%s 里这些列的上限是 0.0 却不是必需列：它们不在帧里时覆盖率判据会被跳过" % kind,
+            sorted(set(zero_limit) - set(required)))
+
+
+# ── 判据表的形状有人盯（空转守卫的邻居）─────────────────────────────────────
+def test_coverage_specs_are_clean_for_every_schema() -> None:
+    """**干净样本**：真判据表在每一类 schema 上都必须 0 报错。
+
+    没有这一条，下面那组「形状守卫会开火」的用例可以靠「守卫永远开火」通过。
+    """
+    for kind in ds._SCHEMA_COLUMNS:
+        assert ds._coverage_spec_errors(kind) == [], kind
+
+
+def _drop_last(specs):
+    return tuple(specs[:-1])
+
+
+def _bind_a_missing_tag(specs):
+    """把**有标签的**那一列换成不存在的标签（没标签的列换标签会同时触发第二条规则）。"""
+    index = [position for position, entry in enumerate(specs) if entry[2] is not None][0]
+    column, limit, _tag, why = specs[index]
+    return specs[:index] + ((column, limit, "no-such-check-tag", why),) + specs[index + 1:]
+
+
+def _set_a_middle_limit(specs):
+    column, limit, tag, why = specs[0]
+    return ((column, 0.05, tag, why),) + tuple(specs[1:])
+
+
+def _blank_the_reason(specs):
+    """抹掉一个「无标签且上限 1.0」的列的理由（其它列的理由不是必填项）。"""
+    index = [position for position, entry in enumerate(specs)
+             if entry[2] is None and entry[1] == 1.0][0]
+    column, limit, tag, _why = specs[index]
+    return specs[:index] + ((column, limit, tag, ""),) + specs[index + 1:]
+
+
+@pytest.mark.parametrize("kind,mutate,want", [
+    ("daily", _drop_last, "列集合不一致"),
+    ("daily", _bind_a_missing_tag, "没有这个"),
+    ("daily", _set_a_middle_limit, "不在 {0.0, 1.0} 里"),
+    ("financial", _blank_the_reason, "却没写理由"),
+])
+def test_a_malformed_coverage_table_reports_its_own_defect(monkeypatch, kind, mutate, want) -> None:
+    """四种形状缺陷**各一条样本**，且断言报出来的**正是**那一条。
+
+    一个探测器一个样本：四条检查写在同一个循环里，用一条「坏得面面俱到」的样本
+    只会看到第一条 —— 后面的分不清是「没写」还是「没跑到」。
+    """
+    specs = {name: tuple(entries) for name, entries in ds._COVERAGE_SPECS.items()}
+    specs[kind] = mutate(specs[kind])
+    monkeypatch.setattr(ds, "_COVERAGE_SPECS", specs)
+
+    messages = ds._coverage_spec_errors(kind)
+
+    assert len(messages) == 1, ("形状守卫一次只报一条（这些样本各自只坏一处）：%r" % messages)
+    assert want in messages[0], messages
+
+
+def test_a_malformed_coverage_table_blocks_the_frame(monkeypatch) -> None:
+    """形状守卫必须**接在 `validate_frame` 上**，不能只是模块里的一个纯函数。
+
+    「判据表坏了 ⇒ 当前这张帧不得写入」是有意的：判据表与 schema 脱节时，
+    「看起来通过」比「拒绝写入」危险得多（复权因子在 B21.6 里挂了两天的形态）。
+    """
+    specs = {kind: tuple(entries) for kind, entries in ds._COVERAGE_SPECS.items()}
+    specs["daily"] = _drop_last(specs["daily"])
+    monkeypatch.setattr(ds, "_COVERAGE_SPECS", specs)
+
+    report = validate_frame(_daily())
+
+    assert report.is_valid is False
+    assert any("列集合不一致" in message for message in report.errors), report.errors
+
+
+# ── 判据表的 NULL 性与 `db/data_center.sql` 双向一致 ──────────────────────────
+_DDL_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         "db", "data_center.sql")
+
+#: 帧里**看不见**的列：由写入侧盖戳 / 由库给默认值，`normalize_*` 不产出它们。
+_DDL_STAMP_COLUMNS = ("source", "ingested_at", "data_version")
+
+#: 这张判据表**管不着**的表：没有任何 `normalize_*` 产出这类帧。
+#: 逐张写理由是必须的 —— 「不是我的事」与「我忘了」在报告里长得一样。
+_DDL_OUT_OF_FRAME_TABLES = {
+    "dc_data_version": "版本表，由落库侧维护（契约 D8），没有对应的帧 schema",
+    "dc_trading_calendar": "交易日历，由落库侧维护，没有对应的帧 schema",
+    "dc_symbol": "标的字典，由落库侧维护，没有对应的帧 schema",
+    "dc_ingest_run": "采集批次留痕，由 `quanauto/ingest.py` 直接写，没有帧 schema",
+    "dc_quality_issue": "质量问题留痕，由质量检查写入，没有帧 schema",
+}
+
+_TABLE_TO_KIND = {
+    "dc_daily_bar": "daily",
+    "dc_adjust_factor": "factor",
+    "dc_financial_report": "financial",
+    "dc_index_member": "index",
+    "dc_dividend": "dividend",
+}
+
+#: 帧里**没有**的 DDL 数据列：不是「漏判」，而是「不在帧的管辖范围」。逐列写理由是必须的 ——
+#: 判据表只能判**帧里存在**的列，而「写入侧推算的列」和「我忘了它」在报告里长得一样。
+#: 这是契约附录 J 的 J-14 那条「以**豁免**身份被点名而不是被量化」的同一写法。
+#: ⚠️ 双向：登记了的列必须**真的不在**帧 schema 里 —— 哪天它进了帧，这条豁免就得删掉。
+_DDL_COLUMNS_OUTSIDE_FRAME = {
+    "dc_financial_report": {
+        "available_date": "写入侧**从 announce_date 推算**的 PIT 过滤键（D4：顺延到其后"
+                          "首个交易日、绝不前移），`normalize_financial` 不产出它 ⇒ 帧级判据"
+                          "管不到；管它的是 DDL 的 `ck_dc_fin_available_ge_announce`。"
+                          "⚠️ 顺带记一笔：这张表**至今零写入者**（契约 B18 点过名）"
+                          "⇒ 这一列现在没有任何执行点在写它，"
+                          "这也是上一条「帧里不带它」能成立的原因。",
+    },
+}
+
+
+def _ddl_columns(sql: str) -> dict:
+    """从 DDL 里取 `{表名: {列名: 是否 NOT NULL}}`（只认列定义行）。
+
+    ⚠️ 这里**不**联网也不连库：本仓库没有本地 PostgreSQL，而这份用例要跑在默认
+    套件里 ⇒ 老老实实解析文本。（`tools/verify_data_center.py` 的 C8 也解析同一份
+    文件来核对 `numeric(p,s)`，两者**互为**旁证，但判的是不同的东西。）
+    """
+    tables = {}
+    current = None
+    for raw in sql.splitlines():
+        line = raw.split("--", 1)[0]      # 行注释先剥掉（`COMMENT ON ...` 随之不参与）
+        stripped = line.strip()
+        if stripped.upper().startswith("CREATE TABLE"):
+            current = stripped.split("(")[0].split()[-1]
+            tables[current] = {}
+            continue
+        if current is None:
+            continue
+        if stripped.startswith(")"):
+            current = None
+            continue
+        match = re.match(r"^([a-z_][a-z0-9_]*)\s+\S+\s*(.*)$", stripped)
+        if not match:
+            continue
+        column, rest = match.group(1), match.group(2)
+        if column.upper() in ("CONSTRAINT", "PRIMARY", "CHECK", "UNIQUE"):
+            continue
+        tables[current][column] = "NOT NULL" in rest.upper()
+    return tables
+
+
+def test_coverage_specs_match_the_ddl_nullability() -> None:
+    """**双向**，而且判的是**行为**：逐列造一帧「这一列全空」的帧，问它会不会被拦下。
+
+    口径：一个 `NOT NULL` 的列，空值**必须**被拦下，而且只有两条路能拦下它 ——
+    ① 覆盖率判据（这一列的上限是 `0.0`，各 schema 的键列与日期列走这条）；
+    ② 某条把 NaN 算违规的值域判据（`daily-price-positive` / `factor-positive` 等，
+       `_violation` 里的注释写着「同一列 DDL 允许 NULL 时那种写法是 `continue`」）。
+    ⇒ **「空值被拦下」⇔「DDL 是 `NOT NULL`」**，两个方向都要成立。
+
+    为什么不用「上限 == 0.0 ⇔ NOT NULL」这条更直接的判据：它对
+    `dc_adjust_factor.adjust_factor` 之类的列**当场误报** —— 那些列的上限是 `1.0`
+    （空值归值域判据），却同样是 `NOT NULL`。写死一份「哪些标签把 NaN 算违规」的名单
+    又会是另一处会漂移的副本，所以这里直接**跑一帧**看结果。
+
+    单方向会让两种漂移同时隐身：① 判据表多了一列（DDL 里没有，判了半天空气）；
+    ② DDL 新加了一列 `NOT NULL` 而没人决定它的空值 —— 那**恰恰**是 J-12 的原始形态
+    （库有约束、判据没有），而单方向的检查会让它报「干净」。
+    """
+    sql = io.open(_DDL_PATH, encoding="utf-8").read()
+    tables = _ddl_columns(sql)
+    assert tables, "解析 `db/data_center.sql` 得到 0 张表：解析器坏了，后面的比对全在空转"
+
+    for table in sorted(_DDL_COLUMNS_OUTSIDE_FRAME):
+        assert table in _TABLE_TO_KIND, (
+            "`_DDL_COLUMNS_OUTSIDE_FRAME` 里的 %s 不在 `_TABLE_TO_KIND` 里" % table)
+
+    for table, kind in sorted(_TABLE_TO_KIND.items()):
+        assert table in tables, (table, sorted(tables))
+        spec = dict((column, limit) for column, limit, _tag, _why
+                    in ds._COVERAGE_SPECS[kind])
+        assert set(spec) == set(ds._SCHEMA_COLUMNS[kind]), (table, sorted(spec))
+        outside = _DDL_COLUMNS_OUTSIDE_FRAME.get(table, {})
+        for column, why in sorted(outside.items()):
+            assert column in tables[table], (
+                "`_DDL_COLUMNS_OUTSIDE_FRAME` 登记了 %s.%s，而 DDL 里没有这一列"
+                % (table, column))
+            assert why.strip(), "%s.%s 的豁免没写理由" % (table, column)
+            assert column not in ds._SCHEMA_COLUMNS[kind], (
+                "%s.%s 已经进了帧 schema ⇒ 它现在**有**帧级判据了，"
+                "这条豁免必须删掉（留着就是一句会漂移的假话）" % (table, column))
+        data_columns = dict((name, notnull) for name, notnull in tables[table].items()
+                            if name not in _DDL_STAMP_COLUMNS and name not in outside)
+        assert set(spec) == set(data_columns), (
+            "判据表与 %s 的列集合不一致（判据表多 %s / DDL 多 %s）"
+            % (table, sorted(set(spec) - set(data_columns)),
+               sorted(set(data_columns) - set(spec))))
+        for column in sorted(spec):
+            blank = _clean_frame(kind).assign(**{column: [None]})
+            report = validate_frame(blank)
+            assert report.is_valid is (not data_columns[column]), (
+                "%s.%s：DDL 是 %s，而「这一列全空」的那一帧 %s ⇒ 判据与库的约束口径不同，"
+                "正是 J-12 要关的那个缝（判据说「通过」而库说「不」）。判据表上限 %r；"
+                "报出的错误 %r"
+                % (table, column, "NOT NULL" if data_columns[column] else "允许 NULL",
+                   "被拦下了" if not report.is_valid else "放行了", spec[column],
+                   report.errors))
+
+    unclassified = sorted(set(tables) - set(_TABLE_TO_KIND) - set(_DDL_OUT_OF_FRAME_TABLES))
+    assert not unclassified, (
+        "DDL 里新加了表而没人决定它的帧覆盖率：要么进 `_TABLE_TO_KIND`，"
+        "要么进 `_DDL_OUT_OF_FRAME_TABLES` 并写清为什么它不产帧：%r" % unclassified)
+

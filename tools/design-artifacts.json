@@ -283,7 +283,7 @@
     },
     {
       "probe": "low_bytes",
-      "expected": 109225,
+      "expected": 109303,
       "template": "**{value:,}** 字节",
       "doc": "docs/low fidelity/README.md",
       "unit": "字节",
@@ -315,7 +315,7 @@
     },
     {
       "probe": "proto_bytes",
-      "expected": 203765,
+      "expected": 203984,
       "template": "**{value:,}** 字节",
       "doc": "docs/low fidelity/README.md",
       "unit": "字节",
